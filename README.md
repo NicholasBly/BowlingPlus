@@ -28,6 +28,10 @@ The Practice-only stuff turns itself off in online matches, tournaments, and the
 
 ## Install (no jailbreak)
 
+Prerequisites:
+Enable Developer Mode on your iDevice (Settings -> Privacy and Security, scroll to the bottom to find Developer Mode, turn it on)
+After sideloading the app, you will need to trust the developer (me). Settings -> General -> VPN and Device Management, find developer and click trust.
+
 **Option A: Sideloadly**
 1. Download the latest .ipa (prepackaged iOS app with the tweak applied) from Releases.
 2. Open Sideloadly and pick the app.
