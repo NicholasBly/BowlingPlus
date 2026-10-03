@@ -28,13 +28,21 @@ The Practice-only stuff turns itself off in online matches, tournaments, and the
 
 ## Install (no jailbreak)
 
-**Option A: Sideloadly (inject it yourself)**
+**Option A: Sideloadly**
+1. Download the latest .ipa (prepackaged iOS app with the tweak applied) from Releases.
+2. Open Sideloadly and pick the app.
+3. Connect your iDevice to your PC/Laptop/Mac via USB data cable.
+4. Under the "iDevice" dropdown, your device should show.
+5. In settings, select local/remote and Apple ID Sideload.
+6. Start. It should proceed to install the app onto your device.
+
+**Option B: Sideloadly (inject it yourself)**
 1. Open Sideloadly and pick your game IPA.
 2. Click **Advanced options**.
 3. Find **Inject dylibs/frameworks** and add `BowlingPlus.dylib`.
 4. Hit **Start** like normal.
 
-**Option B: Signulous (or any app that just signs IPAs)**
+**Option C: Signulous (or any app that just signs IPAs)**
 Use an IPA that already has the tweak inside (see "Make a patched IPA" below), then install it like any other app.
 
 ## How to use it
