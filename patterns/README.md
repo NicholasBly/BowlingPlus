@@ -1,5 +1,7 @@
 # BowlingPlus collection: adding a pattern from a Kegel data sheet
 
+Easiest: download the pattern from the Kegel Pattern Library (patternlibrary.kegel.net) and use **Import a Kegel pattern file** in the pattern library. The Kegel app and website download the PDF data sheet, which imports too (distances in whole feet). Zips from pba.com hold a `.Pattern` (JSON) file with the exact steps, distances and drop brush. For the built-in collection, copy those numbers into `src/OilCollection.mm`.
+
 Patterns live in `src/OilCollection.mm`. Mark them `"exact": @YES`, so BowlingPlus's engine uses each step's End distance from the sheet. Each step is `{ start board, stop board, loads, speed, travel-to ft }`, copied from the sheet's **Forward** and **Reverse** tables:
 
 - **Boards** are 1–39 from the left: nL = n, nR = 40 − n (2R = 38, 13R = 27).

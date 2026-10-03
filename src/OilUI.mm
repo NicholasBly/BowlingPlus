@@ -3,6 +3,8 @@
 #import <PhotosUI/PhotosUI.h>
 #import <CoreImage/CoreImage.h>
 #import <objc/runtime.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <PDFKit/PDFKit.h>
 #import "BFShared.h"
 
 // Custom oil patterns
@@ -286,7 +288,7 @@ static NSArray *CleanSteps(id raw) {
         if (![s isKindOfClass:[NSArray class]] || [s count] < 4 || out.count >= 40) continue;
         int a = Clampi(s[0], 1, 39, 2), b = Clampi(s[1], 1, 39, 38);
         float ft = [s count] > 4 && [s[4] respondsToSelector:@selector(floatValue)] ? [s[4] floatValue] : 0;
-        ft = roundf(fminf(fmaxf(ft, 0), 70) * 10) / 10;
+        ft = roundf(fminf(fmaxf(ft, 0), 70) * 100) / 100;     // keep Kegel files' exact distances (3.92 ft)
         [out addObject:@[ @(MIN(a, b)), @(MAX(a, b)), @(Clampi(s[2], 0, 99, 2)), @(Clampi(s[3], 6, 30, 14)), @(ft) ]];
     }
     return out;
@@ -375,7 +377,7 @@ static UIView *OLegend(void) {                 // [Thin ====gradient==== Thick]
     return wrap;
 }
 
-// Lane drawn sideways: foul line on the left, pins on the right, boards top to bottom.
+// Lane drawn sideways: foul line on the left, pins on the right, the bowler's left boards on top.
 static UIImage *RenderPreview(NSDictionary *r, CGSize size) {
     int w = [r[@"w"] intValue], h = [r[@"h"] intValue];
     NSData *grid = r[@"grid"];
@@ -391,7 +393,7 @@ static UIImage *RenderPreview(NSDictionary *r, CGSize size) {
             CGFloat wr = 0.86, wg = 0.70, wb = 0.50, c[3];               // lane wood
             ThicknessRGB(v, c);
             CGFloat a = v > 0.01 ? 0.9 : 0;
-            uint8_t *o = p + ((size_t)y * cols + x) * 4;
+            uint8_t *o = p + ((size_t)(rows - 1 - y) * cols + x) * 4;   // top edge = the bowler's left
             o[0] = (uint8_t)(255 * (wr * (1 - a) + c[0] * a));
             o[1] = (uint8_t)(255 * (wg * (1 - a) + c[1] * a));
             o[2] = (uint8_t)(255 * (wb * (1 - a) + c[2] * a));
@@ -804,6 +806,8 @@ static BFOilEditor *sEditor;
 }
 @end
 
+static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error));
+
 #pragma mark - pattern library (+ QR share / import)
 
 @interface BFOilLibrary : NSObject <PHPickerViewControllerDelegate, AVCaptureMetadataOutputObjectsDelegate, UIGestureRecognizerDelegate>
@@ -858,6 +862,9 @@ static BFOilEditor *sEditor;
                                     OButton(@"Paste code", NO, self, @selector(paste))], UILayoutConstraintAxisHorizontal, 8);
     imports.distribution = UIStackViewDistributionFillEqually;
     [stack addArrangedSubview:imports];
+    [stack addArrangedSubview:OButton(@"\U0001F4C2  Import a Kegel pattern file", NO, self, @selector(kegelFile))];
+    [stack addArrangedSubview:OLabel(@"From the Kegel Pattern Library app or website: pick the downloaded pattern sheet (.pdf) or .zip (or the .Pattern / .txt inside). Imports the steps, distances and drop brush.",
+                                     11, UIFontWeightRegular, ODim(0.45))];
     [self reload];
     self.showing = YES;
     OPresent(overlay, card, YES);
@@ -1062,6 +1069,17 @@ static BFOilEditor *sEditor;
 }
 
 - (void)paste { [self importCode:UIPasteboard.generalPasteboard.string]; }
+
+- (void)kegelFile {
+    __weak BFOilLibrary *weak = self;
+    ImportKegelFile(^(NSDictionary *p, NSString *error) {
+        if (!p) { OToast(error); return; }
+        UpsertPattern(p);
+        SetActiveId(p[@"id"]);
+        OToast([NSString stringWithFormat:@"Imported \"%@\" from Kegel", p[@"name"]]);
+        [weak reload];
+    });
+}
 
 - (void)photo {
     PHPickerConfiguration *cfg = [PHPickerConfiguration new];
@@ -1301,4 +1319,198 @@ void BFOilShowColorPicker(void) {
     if (gBF.oilHue < 0) slider.value = 0.4f;
     show();
     OPresent(overlay, card, NO);
+}
+
+#pragma mark - Kegel pattern files (.zip from the Kegel Pattern Library, .Pattern, .txt)
+
+// .Pattern: Kegel's JSON (Name, Distance, ReverseDropBrushDistance, Forward/ReverseLoadscreens with
+// Start, Stop, Loads, SpeedIps, EndDistance, Microliter). Exact distances.
+static NSDictionary *KegelFromJSON(NSData *data) {
+    if (data.length >= 3 && ((const uint8_t *)data.bytes)[0] == 0xEF) data = [data subdataWithRange:NSMakeRange(3, data.length - 3)];
+    NSDictionary *j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![j isKindOfClass:[NSDictionary class]] || ![j[@"ForwardLoadscreens"] isKindOfClass:[NSArray class]]) return nil;
+    NSMutableArray *fr[2] = { [NSMutableArray array], [NSMutableArray array] };
+    int ul = 50;
+    NSArray *src[2] = { j[@"ForwardLoadscreens"], j[@"ReverseLoadscreens"] };
+    for (int d = 0; d < 2; d++) {
+        if (![src[d] isKindOfClass:[NSArray class]]) continue;
+        for (NSDictionary *s in src[d]) {
+            if (![s isKindOfClass:[NSDictionary class]] || [s[@"SpeedIps"] intValue] <= 0 || [s[@"Stop"] intValue] <= 0) continue;
+            if ([s[@"Microliter"] intValue] > 0) ul = [s[@"Microliter"] intValue];
+            [fr[d] addObject:@[ @([s[@"Start"] intValue]), @([s[@"Stop"] intValue]), @([s[@"Loads"] intValue]),
+                                @([s[@"SpeedIps"] intValue]), @([s[@"EndDistance"] floatValue]) ]];
+        }
+    }
+    if (!fr[0].count) return nil;
+    NSString *name = [j[@"Name"] isKindOfClass:[NSString class]] ? j[@"Name"] : @"Kegel pattern";
+    return @{ @"name": name, @"feet": @([j[@"Distance"] intValue]), @"drop": @([j[@"ReverseDropBrushDistance"] intValue]),
+              @"ul": @(ul), @"fwd": fr[0], @"rev": fr[1] };
+}
+
+// .txt: the Kegel text export, the same format as the game's 48 built-in patterns. Fixed line positions
+// (checked against the game's Route 66 and the 2026 PBA Regional 37 file): name 1, uL 10, distance 12,
+// reverse brush drop 13; 15-line columns: forward start 14, stop 29, loads 44, speed 59; reverse start 75,
+// stop 90, loads 105, speed 120; forward end distances 136, reverse end distances 211.
+static NSDictionary *KegelFromText(NSString *text) {
+    NSArray *L = [[text stringByReplacingOccurrencesOfString:@"\r" withString:@""] componentsSeparatedByString:@"\n"];
+    if (L.count < 226 || ![[L[0] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqualToString:@"-1"]) return nil;
+    NSString *(^at)(NSUInteger) = ^NSString *(NSUInteger i) {
+        return i < L.count ? [L[i] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] : @"";
+    };
+    NSMutableArray *fr[2] = { [NSMutableArray array], [NSMutableArray array] };
+    NSUInteger base[2][5] = { { 14, 29, 44, 59, 136 }, { 75, 90, 105, 120, 211 } };
+    for (int d = 0; d < 2; d++) {
+        for (NSUInteger i = 0; i < 15; i++) {
+            NSString *st = at(base[d][0] + i), *sp = at(base[d][3] + i);
+            if (!st.length || !sp.length) break;
+            [fr[d] addObject:@[ @(st.intValue), @(at(base[d][1] + i).intValue), @(at(base[d][2] + i).intValue),
+                                @(sp.intValue), @(at(base[d][4] + i).floatValue) ]];
+        }
+    }
+    if (!fr[0].count) return nil;
+    return @{ @"name": at(1).length ? at(1) : @"Kegel pattern", @"feet": @(at(12).intValue), @"drop": @(at(13).intValue),
+              @"ul": @(at(10).intValue ?: 50), @"fwd": fr[0], @"rev": fr[1] };
+}
+
+// PDF from the Kegel Pattern Library (website / app "download"): the data sheet. Its text has one line
+// per step, "# START STOP LOADS MICS SPEED BUFF TANK from -> to T.OIL" (e.g. "2 2L 6R 1 50 14 500 A - 4 →6
+// 1,650"), forward rows before "REVERSE LOADS DATA" and reverse rows after it; "37 FEET" (distance) then
+// "30 FEET" (drop brush). Distances are whole feet, which is what the engine works in (whole-foot rows).
+static int KegelBoard(NSString *t) {               // "2L" -> 2, "6R" -> 34, "20" -> 20
+    t = [[t stringByReplacingOccurrencesOfString:@" " withString:@""] uppercaseString];
+    int n = t.intValue;
+    if ([t hasSuffix:@"R"]) return 40 - n;
+    return n;
+}
+
+static NSDictionary *KegelFromPDFText(NSString *text, NSString *title) {
+    if (!text.length) return nil;
+    static NSRegularExpression *row, *feet;
+    if (!row) {
+        row = [NSRegularExpression regularExpressionWithPattern:
+               @"(?<![\\d.,])(\\d{1,2})\\s+(\\d{1,2}\\s?[LR]|20)\\s+(\\d{1,2}\\s?[LR]|20)\\s+(\\d{1,2})\\s+(\\d{1,3})\\s+(\\d{1,2})\\s+(\\d{1,4})"
+               @"\\s+(?:[A-Za-z][^\\d]{0,24}?)?\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*(?:\\u2192|->|>|\\u2013|-|to)?\\s*(\\d{1,2}(?:\\.\\d+)?)\\s+[\\d,]+"
+                                                       options:NSRegularExpressionCaseInsensitive error:nil];
+        feet = [NSRegularExpression regularExpressionWithPattern:@"(\\d{1,2})\\s*FEET" options:NSRegularExpressionCaseInsensitive error:nil];
+    }
+    NSUInteger revAt = [text rangeOfString:@"REVERSE\\s+LOADS" options:NSCaseInsensitiveSearch | NSRegularExpressionSearch].location;
+    NSMutableArray *fr[2] = { [NSMutableArray array], [NSMutableArray array] };
+    int ul = 0, lastNum[2] = { 0, 0 };
+    for (NSTextCheckingResult *m in [row matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
+        NSString *(^g)(NSUInteger) = ^NSString *(NSUInteger i) { return [text substringWithRange:[m rangeAtIndex:i]]; };
+        int num = g(1).intValue;
+        int d = (revAt != NSNotFound) ? (m.range.location > revAt ? 1 : 0)
+                                      : ((lastNum[1] > 0 || (num == 1 && lastNum[0] > 0)) ? 1 : 0);   // no heading: numbering restarts
+        if (num != lastNum[d] + 1) continue;       // rows come numbered 1, 2, 3... in each table
+        lastNum[d] = num;
+        if (!ul) ul = g(5).intValue;
+        [fr[d] addObject:@[ @(KegelBoard(g(2))), @(KegelBoard(g(3))), @(g(4).intValue), @(g(6).intValue), @(g(9).floatValue) ]];
+    }
+    if (!fr[0].count) return nil;
+    NSArray *ft = [feet matchesInString:text options:0 range:NSMakeRange(0, text.length)];
+    int distance = ft.count > 0 ? [text substringWithRange:[ft[0] rangeAtIndex:1]].intValue : 0;
+    int drop = ft.count > 1 ? [text substringWithRange:[ft[1] rangeAtIndex:1]].intValue : 0;
+    NSRange dl = [text rangeOfString:@"DROP\\s*BRUSH:" options:NSCaseInsensitiveSearch | NSRegularExpressionSearch];
+    if (dl.location != NSNotFound) {                // "DROP BRUSH: 30 FEET" when the label sits next to its value
+        NSTextCheckingResult *m = [feet firstMatchInString:text options:0 range:NSMakeRange(NSMaxRange(dl), MIN((NSUInteger)24, text.length - NSMaxRange(dl)))];
+        if (m) drop = [text substringWithRange:[m rangeAtIndex:1]].intValue;
+    }
+    return @{ @"name": title.length ? title : @"Kegel pattern", @"feet": @(distance), @"drop": @(drop),
+              @"ul": @(ul ?: 50), @"fwd": fr[0], @"rev": fr[1] };
+}
+
+static NSDictionary *KegelFromPDF(NSData *data, NSString *fileName) {
+    PDFDocument *doc = [[PDFDocument alloc] initWithData:data];
+    if (!doc) return nil;
+    NSMutableString *text = [NSMutableString string];
+    for (NSInteger i = 0; i < doc.pageCount; i++) { NSString *t = [doc pageAtIndex:i].string; if (t) [text appendFormat:@"%@\n", t]; }
+    NSString *title = doc.documentAttributes[PDFDocumentTitleAttribute];
+    if (![title isKindOfClass:[NSString class]] || !title.length)
+        title = [[fileName stringByDeletingPathExtension] stringByReplacingOccurrencesOfString:@"_" withString:@" "];
+    return KegelFromPDFText(text, title);
+}
+
+// The first file in a .zip whose name ends with ext (skips macOS "__MACOSX" copies). Stored or deflated.
+static NSData *ZipFile(NSData *zip, NSString *ext) {
+    const uint8_t *b = (const uint8_t *)zip.bytes;
+    NSUInteger n = zip.length;
+    auto u16 = [&](NSUInteger o) -> uint32_t { return o + 2 <= n ? (uint32_t)(b[o] | b[o + 1] << 8) : 0; };
+    auto u32 = [&](NSUInteger o) -> uint32_t { return o + 4 <= n ? (uint32_t)(b[o] | b[o + 1] << 8 | b[o + 2] << 16 | (uint32_t)b[o + 3] << 24) : 0; };
+    if (n < 22) return nil;
+    NSUInteger eocd = NSNotFound;
+    for (NSUInteger o = n - 22; o + 1 > 0 && n - o < 70000; o--) { if (u32(o) == 0x06054b50) { eocd = o; break; } if (o == 0) break; }
+    if (eocd == NSNotFound) return nil;
+    NSUInteger count = u16(eocd + 10), cd = u32(eocd + 16);
+    for (NSUInteger i = 0; i < count && cd + 46 <= n; i++) {
+        if (u32(cd) != 0x02014b50) break;
+        uint32_t method = u16(cd + 10), csize = u32(cd + 20), usize = u32(cd + 24);
+        uint32_t nl = u16(cd + 28), xl = u16(cd + 30), cl = u16(cd + 32), lho = u32(cd + 42);
+        NSString *name = cd + 46 + nl <= n ? [[NSString alloc] initWithBytes:b + cd + 46 length:nl encoding:NSUTF8StringEncoding] : nil;
+        cd += 46 + nl + xl + cl;
+        if (!name || [name hasPrefix:@"__MACOSX"] || ![name.lowercaseString hasSuffix:ext]) continue;
+        if (lho + 30 > n || u32(lho) != 0x04034b50) continue;
+        NSUInteger data = lho + 30 + u16(lho + 26) + u16(lho + 28);
+        if (data + csize > n) continue;
+        NSData *raw = [zip subdataWithRange:NSMakeRange(data, csize)];
+        if (method == 0) return raw;
+        if (method == 8) {                         // raw deflate (Apple's "zlib" algorithm)
+            NSData *out = [raw decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib error:nil];
+            if (out && (!usize || out.length == usize)) return out;
+        }
+    }
+    return nil;
+}
+
+static NSDictionary *KegelImport(NSData *data, NSString *fileName) {
+    if (!data.length) return nil;
+    const uint8_t *b = (const uint8_t *)data.bytes;
+    NSDictionary *k = nil;
+    if (data.length > 4 && b[0] == 'P' && b[1] == 'K') {
+        NSData *p = ZipFile(data, @".pattern");
+        if (p) k = KegelFromJSON(p);
+        if (!k) { NSData *t = ZipFile(data, @".txt"); if (t) k = KegelFromText([[NSString alloc] initWithData:t encoding:NSUTF8StringEncoding] ?: [[NSString alloc] initWithData:t encoding:NSISOLatin1StringEncoding]); }
+        if (!k) { NSData *pdf = ZipFile(data, @".pdf"); if (pdf) k = KegelFromPDF(pdf, fileName); }
+    } else if (data.length > 4 && b[0] == '%' && b[1] == 'P' && b[2] == 'D' && b[3] == 'F') {
+        k = KegelFromPDF(data, fileName);
+    } else {
+        k = KegelFromJSON(data);
+        if (!k) k = KegelFromText([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding]);
+    }
+    if (!k) return nil;
+    NSMutableDictionary *p = [k mutableCopy];
+    p[@"id"] = NSUUID.UUID.UUIDString;
+    p[@"fwd"] = CleanSteps(k[@"fwd"]);
+    p[@"rev"] = CleanSteps(k[@"rev"]);
+    p[@"base"] = @0;
+    p[@"exact"] = @YES;                            // the file's own step distances
+    NSString *name = [k[@"name"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    p[@"name"] = name.length ? [name substringToIndex:MIN((NSUInteger)40, name.length)] : (fileName.stringByDeletingPathExtension ?: @"Kegel pattern");
+    return p;
+}
+
+@interface BFKegelPicker : NSObject <UIDocumentPickerDelegate>
+@property (nonatomic, copy) void (^done)(NSDictionary *pattern, NSString *error);
+@end
+@implementation BFKegelPicker
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *u = urls.firstObject;
+    BOOL scoped = [u startAccessingSecurityScopedResource];
+    NSData *d = u ? [NSData dataWithContentsOfURL:u] : nil;
+    if (scoped) [u stopAccessingSecurityScopedResource];
+    NSDictionary *p = KegelImport(d, u.lastPathComponent);
+    ODonePresenting();
+    if (self.done) self.done(p, p ? nil : @"That file isn't a Kegel pattern (a .pdf, .zip, .Pattern or .txt from the Kegel Pattern Library)");
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c { ODonePresenting(); }
+@end
+
+static BFKegelPicker *sKegelPicker;
+
+static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)) {
+    UIDocumentPickerViewController *pick = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeItem ] asCopy:YES];
+    sKegelPicker = [BFKegelPicker new];
+    sKegelPicker.done = done;
+    pick.delegate = sKegelPicker;
+    pick.allowsMultipleSelection = NO;
+    OPresentVC(pick);
 }

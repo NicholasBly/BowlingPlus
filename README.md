@@ -21,7 +21,10 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Fix oil display side | The game draws oil mirrored, so breakdown/carrydown showed on the wrong side. On by default | Everywhere (looks only) |
 | Show oil breakdown | Redraws the lane oil after every shot | Practice |
 | Invisible oil | Hidden oil, random unlocked game pattern each game | Practice |
-| Custom oil patterns | Real Kegel-style forward/reverse steps, built by the game's own engine; share via QR | Practice |
+| Custom oil patterns | Real Kegel-style forward/reverse steps, drawn by BowlingPlus's copy of the game's oil engine; share via QR | Practice |
+| Kegel pattern import | Pick a pattern downloaded from the Kegel Pattern Library app or website (the .pdf data sheet, or a .zip / .Pattern / .txt) and it's added: steps, distances and drop brush | Practice |
+| BowlingPlus collection | Real Kegel patterns ready to play: Baton Rouge (2012 USBC Open), PBA Regional 37 (2026) | Practice |
+| Oil color | Pick the color the lane shows oil in, or keep the game's | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
 
 The Practice-only stuff turns itself off in online matches, tournaments, and the tutorial, so it never messes with other players.
@@ -91,6 +94,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 ## If something's off
 
+- **Updates:** tap **Check for updates** at the bottom of the menu. It asks GitHub for the release marked **Latest**.
 - **Menu won't open:** give the phone 2-3 quick, firm shakes, a few seconds after the game finishes loading.
 - **See what the tweak is doing:** on a Mac, open the Console app, pick your iPhone, and search for `BowlingPlus`.
 - **Reporting a problem:** tap **Copy debug info** in the menu and paste it into your message.
@@ -103,6 +107,8 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.4.4:** Kegel PDF import (what the Kegel app and website download), and skipped parts of a pattern get a thin film instead of full oil.
+- **1.4.3:** Kegel pattern file import (.zip/.Pattern/.txt), PBA Regional 37 in the collection, custom patterns on the correct side of the lane with no bare gaps, Check for updates, and menu layout fixes.
 - **1.4.2:** custom patterns drawn correctly (BowlingPlus copy of the game's Kegel engine, using the sheet's distances), the original oil look by default, and an oil color picker.
 - **1.4.1:** replays keep your custom oil, patterns carry their reverse brush drop, Show oil thickness, and an oil report in debug info.
 - **1.4.0:** renamed to BowlingPlus, the BowlingPlus collection (Baton Rouge), thickness-colored previews, working ⋯ and Start from panels, and custom-oil overlay and replay fixes.
@@ -128,6 +134,9 @@ Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 | `src/Menu.mm` | The shake menu and the pin picker |
 | `src/Shake.mm` | Backup shake detector (accelerometer) |
 | `src/BPTexture.mm` | Draws the Match Up BP look-alike skin |
+| `src/OilUI.mm` | Custom oil: pattern library, editor, QR share, Kegel file import, oil color picker |
+| `src/OilCollection.mm` | The BowlingPlus collection of real Kegel patterns |
+| `patterns/README.md` | How to add a pattern from a Kegel data sheet |
 | `src/Engine.mm` | Runs things every frame + saves settings |
 | `tools/inject_ipa.py` | Puts the dylib inside an IPA |
 | `CHANGELOG.md` | Everything that changed, version by version |

@@ -37,6 +37,8 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch;
 @property (nonatomic, strong) UILabel *autoLabel, *fpsLabel, *oilLabel;
 @property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch;
+@property (nonatomic, strong) UIButton *updateButton;
+@property (nonatomic, copy) NSString *updateURL;
 @property (nonatomic, strong) UIButton *oilColorButton;
 @property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *privacySwitch, *unstickSwitch, *ipv4Switch;
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
@@ -134,28 +136,93 @@ static UIWindow *HostWindow(void) {
     [logo.heightAnchor constraintEqualToConstant:25].active = YES;
     UIButton *gh = [self linkButton:@"BowlingPlus" url:@"https://github.com/NicholasBly/BowlingPlus"];
     UIButton *donate = [self linkButton:@"\u2665 Donate" url:@"https://github.com/sponsors/NicholasBly"];
-    UILabel *dot = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
-    UIStackView *row = [self hstack:@[logo, gh, dot, donate] spacing:8];
+    UIButton *updates = [self linkButton:@"Check for updates" url:nil];
+    [updates addTarget:self action:@selector(checkForUpdates) forControlEvents:UIControlEventTouchUpInside];
+    UILabel *dot1 = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
+    UILabel *dot2 = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
+    UIStackView *row = [self hstack:@[logo, gh, dot1, donate, dot2, updates] spacing:6];
     row.alignment = UIStackViewAlignmentCenter;
+    // what the update check found (tap it to open the release when there's a newer one)
+    self.updateButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.updateButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    self.updateButton.titleLabel.numberOfLines = 0;
+    self.updateButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+    self.updateButton.hidden = YES;
+    [self.updateButton addTarget:self action:@selector(openUpdate) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *col = [self vstack];
+    col.alignment = UIStackViewAlignmentCenter;
+    col.spacing = 4;
+    [col addArrangedSubview:row];
+    [col addArrangedSubview:self.updateButton];
     UIView *wrap = [UIView new];                  // centered in the menu
-    row.translatesAutoresizingMaskIntoConstraints = NO;
-    [wrap addSubview:row];
+    col.translatesAutoresizingMaskIntoConstraints = NO;
+    [wrap addSubview:col];
     [NSLayoutConstraint activateConstraints:@[
-        [row.topAnchor constraintEqualToAnchor:wrap.topAnchor constant:6],
-        [row.bottomAnchor constraintEqualToAnchor:wrap.bottomAnchor],
-        [row.centerXAnchor constraintEqualToAnchor:wrap.centerXAnchor],
-        [row.leadingAnchor constraintGreaterThanOrEqualToAnchor:wrap.leadingAnchor],
+        [col.topAnchor constraintEqualToAnchor:wrap.topAnchor constant:6],
+        [col.bottomAnchor constraintEqualToAnchor:wrap.bottomAnchor],
+        [col.centerXAnchor constraintEqualToAnchor:wrap.centerXAnchor],
+        [col.leadingAnchor constraintGreaterThanOrEqualToAnchor:wrap.leadingAnchor],
     ]];
     return wrap;
 }
 
+// GitHub's "latest release" (the one marked Latest on the Releases page; drafts and pre-releases are
+// skipped). The tag can be "1.4.3" or "v1.4.3".
+static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
+    NSArray *x = [a componentsSeparatedByString:@"."], *y = [b componentsSeparatedByString:@"."];
+    for (NSUInteger i = 0; i < MAX(x.count, y.count); i++) {
+        int p = i < x.count ? [x[i] intValue] : 0, q = i < y.count ? [y[i] intValue] : 0;
+        if (p != q) return p < q ? NSOrderedAscending : NSOrderedDescending;
+    }
+    return NSOrderedSame;
+}
+
+- (void)checkForUpdates {
+    self.updateButton.hidden = NO;
+    self.updateURL = nil;
+    [self.updateButton setTitle:@"Checking GitHub\u2026" forState:UIControlStateNormal];
+    [self.updateButton setTitleColor:Dim(0.55) forState:UIControlStateNormal];
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://api.github.com/repos/NicholasBly/BowlingPlus/releases/latest"]
+                                                     cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:15];
+    [r setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+    [r setValue:[NSString stringWithFormat:@"BowlingPlus/%@", BF_VERSION] forHTTPHeaderField:@"User-Agent"];
+    __weak BFMenu *weak = self;
+    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
+        NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+        NSString *tag = [j isKindOfClass:[NSDictionary class]] && [j[@"tag_name"] isKindOfClass:[NSString class]] ? j[@"tag_name"] : nil;
+        NSString *page = [j isKindOfClass:[NSDictionary class]] && [j[@"html_url"] isKindOfClass:[NSString class]] ? j[@"html_url"]
+                         : @"https://github.com/NicholasBly/BowlingPlus/releases/latest";
+        dispatch_async(dispatch_get_main_queue(), ^{
+            BFMenu *m = weak;
+            if (!m) return;
+            NSString *latest = [tag stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"vV "]];
+            if (!latest.length) {
+                [m.updateButton setTitle:@"Couldn't reach GitHub. Check your connection and try again." forState:UIControlStateNormal];
+                [m.updateButton setTitleColor:Dim(0.55) forState:UIControlStateNormal];
+            } else if (BPCompareVersions(latest, BF_VERSION) == NSOrderedDescending) {
+                m.updateURL = page;
+                [m.updateButton setTitle:[NSString stringWithFormat:@"BowlingPlus %@ is out (you have %@). Tap to download.", latest, BF_VERSION]
+                                forState:UIControlStateNormal];
+                [m.updateButton setTitleColor:Accent() forState:UIControlStateNormal];
+            } else {
+                [m.updateButton setTitle:[NSString stringWithFormat:@"You're up to date (%@).", BF_VERSION] forState:UIControlStateNormal];
+                [m.updateButton setTitleColor:Dim(0.55) forState:UIControlStateNormal];
+            }
+        });
+    }] resume];
+}
+
+- (void)openUpdate {
+    if (self.updateURL) [[UIApplication sharedApplication] openURL:[NSURL URLWithString:self.updateURL] options:@{} completionHandler:nil];
+}
+
 - (UIButton *)linkButton:(NSString *)title url:(NSString *)url {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:15 weight:UIFontWeightBold],
+    NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightBold],
                              NSForegroundColorAttributeName: Accent(),
                              NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle) };
     [b setAttributedTitle:[[NSAttributedString alloc] initWithString:title attributes:attrs] forState:UIControlStateNormal];
-    [b addAction:[UIAction actionWithHandler:^(UIAction *a) {
+    if (url) [b addAction:[UIAction actionWithHandler:^(UIAction *a) {
         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     return b;
@@ -217,7 +284,13 @@ static UIWindow *HostWindow(void) {
     close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     [close setTitleColor:Dim(0.7) forState:UIControlStateNormal];
     [close addTarget:self action:@selector(hideMenu) forControlEvents:UIControlEventTouchUpInside];
-    [stack addArrangedSubview:[self hstack:@[[self label:@"\U0001F3B3 BowlingPlus" size:22 weight:UIFontWeightHeavy color:UIColor.whiteColor], close] spacing:8]];
+    close.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+    [close.widthAnchor constraintEqualToConstant:44].active = YES;
+    [close.heightAnchor constraintEqualToConstant:44].active = YES;
+    UILabel *title = [self label:@"\U0001F3B3 BowlingPlus" size:22 weight:UIFontWeightHeavy color:UIColor.whiteColor];
+    [title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [close setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [stack addArrangedSubview:[self hstack:@[title, close] spacing:8]];
     self.statusLabel = [self label:@"" size:13 weight:UIFontWeightMedium color:Accent()];
     [stack addArrangedSubview:self.statusLabel];
     self.resumeButton = [self button:@"Turn BowlingPlus back on" filled:YES small:NO action:@selector(resumeTapped)];
@@ -246,6 +319,9 @@ static UIWindow *HostWindow(void) {
     UIButton *clear = [self button:@"Clear" filled:NO small:NO action:@selector(clearTapped)];
     [go setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     [clear setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [f setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [go setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [clear setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     [stack addArrangedSubview:[self hstack:@[f, go, clear] spacing:8]];
     self.arsenalLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.55)];
     [stack addArrangedSubview:self.arsenalLabel];

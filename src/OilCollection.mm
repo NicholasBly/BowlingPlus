@@ -29,6 +29,17 @@ NSArray<NSDictionary *> *BFOilCollection(void) {
                           B(2, 38, 0, 22, 35.0), B(2, 38, 0, 26, 39.0) ],
                @"rev": @[ B(2, 38, 0, 30, 20.0), B(13, 27, 1, 22, 16.9), B(11, 29, 1, 18, 14.4), B(8, 32, 1, 18, 11.9),
                           B(6, 34, 1, 18, 9.4),  B(5, 35, 1, 18, 6.9),  B(2, 38, 0, 10, 0.0) ] },
+
+            // 2026 PBA Regional 37 (Kegel). From the official .Pattern file. Sheet: 37 ft, 50 uL/board,
+            // 32.65 mL (18.65 forward / 14 reverse), 373 / 280 boards crossed, drop brush 30 ft.
+            // Lopsided (2L-6R, 4L-9R, 11L-10R, 13L-12R): needs Kegel sides, which BowlingPlus draws.
+            @{ @"id": @"bp.pbaregional37.2026", @"collection": @YES,
+               @"name": @"PBA Regional 37", @"event": @"2026 PBA Regional",
+               @"feet": @37, @"ml": @32.65, @"ul": @50, @"base": @0, @"drop": @30, @"exact": @YES,
+               @"fwd": @[ B(2, 38, 3, 14, 3.92), B(2, 34, 1, 14, 5.88), B(7, 33, 3, 14, 11.76), B(4, 31, 2, 14, 15.68),
+                          B(11, 30, 3, 18, 23.24), B(13, 28, 2, 18, 28.28), B(2, 38, 0, 22, 37.0) ],
+               @"rev": @[ B(2, 38, 0, 30, 29.0), B(11, 29, 2, 22, 22.84), B(9, 32, 2, 18, 17.8), B(7, 33, 2, 18, 12.76),
+                          B(6, 34, 1, 14, 10.8), B(2, 38, 3, 14, 4.92), B(2, 38, 0, 14, 0.0) ] },
         ];
     });
     return all;

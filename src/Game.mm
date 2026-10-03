@@ -1944,10 +1944,19 @@ static void KegelEnds(NSArray *fwdIn, NSArray *revIn, bool exact, std::vector<KS
     }
 }
 
-static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &rev, int travel, float U[41][60]) {
+// fillGaps (BowlingPlus improvement, custom patterns only): the game only carries oil past a board's
+// LAST oiled foot. A pattern that skips a board and comes back to it (2026 PBA Regional 37: 7L-7R, then
+// 4L-9R; Kegel's "Start 5 and Stop 15" calibration pattern: alternating 2 ft bars) leaves it bare in
+// between. Kegel draws those feet as buffed, a thin film. They get the same film the game's own transfer
+// ends at (the board's loads so far x 1.5), never more than the oil on either side, before the reverse pass.
+static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &rev, int travel, float U[41][60], bool fillGaps) {
     memset(U, 0, sizeof(float) * 41 * 60);
     float spd[61] = {}, buff[39] = {};
     int last[39] = {}, loads[39] = {};
+    static bool cov[41][60];
+    static int lsum[41][60];                       // loads a board has had once the oil head covers this foot
+    memset(cov, 0, sizeof(cov));
+    memset(lsum, 0, sizeof(lsum));
     auto put = [&](int b, int r, float v) { if (b >= 0 && b < 41 && r >= 0 && r < 60) U[b][r] = v; };
     auto get = [&](int b, int r) -> float { return (b >= 0 && b < 41 && r >= 0 && r < 60) ? U[b][r] : 0.f; };
     // forward
@@ -1961,6 +1970,10 @@ static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &r
                     if (r <= 60) spd[r] = sp;
                     for (int b = k.start; b <= k.stop; b++) {
                         put(b, r, 339.f / sp);
+                        if (b >= 0 && b < 41 && r >= 0 && r < 60) {
+                            cov[b][r] = true;
+                            lsum[b][r] = (b < 39 ? loads[b] : 0) + k.loads;
+                        }
                         if (r == end && b >= 0 && b < 39) { last[b] = end; loads[b] += k.loads; }
                     }
                 }
@@ -1984,6 +1997,19 @@ static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &r
         float slope = buff[b] != 0 ? (get(b, endRow) - get(b, last[b])) / buff[b] : 0.f;
         for (int r = last[b] + 1; r < endRow; r++) put(b, r, get(b, r - 1) + (spd[r] > 0 ? slope / spd[r] : 0.f));
     }
+    if (fillGaps) {
+        for (int b = 2; b <= 38; b++) {
+            int p = -1;
+            for (int r = 0; r <= endRow && r < 60; r++) {
+                if (!cov[b][r]) continue;
+                if (p >= 0 && r - p > 1) {            // feet p+1 .. r-1 were skipped by the oil head
+                    float film = fminf(lsum[b][p] * 1.5f, fminf(U[b][p], U[b][r]));
+                    for (int q = p + 1; q < r; q++) if (U[b][q] == 0) U[b][q] = film;
+                }
+                p = r;
+            }
+        }
+    }
     // reverse: new = 2 x old + 339 / speed; only steps ending short of the reverse brush drop pick
     // their own boards (others keep the previous step's); a travel step to the foul line still oils
     int bs = 0, be = 0, row = 0;
@@ -2006,11 +2032,15 @@ static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &r
     }
 }
 
-static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, bool exact) {
+// custom = a BowlingPlus pattern: fill skipped gaps, and put Kegel's left boards on the bowler's left.
+// The game's own grids have lane column 0 on the bowler's RIGHT (OilMatrix[w] = Units[w + 1]), so its
+// Kegel patterns are mirrored; device screenshots of 2026 PBA Regional 37 (lopsided: 2L-6R, 4L-9R)
+// showed the left-side features on the right. custom = false reproduces the game exactly (self-check).
+static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, bool exact, bool custom) {
     std::vector<KStep> fwd, rev;
     KegelEnds(fwdIn, revIn, exact, fwd, rev);
     static float U[41][60];
-    KegelDraw(fwd, rev, drop > 0 ? drop : 60, U);
+    KegelDraw(fwd, rev, drop > 0 ? drop : 60, U, custom);
     int w = 0, h = 0;
     if (!sGpMapW) sGpMapW = StaticField(N.GameParams, "OIL_MAP_WIDTH");
     if (!sGpMapH) sGpMapH = StaticField(N.GameParams, "OIL_MAP_LENGTH");
@@ -2021,7 +2051,8 @@ static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, 
     float *g = (float *)grid.mutableBytes, maxv = 0, sum = 0;
     for (int x = 0; x < w; x++)
         for (int y = 0; y < h; y++) {               // like OilDescription.Parce: OilMatrix[w,h] = Units[w + 1, h / 4]
-            float v = (x + 1 < 41 && y / 4 < 60) ? U[x + 1][y / 4] : 0;
+            int board = custom ? w - x : x + 1;
+            float v = (board >= 0 && board < 41 && y / 4 < 60) ? U[board][y / 4] : 0;
             g[(size_t)x * h + y] = v;
             maxv = fmaxf(maxv, v);
             sum += v;
@@ -2038,7 +2069,7 @@ static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, 
 static NSString *KegelSelfCheck(int index) {
     NSDictionary *game = KegelRun(index, nil, nil, 0);
     if (!game) return @"self-check: couldn't read the pattern";
-    NSDictionary *ours = KegelDrawPattern(game[@"fwd"], game[@"rev"], [game[@"tdrop"] intValue], true);
+    NSDictionary *ours = KegelDrawPattern(game[@"fwd"], game[@"rev"], [game[@"tdrop"] intValue], true, false);
     NSData *a = game[@"grid"], *b = ours[@"grid"];
     if (a.length != b.length) return @"self-check: size mismatch";
     const float *x = (const float *)a.bytes, *y = (const float *)b.bytes;
@@ -2082,7 +2113,7 @@ static void OilCustomTick() {
     int base = [sCustomPattern[@"base"] intValue];
     if (!OilList(ol) || base < 0 || base >= ol.size) base = 0;
     NSDictionary *r = KegelDrawPattern(sCustomPattern[@"fwd"], sCustomPattern[@"rev"], [sCustomPattern[@"drop"] intValue],
-                                       [sCustomPattern[@"exact"] boolValue]);
+                                       [sCustomPattern[@"exact"] boolValue], true);
     sLastKegel = r;
     sLastKegelBase = base;
     NSData *grid = r[@"grid"];
@@ -2207,7 +2238,7 @@ static NSString *OilReport(bool live) {
     for (NSArray *st in r[@"rev"]) [re addObject:[NSString stringWithFormat:@"%.1f", [st[4] floatValue]]];
     if (r) [s appendFormat:@"  engine step ends: fwd %@ | rev %@\n", [fe componentsJoinedByString:@" "], [re componentsJoinedByString:@" "]];
     if (live) [s appendFormat:@"  %@\n", KegelSelfCheck(OilSelected() - 1)];
-    [s appendString:@"  ft: engine b3/b10/b20 | lane b3/b10/b20\n"];
+    [s appendString:@"  ft: engine c3/c10/c20 | lane c3/c10/c20 (lane columns, 1 = bowler's right)\n"];
     int b[3] = { 3, 10, 20 };
     for (int ft = 0; ft <= 45; ft += 5) {
         [s appendFormat:@"  %2d:", ft];
@@ -2249,7 +2280,14 @@ NSArray<NSDictionary *> *BFOilBuiltins(void) {
         void *d = lv.items[i];
         if (!d) continue;
         OilDescOffsets(d);
-        [out addObject:@{ @"index": @(i), @"name": (sOdName >= 0 ? Str(At<void *>(d, sOdName)) : nil) ?: [NSString stringWithFormat:@"Pattern %d", i + 1],
+        NSString *nm = sOdName >= 0 ? Str(At<void *>(d, sOdName)) : nil;
+        if (nm) {                                  // the game's names can carry rich-text tags: "<size=50>2011 USBC Masters</size>"
+            static NSRegularExpression *tags;
+            if (!tags) tags = [NSRegularExpression regularExpressionWithPattern:@"<[^>]*>" options:0 error:nil];
+            nm = [[tags stringByReplacingMatchesInString:nm options:0 range:NSMakeRange(0, nm.length) withTemplate:@""]
+                  stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        }
+        [out addObject:@{ @"index": @(i), @"name": nm.length ? nm : [NSString stringWithFormat:@"Pattern %d", i + 1],
                           @"feet": @(sOdDist >= 0 ? At<float>(d, sOdDist) : 0), @"ml": @(sOdVol >= 0 ? At<float>(d, sOdVol) : 0) }];
     }
     return out;
@@ -2260,7 +2298,7 @@ NSArray<NSDictionary *> *BFOilBuiltins(void) {
 NSDictionary *BFOilCompute(int templateIndex, NSArray *fwd, NSArray *rev, int drop, BOOL exact) {
     @try {
         if (!fwd && !rev) return KegelRun(templateIndex, nil, nil, 0);
-        return KegelDrawPattern(fwd, rev, drop, exact);
+        return KegelDrawPattern(fwd, rev, drop, exact, true);
     } @catch (NSException *e) { return nil; }
 }
 

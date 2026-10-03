@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.4.2"
+#define BF_VERSION @"1.4.4"
 #define BF_MAX_SPEED 5.0f
 
 // Settings (saved in NSUserDefaults)

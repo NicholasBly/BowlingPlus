@@ -9,7 +9,7 @@ TWEAK_NAME = BowlingPlus
 BowlingPlus_FILES = Tweak.xm $(wildcard src/*.mm)
 BowlingPlus_CFLAGS = -fobjc-arc -Isrc -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations
 BowlingPlus_CCFLAGS = -std=c++17
-BowlingPlus_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion CoreGraphics Network AVFoundation PhotosUI CoreImage
+BowlingPlus_FRAMEWORKS = UIKit Foundation QuartzCore CoreMotion CoreGraphics Network AVFoundation PhotosUI CoreImage UniformTypeIdentifiers PDFKit
 
 # Sideloaded (non-jailbroken) apps cannot patch code at runtime, so this tweak never
 # uses Substrate/ElleKit. The "internal" Logos generator only swizzles ObjC methods.
