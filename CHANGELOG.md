@@ -2,6 +2,114 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.0] - 2026-10-04
+
+### Added
+- **Tap the pin layouts to pick pins** (Practice). Tap the pin layout in the top right while you hold the ball, or the little screen under the ball return in the overhead view, and the pin picker opens for that one shot, starting from the pins that are standing. Rack 'em sets them up right away and the pick lasts until you throw (it survives switching balls); the next frame is a normal rack. Spare shooting mode in the menu is still the way to get it every frame.
+- **An X on the pin picker.** It closes the picker without changing anything, in both modes. In Spare mode it also won't ask again that frame.
+- **The game's own 48 oil patterns are now drawn like real life in Practice.** Each pattern carries its real Kegel file; BowlingPlus draws the lane from it with the Kegel-accurate model (exact distances, microliters, reverse oil adding up, brush carry-down, brushed film over the whole lane, Kegel's left on the bowler's left) instead of the game's simplified engine. All 48 are switched at once so the pattern carousel shows them right away, and they go back to the game's own the moment you're not in Practice (online matches, tournaments and the tutorial always use the game's oil). Checked on all 48 files: no gaps in the film, nothing past the pattern's distance, and total oil between 0.72x and 1.19x of what the game's engine makes from the same file.
+- **"Start from" in the pattern editor** copies a game pattern's real file data (microliters, exact distances, drop brush, length).
+- **`.txt` pattern import** also reads the second file layout the game uses for some patterns.
+
+### Changed
+- **Shake menu redesign.** Grouped into cards (Arsenal search, Practice fun, Oil, Fixes, Pins & display, Help & diagnostics), each foldable by tapping its title. Descriptions are hidden: the ⓘ in the header shows all of them, tapping a row's title shows just that one, and your choice is remembered.
+- **Privacy popup: accept it once, never see it again.** The menu option is gone. The first time, you accept the My.Games page yourself; BowlingPlus notices it went away and remembers. From then on the page is hidden as soon as it appears and its Sign up button is pressed for you. Pages that aren't the first-time Sign-up page (like updated terms) are shown normally and never pressed, and a page that doesn't load within 8 seconds is shown again. If auto-accept was on before, it counts as already accepted.
+- **Kegel-accurate oil is no longer a setting.** It is always used for custom and imported patterns (and now the game's, in Practice).
+
+### Fixed
+- **"Check for updates" was cut off** ("Check...pdates") on narrower layouts. The footer is now two lines: logo, BowlingPlus and Donate on the first, Check for updates on its own line.
+
+### Not tested on a device when this was written
+The menu layout, hiding the privacy page, and the pin-layout tap detection were built and compiled, but not seen on a phone. "Copy debug info" now has a `pin tap:` line (what the last tap hit) and a `privacy:` line to help if anything misbehaves.
+
+## [1.5.3] - 2026-10-03
+
+### Fixed
+- **Custom patterns now match Kegel's charts.** Compared cell by cell with the charts of four patterns (23,088 cells), the oil lands where the sheet says in 99.90% of them; the rest are the arrow triangles drawn on the chart. Causes of the old mismatch (found on the 2025 U.S. Open #4):
+  - **Rounded rows.** Steps were placed on whole-foot rows from the sheet's rounded numbers, so neighboring left and right rectangles overlapped by a full foot. Kegel's sheet numbers are rounded for display ("10→14" is really 9.80→13.72, because each load travels speed × 0.14 ft). Oil is now placed on the lane's real quarter-foot rows with exact distances. Only the true overlaps remain.
+  - **Bare boards.** The game's oil engine only carries oil on boards the oil head crossed, so boards 6–7 and 33–34 had nothing (zero oil between the arrows). Kegel's chart has a brushed film over every board out to the pattern distance, in two tiers split at the reverse brush drop. Now every board from 2 to 38 has it.
+  - **Inflated oil.** 1.5.2 rescaled each pattern to the game's own total, which made every pass up to 1.8× too heavy. Oil is now in the game's own single-pass units, with no rescaling.
+- **Import accuracy:** end distances are recomputed from loads and speeds when a sheet only has rounded numbers (PDFs, text), and used as they are from Kegel's `.Pattern` files and the collection.
+
+### Added
+- **`tools/oil_verify/`:** the script that checks the oil model against Kegel's charts.
+
+## [1.5.2] - 2026-10-03
+
+### Fixed
+- **Kegel-accurate oil left the front of the lane too thin.** After its last reverse oil load, a lane machine travels back to the foul line with the brush still down, and that brush wipes oil onto the front of the lane. The sheet lists that step as 0 oil because the pump doesn't fire, not because no oil lands. 1.5.1 treated it as laying no oil; it now carries the oil down like the machine does. 2017 SEA Games Long now looks like its sheet: heavy front, darkest center at 10–19 ft with lighter outside boards, the pyramid, and light outside past 19 ft.
+
+## [1.5.1] - 2026-10-03
+
+### Added
+- **Kegel-accurate oil** (Oil section, on by default). Custom patterns lay oil the way the sheet describes it instead of the game's simplified way:
+  - each step's microliters (the MICS column) count
+  - reverse oil adds on top of forward oil instead of doubling it
+  - travel steps (0 loads) lay no oil
+  - past the oiled area, only a thin brushed film carries forward
+
+  The total amount of oil stays the same as the game's own model, so patterns aren't drier or slicker overall; it's just placed like the sheet. Patterns like 2017 SEA Games Long now show several oil levels on the lane instead of two.
+- **Microliters per step:** imported from PDFs (MICS), `.Pattern` files and `.txt` headers, editable in the pattern editor ("MICS"), and kept in share codes.
+- **Pin picture preview for your PC** (`pins/BowlingPlus-pin-preview.html`). Drop in a picture and see it on a spinning 3D pin, processed exactly like BowlingPlus does. You can drag to spin and tilt, right-drag to move, zoom, use quick views (Side A / Side B / seams), download the processed picture, and download the wrap template and guide.
+- **`PIN_TEXTURE_SYSTEM.md`:** how the pin picture system works, for whoever works on it next.
+
+### Note
+- A Kegel sheet's lane chart shades the lane by which pass oiled it (forward, reverse-only, brushed), not by how thick the oil is, so its colors won't line up exactly with the lane's thickness colors.
+
+## [1.5.0] - 2026-10-03
+
+### Fixed
+- **The RPM boost didn't add hook.** The game works out the ball's grip on the lane from its spin, but caps the spin at the ball's maximum, so extra revs past that did nothing. Boosted throws now also get the extra grip the uncapped formula would give, so more revs means more hook. It's only for that throw, and the game's value comes back right after.
+  - Very fast spin can look slow or even backwards on screen (like car wheels in videos). That's the frame rate, not the physics.
+
+### Changed
+- **Pin pictures:** the wrap sheet is now the way to design a pin: one piece that wraps around the pin like paper, so there are no seams. "Get the wrap template + guide" gives the wrap template and its guide. Square pictures in the game's layout still work.
+
+## [1.4.9] - 2026-10-03
+
+### Added
+- **Ball spin (RPM) boost** (Practice fun, under Ball speed). Multiplies your throw's spin right after release, 1x to 17x. The game's controls cap spin near 600 rpm; 17x takes that to about 10,000. The game's physics allows far more (100,000 rad/s), so nothing gets cut off.
+  - **Same spin direction:** the hook side stays the same.
+  - **More spin = more hook**, worked out by the game's own lane friction and oil.
+  - **The scoreboard** shows the boosted rpm.
+  - **Practice only**, like the speed boost.
+
+## [1.4.8] - 2026-10-03
+
+### Added
+- **Wrap layout for pin pictures.** A 2:1 picture that's the pin's surface unrolled evenly: left to right once around the pin (the edges meet), top to bottom from head to base.
+  - **Converted on your phone:** BowlingPlus maps it onto the game's layout using the pin's actual 3D shape, so seams always match, and evenly spaced designs (like a band of spikes) stay even all the way around.
+  - **Guides:** "Get the layout guide" now also gives a wrap guide and a wrap template (the game's pin unrolled).
+  - **Square pictures** still use the game's own layout.
+
+### Fixed
+- **A crack near the base** with hand-drawn pictures whose pin outline sits a little inside the real one. Background-colored slivers near the shape edges, and the blended pixels right at the edges, are now refilled from inside. Your picture is reprocessed automatically from now on when processing improves (BowlingPlus keeps the original).
+- **The "Game server over IPv4" fix was never actually switched on.** The game loads its main code slightly after BowlingPlus starts, so the fix found nothing to attach to (debug info: `dnsSlots=0`). It now attaches as soon as the game's code loads.
+- **Safe mode paused BowlingPlus for players whose game was just stuck loading** (for example, when the game's server can't be reached). Only crashes count now: a launch still running after 60 seconds clears the counter, so "Fix connection" can offer the offline button.
+
+### Removed
+- **"Pins face random ways"** (1.4.5). The game already shows each pin's random turn. Its standard pins just look the same from every side. BowlingPlus's version never activated.
+
+## [1.4.7] - 2026-10-02
+
+### Fixed
+- **Your pin image popped in at the start of every frame.** The pinsetter lowers its own set of pin models (plus pin-deck and reflection copies), and those still showed the game's pins. They now show your image too, and BowlingPlus re-checks every frame instead of every half second.
+- **A crack down the side of the pins**, where the two halves of the picture meet. The GPU blends in whatever is just outside the pin shapes, so a picture with another color or transparency there showed a line. BowlingPlus now fills the area around the shapes with the colors at their edges, and makes the picture fully solid like the game's. Your current picture gets this automatically on the first launch.
+
+## [1.4.6] - 2026-10-02
+
+### Added
+- **Use your own pin image** (new "Pin look" section in the shake menu):
+  - **Picking:** choose a picture from Photos or Files and it's wrapped onto the pins on every lane, reflections included. A non-square picture is stretched to square so it lines up.
+  - **The layout guide:** "Get the layout guide" saves or sends a guide showing exactly where each part of the picture lands (head, neck, body, base, the two sides and the underside), plus a clean template of the game's own pin to paint over.
+  - **Switching:** turning it off brings the game's pins back. If you change pins in the Pin Arsenal, your image stays on.
+  - **Looks only.**
+
+## [1.4.5] - 2026-10-02
+
+### Added
+- **Pins face random ways** (Display, on by default). The pinsetter already sets every pin turned a random way, but the game always drew them facing the same way. BowlingPlus shows each pin's real turn, so racks look like real life, and flying pins now visibly spin around their own axis. Works on the neighboring lanes and in the lane reflection too. Looks only: the physics is exactly the game's.
+
 ## [1.4.4] - 2026-10-02
 
 ### Added

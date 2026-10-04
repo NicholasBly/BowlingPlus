@@ -6,6 +6,9 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <PDFKit/PDFKit.h>
 #import "BFShared.h"
+#include <string>
+#include <vector>
+#include "KegelParse.h"
 
 // Custom oil patterns
 // -------------------
@@ -289,7 +292,8 @@ static NSArray *CleanSteps(id raw) {
         int a = Clampi(s[0], 1, 39, 2), b = Clampi(s[1], 1, 39, 38);
         float ft = [s count] > 4 && [s[4] respondsToSelector:@selector(floatValue)] ? [s[4] floatValue] : 0;
         ft = roundf(fminf(fmaxf(ft, 0), 70) * 100) / 100;     // keep Kegel files' exact distances (3.92 ft)
-        [out addObject:@[ @(MIN(a, b)), @(MAX(a, b)), @(Clampi(s[2], 0, 99, 2)), @(Clampi(s[3], 6, 30, 14)), @(ft) ]];
+        int ul = [s count] > 5 ? Clampi(s[5], 5, 150, 50) : 50;            // microliters per board (the sheet's MICS)
+        [out addObject:@[ @(MIN(a, b)), @(MAX(a, b)), @(Clampi(s[2], 0, 99, 2)), @(Clampi(s[3], 6, 30, 14)), @(ft), @(ul) ]];
     }
     return out;
 }
@@ -302,7 +306,8 @@ static NSString *BoardLabel(int b) {          // Kegel boards 1-39: 2 = "2L", 38
 
 static NSString *EncodePattern(NSDictionary *p) {
     NSDictionary *j = @{ @"v": @1, @"n": p[@"name"] ?: @"Custom", @"b": p[@"base"] ?: @0,
-                         @"f": CleanSteps(p[@"fwd"]), @"r": CleanSteps(p[@"rev"]), @"d": @(Clampi(p[@"drop"], 0, 60, 0)), @"x": @([p[@"exact"] boolValue]) };
+                         @"f": CleanSteps(p[@"fwd"]), @"r": CleanSteps(p[@"rev"]), @"d": @(Clampi(p[@"drop"], 0, 60, 0)), @"x": @([p[@"exact"] boolValue]),
+                         @"p": @([p[@"precise"] boolValue]), @"t": @(Clampi(p[@"feet"], 0, 60, 0)) };
     NSData *json = [NSJSONSerialization dataWithJSONObject:j options:0 error:nil];
     NSData *z = [json compressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib error:nil] ?: json;
     NSString *b = [z base64EncodedStringWithOptions:0];
@@ -326,7 +331,8 @@ static NSDictionary *DecodePattern(NSString *code) {
     if (!f.count && !rv.count) return nil;
     NSString *name = [j[@"n"] isKindOfClass:[NSString class]] ? [j[@"n"] substringToIndex:MIN((NSUInteger)40, [j[@"n"] length])] : @"Imported";
     return @{ @"id": NSUUID.UUID.UUIDString, @"name": name, @"base": @(Clampi(j[@"b"], 0, 999, 0)), @"fwd": f, @"rev": rv,
-              @"drop": @(Clampi(j[@"d"], 0, 60, 0)), @"exact": @([j[@"x"] boolValue]) };
+              @"drop": @(Clampi(j[@"d"], 0, 60, 0)), @"exact": @([j[@"x"] boolValue]),
+              @"precise": @([j[@"p"] boolValue]), @"feet": @(Clampi(j[@"t"], 0, 60, 0)) };
 }
 
 #pragma mark - oil preview (thickness colors, like a Kegel sheet)
@@ -520,8 +526,10 @@ static BFOilEditor *sEditor;
 
 - (void)startFrom:(int)index announce:(BOOL)announce {
     self.pattern[@"base"] = @(index);
-    NSDictionary *r = BFOilReady() ? BFOilCompute(index, nil, nil, 0, NO) : nil;
+    NSDictionary *r = BFOilReady() ? BFOilCompute(index, nil, nil, 0, NO, 0, NO) : nil;
     self.pattern[@"exact"] = @(r != nil);              // keep the game's own step distances
+    self.pattern[@"precise"] = @(r != nil);            // and use them as they are (the game's file values)
+    if ([r[@"feet"] intValue] > 0) self.pattern[@"feet"] = r[@"feet"]; else [self.pattern removeObjectForKey:@"feet"];
     int tdrop = [r[@"tdrop"] intValue];
     if (tdrop > 0) self.pattern[@"drop"] = @(tdrop);   // the start pattern's reverse brush drop
     [self.dropStepper setValue:[self.pattern[@"drop"] intValue]];
@@ -654,6 +662,8 @@ static BFOilEditor *sEditor;
 - (void)startFromPattern:(NSDictionary *)c {
     self.pattern[@"base"] = c[@"base"] ?: @0;
     self.pattern[@"exact"] = c[@"exact"] ?: @NO;
+    self.pattern[@"precise"] = c[@"precise"] ?: @NO;
+    if (c[@"feet"]) self.pattern[@"feet"] = c[@"feet"]; else [self.pattern removeObjectForKey:@"feet"];
     self.pattern[@"drop"] = c[@"drop"] ?: @0;
     [self.dropStepper setValue:[c[@"drop"] intValue]];
     self.pattern[@"from"] = c[@"name"];
@@ -690,14 +700,21 @@ static BFOilEditor *sEditor;
     [del addAction:[UIAction actionWithHandler:^(UIAction *a) {
         [list removeObjectAtIndex:i];
         weak.pattern[@"exact"] = @NO;
+        weak.pattern[@"precise"] = @NO;
+        [weak.pattern removeObjectForKey:@"feet"];
         [weak rebuildSteps];
         [weak schedulePreview];
     }] forControlEvents:UIControlEventTouchUpInside];
     UIStackView *top = OStack(@[name, end, [UIView new], del], UILayoutConstraintAxisHorizontal, 8);
 
     while (s.count < 5) [s addObject:@0];
+    if (s.count < 6) [s addObject:@50];
     NSString *titles[5] = { @"START", @"STOP", @"LOADS", @"SPEED in/s", @"TRAVEL TO (no oil)" };
     int lo[5] = { 1, 1, 0, 6, 0 }, hi[5] = { 39, 39, 99, 30, 70 };
+    BFOilStepper *mics = [[BFOilStepper alloc] initWithTitle:@"MICS (\u00B5L)" min:5 max:150];
+    mics.format = ^NSString *(int v) { return [NSString stringWithFormat:@"%d", v]; };
+    mics.value = s[5].intValue;
+    mics.changed = ^(int v) { s[5] = @(v); [weak schedulePreview]; };
     BOOL forward = list == self.fwd;
     NSMutableArray<BFOilStepper *> *steppers = [NSMutableArray array];
     for (int k = 0; k < 5; k++) {
@@ -712,7 +729,7 @@ static BFOilEditor *sEditor;
     for (int k = 0; k < 5; k++) {
         steppers[k].changed = ^(int v) {
             s[k] = @(v);
-            if (k == 2 || k == 3) weak.pattern[@"exact"] = @NO;   // distances now come from loads x speed
+            if (k == 2 || k == 3) { weak.pattern[@"exact"] = @NO; weak.pattern[@"precise"] = @NO; [weak.pattern removeObjectForKey:@"feet"]; }   // distances now come from loads x speed
             if (k == 2) {                              // zero loads = machine travels without oil
                 travel.hidden = v != 0;
                 if (v == 0 && forward && s[4].floatValue < 1) { s[4] = @(40); travel.value = 40; }
@@ -723,7 +740,7 @@ static BFOilEditor *sEditor;
     UIStackView *r1 = OStack(@[steppers[0], steppers[1]], UILayoutConstraintAxisHorizontal, 8);
     UIStackView *r2 = OStack(@[steppers[2], steppers[3]], UILayoutConstraintAxisHorizontal, 8);
     r1.distribution = r2.distribution = UIStackViewDistributionFillEqually;
-    UIStackView *col = OStack(@[top, r1, r2, travel], UILayoutConstraintAxisVertical, 8);
+    UIStackView *col = OStack(@[top, r1, r2, mics, travel], UILayoutConstraintAxisVertical, 8);
     col.translatesAutoresizingMaskIntoConstraints = NO;
     [box addSubview:col];
     [NSLayoutConstraint activateConstraints:@[
@@ -736,6 +753,7 @@ static BFOilEditor *sEditor;
 }
 
 - (void)addFwd {
+    self.pattern[@"precise"] = @NO; [self.pattern removeObjectForKey:@"feet"];
     self.pattern[@"exact"] = @NO;
     NSArray *last = self.fwd.lastObject ?: @[@10, @30, @2, @16, @0];
     if (self.fwd.count < 40) [self.fwd addObject:[last mutableCopy]];
@@ -743,6 +761,7 @@ static BFOilEditor *sEditor;
     [self schedulePreview];
 }
 - (void)addRev {
+    self.pattern[@"precise"] = @NO; [self.pattern removeObjectForKey:@"feet"];
     self.pattern[@"exact"] = @NO;
     NSArray *last = self.rev.lastObject ?: @[@8, @32, @2, @18, @0];
     if (self.rev.count < 40) [self.rev addObject:[last mutableCopy]];
@@ -761,7 +780,7 @@ static BFOilEditor *sEditor;
         return;
     }
     NSDictionary *r = BFOilCompute([self.pattern[@"base"] intValue], self.fwd, self.rev, [self.pattern[@"drop"] intValue],
-                                   [self.pattern[@"exact"] boolValue]);
+                                   [self.pattern[@"exact"] boolValue], [self.pattern[@"feet"] intValue], [self.pattern[@"precise"] boolValue]);
     if (!r) {
         self.stats.text = @"The game couldn't build this pattern. Try fewer or smaller steps.";
         return;
@@ -884,7 +903,8 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
     NSString *key = [NSString stringWithFormat:@"%@|%@|%@|%@|%@|%@", p[@"id"], p[@"base"], p[@"drop"], p[@"exact"], p[@"fwd"], p[@"rev"]];
     UIImage *img = [self.thumbs objectForKey:key];
     if (img || !BFOilReady()) return img;
-    NSDictionary *r = BFOilCompute([p[@"base"] intValue], p[@"fwd"], p[@"rev"], [p[@"drop"] intValue], [p[@"exact"] boolValue]);
+    NSDictionary *r = BFOilCompute([p[@"base"] intValue], p[@"fwd"], p[@"rev"], [p[@"drop"] intValue], [p[@"exact"] boolValue],
+                                   [p[@"feet"] intValue], [p[@"precise"] boolValue]);
     img = r ? RenderPreview(r, CGSizeMake(120, 34)) : nil;
     if (img) [self.thumbs setObject:img forKey:key];
     return img;
@@ -1220,9 +1240,12 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
 
 static BFOilTab *sTab;
 
+static void PinImageUpgrade(void);
+
 void BFOilUIStart(void) {
     if (sTab) return;
     ApplyActive();                                 // the pattern you had on last time
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ PinImageUpgrade(); });
     sTab = [BFOilTab new];
     sTab.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:sTab selector:@selector(tick) userInfo:nil repeats:YES];
 }
@@ -1338,38 +1361,35 @@ static NSDictionary *KegelFromJSON(NSData *data) {
             if (![s isKindOfClass:[NSDictionary class]] || [s[@"SpeedIps"] intValue] <= 0 || [s[@"Stop"] intValue] <= 0) continue;
             if ([s[@"Microliter"] intValue] > 0) ul = [s[@"Microliter"] intValue];
             [fr[d] addObject:@[ @([s[@"Start"] intValue]), @([s[@"Stop"] intValue]), @([s[@"Loads"] intValue]),
-                                @([s[@"SpeedIps"] intValue]), @([s[@"EndDistance"] floatValue]) ]];
+                                @([s[@"SpeedIps"] intValue]), @([s[@"EndDistance"] floatValue]), @([s[@"Microliter"] intValue] ?: 50) ]];
         }
     }
     if (!fr[0].count) return nil;
     NSString *name = [j[@"Name"] isKindOfClass:[NSString class]] ? j[@"Name"] : @"Kegel pattern";
     return @{ @"name": name, @"feet": @([j[@"Distance"] intValue]), @"drop": @([j[@"ReverseDropBrushDistance"] intValue]),
-              @"ul": @(ul), @"fwd": fr[0], @"rev": fr[1] };
+              @"ul": @(ul), @"fwd": fr[0], @"rev": fr[1], @"precise": @YES };
 }
 
-// .txt: the Kegel text export, the same format as the game's 48 built-in patterns. Fixed line positions
-// (checked against the game's Route 66 and the 2026 PBA Regional 37 file): name 1, uL 10, distance 12,
-// reverse brush drop 13; 15-line columns: forward start 14, stop 29, loads 44, speed 59; reverse start 75,
-// stop 90, loads 105, speed 120; forward end distances 136, reverse end distances 211.
+// .txt: the Kegel text export, the same format as the game's 48 built-in patterns (shared parser,
+// KegelParse.h). Distances in these files are cut to one decimal, so they are recomputed from the loads.
 static NSDictionary *KegelFromText(NSString *text) {
-    NSArray *L = [[text stringByReplacingOccurrencesOfString:@"\r" withString:@""] componentsSeparatedByString:@"\n"];
-    if (L.count < 226 || ![[L[0] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] isEqualToString:@"-1"]) return nil;
-    NSString *(^at)(NSUInteger) = ^NSString *(NSUInteger i) {
-        return i < L.count ? [L[i] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] : @"";
-    };
+    std::vector<std::string> lines;
+    for (NSString *l in [[text stringByReplacingOccurrencesOfString:@"\r" withString:@""] componentsSeparatedByString:@"\n"])
+        lines.push_back(l.UTF8String ?: "");
+    KegelFile f = KegelParseLines(lines);
+    if (!f.ok) return nil;
     NSMutableArray *fr[2] = { [NSMutableArray array], [NSMutableArray array] };
-    NSUInteger base[2][5] = { { 14, 29, 44, 59, 136 }, { 75, 90, 105, 120, 211 } };
-    for (int d = 0; d < 2; d++) {
-        for (NSUInteger i = 0; i < 15; i++) {
-            NSString *st = at(base[d][0] + i), *sp = at(base[d][3] + i);
-            if (!st.length || !sp.length) break;
-            [fr[d] addObject:@[ @(st.intValue), @(at(base[d][1] + i).intValue), @(at(base[d][2] + i).intValue),
-                                @(sp.intValue), @(at(base[d][4] + i).floatValue) ]];
-        }
+    for (const KegelFileStep &k : f.fwd) [fr[0] addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(f.ul) ]];
+    for (const KegelFileStep &k : f.rev) [fr[1] addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(f.ul) ]];
+    NSString *name = [NSString stringWithUTF8String:f.name.c_str()];
+    if (lines.size() > 2 && KegelTrim(lines[0]) != "-1") {     // the other layout: line 1 is the series, line 2 holds the name
+        NSString *l2 = [NSString stringWithUTF8String:lines[2].c_str()] ?: @"";
+        NSString *clean = [[l2 stringByReplacingOccurrencesOfString:@"<[^>]*>" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, l2.length)]
+                           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (clean.length) name = clean;
     }
-    if (!fr[0].count) return nil;
-    return @{ @"name": at(1).length ? at(1) : @"Kegel pattern", @"feet": @(at(12).intValue), @"drop": @(at(13).intValue),
-              @"ul": @(at(10).intValue ?: 50), @"fwd": fr[0], @"rev": fr[1] };
+    return @{ @"name": name.length ? name : @"Kegel pattern", @"feet": @(f.feet), @"drop": @(f.drop), @"ul": @(f.ul),
+              @"fwd": fr[0], @"rev": fr[1] };
 }
 
 // PDF from the Kegel Pattern Library (website / app "download"): the data sheet. Its text has one line
@@ -1404,7 +1424,7 @@ static NSDictionary *KegelFromPDFText(NSString *text, NSString *title) {
         if (num != lastNum[d] + 1) continue;       // rows come numbered 1, 2, 3... in each table
         lastNum[d] = num;
         if (!ul) ul = g(5).intValue;
-        [fr[d] addObject:@[ @(KegelBoard(g(2))), @(KegelBoard(g(3))), @(g(4).intValue), @(g(6).intValue), @(g(9).floatValue) ]];
+        [fr[d] addObject:@[ @(KegelBoard(g(2))), @(KegelBoard(g(3))), @(g(4).intValue), @(g(6).intValue), @(g(9).floatValue), @(g(5).intValue) ]];
     }
     if (!fr[0].count) return nil;
     NSArray *ft = [feet matchesInString:text options:0 range:NSMakeRange(0, text.length)];
@@ -1483,6 +1503,7 @@ static NSDictionary *KegelImport(NSData *data, NSString *fileName) {
     p[@"rev"] = CleanSteps(k[@"rev"]);
     p[@"base"] = @0;
     p[@"exact"] = @YES;                            // the file's own step distances
+    p[@"precise"] = k[@"precise"] ?: @NO;          // exact only for the .Pattern file (a PDF / text sheet is rounded to whole feet)
     NSString *name = [k[@"name"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     p[@"name"] = name.length ? [name substringToIndex:MIN((NSUInteger)40, name.length)] : (fileName.stringByDeletingPathExtension ?: @"Kegel pattern");
     return p;
@@ -1513,4 +1534,164 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
     pick.delegate = sKegelPicker;
     pick.allowsMultipleSelection = NO;
     OPresentVC(pick);
+}
+
+#pragma mark - your own pin image
+
+#import "PinGuide.h"
+
+#import "PinWrap.h"
+
+static NSString *PinSourcePath(void) {           // the picture as picked, so later fixes can redo it
+    return [[BFPinImagePath() stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"pin_image_source.png"];
+}
+
+// Draw a UIImage into a w x h RGBA buffer (rows top-down) on white; transparent parts become pin white.
+static uint8_t *PinRGBA(UIImage *img, int w, int h) {
+    uint8_t *buf = (uint8_t *)calloc((size_t)w * h, 4);
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = buf ? CGBitmapContextCreate(buf, w, h, 8, w * 4, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big) : NULL;
+    CGColorSpaceRelease(cs);
+    if (!ctx) { free(buf); return NULL; }
+    CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
+    CGContextFillRect(ctx, CGRectMake(0, 0, w, h));
+    CGContextTranslateCTM(ctx, 0, h);
+    CGContextScaleCTM(ctx, 1, -1);
+    UIGraphicsPushContext(ctx);
+    if (img) [img drawInRect:CGRectMake(0, 0, w, h)];
+    UIGraphicsPopContext();
+    CGContextRelease(ctx);
+    return buf;
+}
+
+static NSData *PinPNG(uint8_t *buf, int side) {
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, side, side, 8, side * 4, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    CGImageRef cg = ctx ? CGBitmapContextCreateImage(ctx) : NULL;
+    if (ctx) CGContextRelease(ctx);
+    NSData *png = cg ? UIImagePNGRepresentation([UIImage imageWithCGImage:cg]) : nil;
+    if (cg) CGImageRelease(cg);
+    return png;
+}
+
+// Two layouts, told apart by shape:
+//  - wrap (about 2:1): the pin's surface unrolled evenly (see the wrap guide); converted to the game's
+//    layout from the pin's 3D shape, so the seams always match.
+//  - game layout (square): the game's own pin picture; the area around the half-pin shapes is filled from
+//    their edges (no crack), including background-colored slivers just inside the edges.
+static NSString *SavePinImage(UIImage *img, BOOL turnOn) {
+    if (!img || img.size.width < 8 || img.size.height < 8) return @"That picture couldn't be read.";
+    CGFloat w = img.size.width * img.scale, h = img.size.height * img.scale;
+    BOOL wrap = w >= h * 1.5;
+    BOOL square = fabs(w - h) < 2;
+    int side;
+    uint8_t *out;
+    if (wrap) {
+        int ww = (int)MIN(4096, MAX(512, w)), wh = (int)MIN(2048, MAX(256, h * ww / w));
+        side = ww >= 3000 ? 2048 : 1024;
+        uint8_t *src = PinRGBA(img, ww, wh);
+        uint8_t *tmpl = PinRGBA([UIImage imageWithData:[NSData dataWithBytes:kBPPinTemplatePNG length:kBPPinTemplatePNGLen]], side, side);
+        out = (uint8_t *)calloc((size_t)side * side, 4);
+        if (src && tmpl && out) PinWrapToLayout(src, ww, wh, tmpl, out, side);
+        free(src);
+        free(tmpl);
+        if (out) PinFillAround(out, side, 0);
+    } else {
+        side = (int)MIN(2048, MAX(512, MAX(w, h)));
+        out = PinRGBA(img, side, side);
+        if (out) PinFillAround(out, side, 1);
+    }
+    if (!out) return @"Couldn't read that picture.";
+    NSData *png = PinPNG(out, side);
+    free(out);
+    NSString *path = BFPinImagePath();
+    [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+    if (!png || ![png writeToFile:path atomically:YES]) return @"Couldn't save the picture.";
+    if (turnOn) {
+        [UIImagePNGRepresentation(img) writeToFile:PinSourcePath() atomically:YES];
+        gBF.pinImage = YES;
+        BFSaveConfig();
+    }
+    if (wrap) return [NSString stringWithFormat:@"Wrap picture put on the pins (%d px). Seams always match in this layout.", side];
+    return square ? [NSString stringWithFormat:@"Pin picture saved (%d px). It's on the pins now.", side]
+                  : [NSString stringWithFormat:@"Pin picture saved. It wasn't square or 2:1, so it was stretched to %d x %d (game layout).", side, side];
+}
+
+@interface BFPinPicker : NSObject <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
+@property (nonatomic, copy) void (^done)(NSString *message);
+@end
+@implementation BFPinPicker
+- (void)finish:(UIImage *)img {
+    NSString *msg = img ? SavePinImage(img, YES) : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{ if (msg && self.done) self.done(msg); });
+}
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    [picker dismissViewControllerAnimated:YES completion:^{ ODonePresenting(); }];
+    NSItemProvider *ip = results.firstObject.itemProvider;
+    if (![ip canLoadObjectOfClass:[UIImage class]]) return;
+    [ip loadObjectOfClass:[UIImage class] completionHandler:^(id<NSItemProviderReading> obj, NSError *e) {
+        [self finish:[obj isKindOfClass:[UIImage class]] ? (UIImage *)obj : nil];
+    }];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *u = urls.firstObject;
+    BOOL scoped = [u startAccessingSecurityScopedResource];
+    NSData *d = u ? [NSData dataWithContentsOfURL:u] : nil;
+    if (scoped) [u stopAccessingSecurityScopedResource];
+    ODonePresenting();
+    UIImage *img = d ? [UIImage imageWithData:d] : nil;
+    if (!img && self.done) { self.done(@"That file isn't a picture (use PNG or JPEG)."); return; }
+    [self finish:img];
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c { ODonePresenting(); }
+@end
+
+static BFPinPicker *sPinPicker;
+
+// When a version improves the processing, redo the saved picture from the original (kept since 1.4.8).
+static void PinImageUpgrade(void) {
+    NSString *key = @"BowlingPlus.pinImageV148";
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:key]) return;
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:key];
+    UIImage *img = [UIImage imageWithContentsOfFile:PinSourcePath()];
+    if (img) BFLog(@"pin image: %@", SavePinImage(img, NO));
+}
+
+void BFPinImagePick(BOOL fromFiles, void (^done)(NSString *message)) {
+    sPinPicker = [BFPinPicker new];
+    sPinPicker.done = done;
+    if (fromFiles) {
+        UIDocumentPickerViewController *pick = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeImage ] asCopy:YES];
+        pick.delegate = sPinPicker;
+        OPresentVC(pick);
+    } else {
+        PHPickerConfiguration *cfg = [PHPickerConfiguration new];
+        cfg.filter = [PHPickerFilter imagesFilter];
+        cfg.selectionLimit = 1;
+        PHPickerViewController *pick = [[PHPickerViewController alloc] initWithConfiguration:cfg];
+        pick.delegate = sPinPicker;
+        OPresentVC(pick);
+    }
+}
+
+// The layout guide and a clean template (the game's own pin, 1024 x 1024), as files to save or send.
+void BFPinImageShareGuide(void) {
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"BowlingPlus"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *wguide = [dir stringByAppendingPathComponent:@"BowlingPlus pin wrap guide.png"];
+    NSString *wtmpl = [dir stringByAppendingPathComponent:@"BowlingPlus pin wrap template 2048x1024.png"];
+    NSString *guide = [dir stringByAppendingPathComponent:@"BowlingPlus pin layout guide (game layout).png"];
+    NSString *tmpl = [dir stringByAppendingPathComponent:@"BowlingPlus pin template (game layout).png"];
+    [[NSData dataWithBytes:kBPPinWrapGuidePNG length:kBPPinWrapGuidePNGLen] writeToFile:wguide atomically:YES];
+    [[NSData dataWithBytes:kBPPinWrapTemplatePNG length:kBPPinWrapTemplatePNGLen] writeToFile:wtmpl atomically:YES];
+    [[NSData dataWithBytes:kBPPinGuidePNG length:kBPPinGuidePNGLen] writeToFile:guide atomically:YES];
+    [[NSData dataWithBytes:kBPPinTemplatePNG length:kBPPinTemplatePNGLen] writeToFile:tmpl atomically:YES];
+    // The wrap sheet is the way to design a pin (one piece, no seams). The game-layout files stay on GitHub
+    // (pins/) for anyone who wants them; square pictures in that layout still work.
+    (void)guide; (void)tmpl;
+    UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[ [NSURL fileURLWithPath:wguide], [NSURL fileURLWithPath:wtmpl] ]
+                                                                      applicationActivities:nil];
+    avc.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *r, NSError *e) { ODonePresenting(); };
+    OPresentVC(avc);
 }

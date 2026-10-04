@@ -11,20 +11,25 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Match Up skin fix | Match Up Pearl and Match Up BP get their real skins on the rack, in the Arsenal, previews, your hand and replays | Everywhere (looks only) |
 | Pin physics fix | Fast or spinning pins can't pass through other pins, and pins clipped low at the base can tip over | Practice only |
 | Ball speed | Slider from 1x to 5x | Practice only |
+| Ball spin (RPM) | Slider from 1x to 17x: past the game's ~600 rpm cap, up to about 10,000 rpm, with the extra grip (hook) that much spin gives | Practice only |
 | Spare shooting mode | Pick which pins are standing at the start of every frame, or auto-rack the same pins every frame | Practice only |
+| Tap the pin layout | Tap the top-right pin layout (holding the ball) or the little screen under the ball return (overhead view) to pick pins for just that one shot, without turning on Spare mode. The picker has an X to leave without changes | Practice only |
 | Arsenal search | Filter your Arsenal by ball name | Everywhere |
 | Skip tutorial | A button during the first-launch tutorial that runs the game's own skip, so you can log in right away | Tutorial only |
 | 120 FPS mode | Menus and gameplay at 120 FPS on 120 Hz screens (the game normally uses 30/60). Off by default | Everywhere |
-| Auto-accept privacy popup | Presses "Sign up" on the My.Games privacy page that shows every launch. Never presses updated-terms pages. Off by default | Startup |
+| Privacy popup, once | Accept the My.Games privacy page yourself one time. From then on it is hidden the moment it appears and its Sign up button is pressed for you, so you never see it again. Updated-terms pages are never pressed and are left for you to read | Startup |
 | Don't get stuck connecting | Shows the game's gray offline button after 30 s stuck connecting, and hides a loading circle that's been up 30 s. On by default | Everywhere |
 | Game server over IPv4 | The game always picks its servers' IPv6 addresses, which don't answer (hangs with NextDNS). Uses IPv4 instead. On by default | Everywhere |
 | Fix oil display side | The game draws oil mirrored, so breakdown/carrydown showed on the wrong side. On by default | Everywhere (looks only) |
 | Show oil breakdown | Redraws the lane oil after every shot | Practice |
 | Invisible oil | Hidden oil, random unlocked game pattern each game | Practice |
 | Custom oil patterns | Real Kegel-style forward/reverse steps, drawn by BowlingPlus's copy of the game's oil engine; share via QR | Practice |
+| Real-life oil (always on) | In Practice the game's own 48 patterns and yours are drawn from their real Kegel data, not the game's simplified engine: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane (details below). The game's own oil is back whenever you're not in Practice | Practice |
+| (how it works) | Custom patterns lay oil like the sheet: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane. Checked against four Kegel charts (99.9% of cells). On by default | Practice |
 | Kegel pattern import | Pick a pattern downloaded from the Kegel Pattern Library app or website (the .pdf data sheet, or a .zip / .Pattern / .txt) and it's added: steps, distances and drop brush | Practice |
 | BowlingPlus collection | Real Kegel patterns ready to play: Baton Rouge (2012 USBC Open), PBA Regional 37 (2026) | Practice |
 | Oil color | Pick the color the lane shows oil in, or keep the game's | Everywhere (looks only) |
+| Your own pin image | Put your own picture on the pins (all lanes). Draw on the 2:1 wrap template: one sheet that wraps around the pin like paper, so no seams | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
 
 The Practice-only stuff turns itself off in online matches, tournaments, and the tutorial, so it never messes with other players.
@@ -54,10 +59,14 @@ Use an IPA that already has the tweak inside (see "Make a patched IPA" below), t
 
 ## How to use it
 
-- **Shake** to open the menu.
+- **Shake** to open the menu. It's grouped into cards (tap a card's title to fold it). Descriptions are hidden to keep it short: tap the **ⓘ** at the top to show them all, or tap a row's title to show just that one.
 - **Arsenal search:** type part of a name (like `match up`) and tap **Search**. Open the Arsenal and only matching balls show up. **Clear** brings everything back.
 - **Ball speed:** drag the slider. The boost kicks in right after you let go of the ball. **Reset to 1x** turns it off.
+- **Ball spin (RPM):** same idea for spin. 17x takes a 600 rpm throw to about 10,000 rpm, and the extra revs add grip, so expect big hook.
+- **Preview a pin picture on your PC:** open `pins/BowlingPlus-pin-preview.html` in a browser and drop the picture on it.
+- **Your own pin image:** in the menu, tap **Get the wrap template + guide**, draw your design on the 2048 x 1024 template (left to right = once around the pin; the left and right edges meet), then tap **From Photos** or **From Files** and pick it.
 - **Spare shooting mode:** turn it on and start a Practice game. At the start of each frame a pin picker pops up. Tap pins on/off (or use a preset like 7-10), then hit **Rack 'em**. **Full rack** skips it for that frame.
+- **Pick pins for one shot:** in Practice, tap the pin layout in the top right while you hold the ball, or the little screen under the ball return in the overhead view. The pin picker opens, starting from the pins that are standing now. Tap pins, hit **Rack 'em**, and they're set up right now. It only lasts until you throw: the next frame is a normal full rack unless Spare shooting mode is on. The **X** closes the picker without changing anything (this works in Spare mode too).
 - **Auto-rack:** in the pin picker, tap **Auto (every frame)** instead of Rack 'em. Those pins get set up every frame without asking. Shake for the menu and turn off **Auto-rack** to get the picker back.
 - **Skip tutorial:** on a fresh install, a **Skip tutorial** button shows at the top right during the tutorial. It uses the game's own skip, then you can log in.
 - **120 FPS mode:** shake for the menu, turn on **120 FPS mode** under Display & startup. The line under the switch tells you if it's working. It needs the patched IPA from this repo (it allows 120 Hz in Info.plist); a dylib-only install stays at 60 Hz.
@@ -107,6 +116,16 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.6.0:** redesigned shake menu (cards, descriptions on demand), privacy popup remembered after one accept, Kegel-accurate oil everywhere in Practice (also the game's own 48 patterns), tap the pin layouts to pick pins for one shot, an X on the pin picker, and the footer no longer cuts off "Check for updates".
+- **1.5.3:** custom oil now matches Kegel's charts: exact distances (no more overlapping rectangles), film on every board (no more bare strips), and no oil inflation.
+- **1.5.2:** Kegel-accurate oil carries reverse oil back to the foul line like a real machine (the front of the lane was too thin).
+- **1.5.1:** Kegel-accurate oil for custom patterns (microliters per step), a PC pin picture preview page, and a guide to the pin picture system.
+- **1.5.0:** the RPM boost now adds hook (extra grip), and pin pictures use the one-piece wrap sheet.
+- **1.4.9:** ball spin (RPM) boost up to about 10,000 rpm.
+- **1.4.8:** wrap layout for pin pictures (seams always match), no crack near the base, the IPv4 fix actually attaches now, safe mode only counts real crashes, and "Pins face random ways" removed (the game already does it).
+- **1.4.7:** your pin image no longer pops in at each new rack, and no crack down the side of the pins.
+- **1.4.6:** use your own pin image, with a layout guide and a template.
+- **1.4.5:** pins face random ways when set (like real life) and spin around their own axis in flight.
 - **1.4.4:** Kegel PDF import (what the Kegel app and website download), and skipped parts of a pattern get a thin film instead of full oil.
 - **1.4.3:** Kegel pattern file import (.zip/.Pattern/.txt), PBA Regional 37 in the collection, custom patterns on the correct side of the lane with no bare gaps, Check for updates, and menu layout fixes.
 - **1.4.2:** custom patterns drawn correctly (BowlingPlus copy of the game's Kegel engine, using the sheet's distances), the original oil look by default, and an oil color picker.
@@ -131,12 +150,17 @@ Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 | `Tweak.xm` | Starts the tweak + catches the shake |
 | `src/Il2Cpp.*` | Talks to the game's code by name |
 | `src/Game.mm` | All the fixes and fun features |
-| `src/Menu.mm` | The shake menu and the pin picker |
+| `src/Menu.mm` | The shake menu, the pin picker, and the tap listener for the pin layouts |
+| `src/Privacy.mm` | Remembers the privacy page once, then hides it and presses it for you |
+| `src/KegelParse.h` | Reads Kegel's text pattern files (the game's 48 patterns and `.txt` imports) |
 | `src/Shake.mm` | Backup shake detector (accelerometer) |
 | `src/BPTexture.mm` | Draws the Match Up BP look-alike skin |
 | `src/OilUI.mm` | Custom oil: pattern library, editor, QR share, Kegel file import, oil color picker |
 | `src/OilCollection.mm` | The BowlingPlus collection of real Kegel patterns |
 | `patterns/README.md` | How to add a pattern from a Kegel data sheet |
+| `pins/` | Pin picture guides and templates (wrap and game layout), 3D checks, and `BowlingPlus-pin-preview.html` (preview your pin picture on a 3D pin on your PC) |
+| `tools/oil_verify/` | Checks the oil model against Kegel's PDF charts, cell by cell |
+| `PIN_TEXTURE_SYSTEM.md` | How the pin picture system works, in detail (for developers and AI agents) |
 | `src/Engine.mm` | Runs things every frame + saves settings |
 | `tools/inject_ipa.py` | Puts the dylib inside an IPA |
 | `CHANGELOG.md` | Everything that changed, version by version |

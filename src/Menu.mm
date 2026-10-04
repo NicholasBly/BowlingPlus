@@ -1,12 +1,18 @@
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #import "BFShared.h"
 #import "Logo.h"
 #include <math.h>
 
 // The menu is plain UIKit drawn on top of the game. Nothing is on screen until you shake.
+//
+// Layout: one card per topic (collapsible), rows with a switch on the right. Descriptions stay hidden so the menu
+// stays short: the (i) button in the header shows all of them, and tapping a row's title shows just that one.
 
 static UIColor *Accent(void) { return [UIColor colorWithRed:1.0 green:0.48 blue:0.10 alpha:1.0]; }
 static UIColor *Dim(CGFloat a) { return [UIColor colorWithWhite:1.0 alpha:a]; }
+static UIColor *PanelColor(void) { return [UIColor colorWithWhite:1.0 alpha:0.055]; }
+static const void *kHelpKey = &kHelpKey;          // associated-object key: a row title -> its description label
 
 NSString *BFPinsText(uint16_t mask) {             // 0x240 -> "7-10"
     mask &= BF_ALL_PINS;
@@ -37,25 +43,31 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch;
 @property (nonatomic, strong) UILabel *autoLabel, *fpsLabel, *oilLabel;
 @property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch;
-@property (nonatomic, strong) UIButton *updateButton;
+@property (nonatomic, strong) UIButton *updateButton, *helpButton;
+@property (nonatomic, strong) UISwitch *pinImageSwitch;
+@property (nonatomic, strong) UILabel *pinImageLabel;
 @property (nonatomic, copy) NSString *updateURL;
 @property (nonatomic, strong) UIButton *oilColorButton;
-@property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *privacySwitch, *unstickSwitch, *ipv4Switch;
+@property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *unstickSwitch, *ipv4Switch;
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
-@property (nonatomic, strong) UISlider *speedSlider;
+@property (nonatomic, strong) UISlider *speedSlider, *spinSlider;
+@property (nonatomic, strong) UILabel *spinLabel;
 @property (nonatomic, strong) UITextField *searchField;
 @property (nonatomic, strong) NSTimer *refreshTimer;
+@property (nonatomic, strong) NSMutableArray<UILabel *> *helpLabels;
 @property (nonatomic) BOOL menuShowing;
 @property (nonatomic, strong) UIView *pickerOverlay;
 @property (nonatomic, strong) NSMutableArray<UIButton *> *pinButtons;
 @property (nonatomic, strong) UIButton *rackButton;
 @property (nonatomic, strong) UIButton *resumeButton;
+@property (nonatomic, strong) UILabel *pickerTitle, *pickerHint;
 @property (nonatomic) uint16_t pickerMask;
+@property (nonatomic) BOOL pickerOneShot;
 + (instancetype)shared;
 - (BOOL)menuVisible;
 - (void)showMenu;
 - (void)hideMenu;
-- (void)showPickerWithMask:(uint16_t)mask;
+- (void)showPickerWithMask:(uint16_t)mask oneShot:(BOOL)oneShot;
 - (void)hidePicker;
 - (BOOL)pickerVisible;
 @end
@@ -89,22 +101,33 @@ static UIWindow *HostWindow(void) {
     return l;
 }
 
-- (UIView *)sectionTitle:(NSString *)text {
-    return [self label:text.uppercaseString size:12 weight:UIFontWeightBold color:Dim(0.45)];
+- (UIStackView *)hstack:(NSArray<UIView *> *)views spacing:(CGFloat)spacing {
+    UIStackView *s = [[UIStackView alloc] initWithArrangedSubviews:views];
+    s.axis = UILayoutConstraintAxisHorizontal;
+    s.spacing = spacing;
+    s.alignment = UIStackViewAlignmentCenter;
+    return s;
 }
 
-- (UIView *)rowWithTitle:(NSString *)title detail:(NSString *)detail control:(UIView *)control {
-    UIStackView *texts = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:title size:16 weight:UIFontWeightSemibold color:UIColor.whiteColor]]];
-    texts.axis = UILayoutConstraintAxisVertical;
-    texts.spacing = 2;
-    if (detail.length) [texts addArrangedSubview:[self label:detail size:12 weight:UIFontWeightRegular color:Dim(0.55)]];
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[texts, control]];
-    row.axis = UILayoutConstraintAxisHorizontal;
-    row.alignment = UIStackViewAlignmentCenter;
-    row.spacing = 12;
-    [control setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [control setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    return row;
+- (UIStackView *)vstack {
+    UIStackView *s = [UIStackView new];
+    s.axis = UILayoutConstraintAxisVertical;
+    s.spacing = 14;
+    s.translatesAutoresizingMaskIntoConstraints = NO;
+    s.layoutMargins = UIEdgeInsetsMake(18, 18, 18, 18);
+    s.layoutMarginsRelativeArrangement = YES;
+    return s;
+}
+
+- (UIView *)cardView {
+    UIView *card = [UIView new];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:0.97];
+    card.layer.cornerRadius = 20;
+    card.layer.borderWidth = 1;
+    card.layer.borderColor = Dim(0.08).CGColor;
+    card.clipsToBounds = YES;
+    return card;
 }
 
 - (UISwitch *)switchOn:(BOOL)on action:(SEL)action {
@@ -118,7 +141,7 @@ static UIWindow *HostWindow(void) {
 - (UIButton *)button:(NSString *)title filled:(BOOL)filled small:(BOOL)small action:(SEL)action {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     [b setTitle:title forState:UIControlStateNormal];
-    [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [b setTitleColor:filled ? [UIColor colorWithWhite:0.08 alpha:1] : UIColor.whiteColor forState:UIControlStateNormal];
     b.titleLabel.font = [UIFont systemFontOfSize:small ? 13 : 15 weight:UIFontWeightSemibold];
     b.titleLabel.adjustsFontSizeToFitWidth = YES;
     b.backgroundColor = filled ? Accent() : Dim(0.12);
@@ -128,43 +151,177 @@ static UIWindow *HostWindow(void) {
     return b;
 }
 
-// logo  BowlingPlus (GitHub)  ·  Donate (GitHub Sponsors), on one line
-- (UIView *)footer {
-    UIImageView *logo = [[UIImageView alloc] initWithImage:[UIImage imageWithData:[NSData dataWithBytes:kBPLogoPNG length:kBPLogoPNGLen] scale:3]];
-    logo.contentMode = UIViewContentModeScaleAspectFit;
-    [logo.widthAnchor constraintEqualToConstant:25].active = YES;
-    [logo.heightAnchor constraintEqualToConstant:25].active = YES;
-    UIButton *gh = [self linkButton:@"BowlingPlus" url:@"https://github.com/NicholasBly/BowlingPlus"];
-    UIButton *donate = [self linkButton:@"\u2665 Donate" url:@"https://github.com/sponsors/NicholasBly"];
-    UIButton *updates = [self linkButton:@"Check for updates" url:nil];
-    [updates addTarget:self action:@selector(checkForUpdates) forControlEvents:UIControlEventTouchUpInside];
-    UILabel *dot1 = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
-    UILabel *dot2 = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
-    UIStackView *row = [self hstack:@[logo, gh, dot1, donate, dot2, updates] spacing:6];
-    row.alignment = UIStackViewAlignmentCenter;
-    // what the update check found (tap it to open the release when there's a newer one)
-    self.updateButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.updateButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    self.updateButton.titleLabel.numberOfLines = 0;
-    self.updateButton.titleLabel.textAlignment = NSTextAlignmentCenter;
-    self.updateButton.hidden = YES;
-    [self.updateButton addTarget:self action:@selector(openUpdate) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView *col = [self vstack];
-    col.alignment = UIStackViewAlignmentCenter;
-    col.spacing = 4;
-    [col addArrangedSubview:row];
-    [col addArrangedSubview:self.updateButton];
-    UIView *wrap = [UIView new];                  // centered in the menu
-    col.translatesAutoresizingMaskIntoConstraints = NO;
-    [wrap addSubview:col];
-    [NSLayoutConstraint activateConstraints:@[
-        [col.topAnchor constraintEqualToAnchor:wrap.topAnchor constant:6],
-        [col.bottomAnchor constraintEqualToAnchor:wrap.bottomAnchor],
-        [col.centerXAnchor constraintEqualToAnchor:wrap.centerXAnchor],
-        [col.leadingAnchor constraintGreaterThanOrEqualToAnchor:wrap.leadingAnchor],
-    ]];
-    return wrap;
+- (UIButton *)linkButton:(NSString *)title url:(NSString *)url {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightBold],
+                             NSForegroundColorAttributeName: Accent(),
+                             NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle) };
+    [b setAttributedTitle:[[NSAttributedString alloc] initWithString:title attributes:attrs] forState:UIControlStateNormal];
+    if (url) [b addAction:[UIAction actionWithHandler:^(UIAction *a) {
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    return b;
 }
+
+#pragma mark - rows, cells and cards
+
+// A row: title (and a dim (i) when it has a description), the control on the right. The description sits under
+// it, hidden until you ask for it: the header's (i) shows all of them, tapping this title shows just this one.
+- (UIView *)row:(NSString *)title help:(NSString *)help control:(UIView *)control {
+    UIFont *tf = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    UILabel *t = [self label:title size:16 weight:UIFontWeightSemibold color:UIColor.whiteColor];
+    UILabel *h = nil;
+    if (help.length) {
+        NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:title attributes:@{ NSFontAttributeName: tf, NSForegroundColorAttributeName: UIColor.whiteColor }];
+        [as appendAttributedString:[[NSAttributedString alloc] initWithString:@"  \u24D8" attributes:@{ NSFontAttributeName: [UIFont systemFontOfSize:14 weight:UIFontWeightRegular], NSForegroundColorAttributeName: Dim(0.38) }]];
+        t.attributedText = as;
+        h = [self label:help size:12 weight:UIFontWeightRegular color:Dim(0.6)];
+        h.hidden = !gBF.menuHelp;
+        [self.helpLabels addObject:h];
+        t.userInteractionEnabled = YES;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(titleTapped:)];
+        [t addGestureRecognizer:tap];
+        objc_setAssociatedObject(t, kHelpKey, h, OBJC_ASSOCIATION_ASSIGN);
+    }
+    NSMutableArray *top = [NSMutableArray arrayWithObject:t];
+    if (control) {
+        [top addObject:control];
+        [control setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [control setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    }
+    UIStackView *topRow = [self hstack:top spacing:12];
+    UIStackView *v = [[UIStackView alloc] initWithArrangedSubviews:h ? @[topRow, h] : @[topRow]];
+    v.axis = UILayoutConstraintAxisVertical;
+    v.spacing = 6;
+    return v;
+}
+
+- (void)titleTapped:(UITapGestureRecognizer *)g {
+    UILabel *h = objc_getAssociatedObject(g.view, kHelpKey);
+    if (!h) return;
+    [UIView animateWithDuration:0.2 animations:^{
+        h.hidden = !h.hidden;
+        [self.card layoutIfNeeded];
+    }];
+}
+
+- (void)helpToggled {
+    gBF.menuHelp = !gBF.menuHelp;
+    BFSaveConfig();
+    [self syncHelpButton];
+    [UIView animateWithDuration:0.2 animations:^{
+        for (UILabel *h in self.helpLabels) h.hidden = !gBF.menuHelp;
+        [self.card layoutIfNeeded];
+    }];
+}
+
+- (void)syncHelpButton {
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
+    [self.helpButton setImage:[UIImage systemImageNamed:gBF.menuHelp ? @"info.circle.fill" : @"info.circle" withConfiguration:cfg] forState:UIControlStateNormal];
+    self.helpButton.tintColor = gBF.menuHelp ? Accent() : Dim(0.7);
+    self.helpButton.backgroundColor = gBF.menuHelp ? [Accent() colorWithAlphaComponent:0.16] : Dim(0.08);
+}
+
+// pads a row into a cell of a card
+- (UIView *)cell:(UIView *)content {
+    UIStackView *c = [[UIStackView alloc] initWithArrangedSubviews:@[content]];
+    c.axis = UILayoutConstraintAxisVertical;
+    c.layoutMargins = UIEdgeInsetsMake(12, 14, 12, 14);
+    c.layoutMarginsRelativeArrangement = YES;
+    return c;
+}
+
+- (UIView *)cellForLabel:(UILabel *)l {            // a small status line that disappears when empty
+    return [self cell:l];
+}
+
+// A titled card holding cells. Tap its header to fold it.
+- (UIView *)group:(NSString *)title icon:(NSString *)icon key:(NSString *)key open:(BOOL)defOpen cells:(NSArray<UIView *> *)cells {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    NSString *dk = [@"BowlingPlus.menuOpen." stringByAppendingString:key];
+    BOOL open = [ud objectForKey:dk] ? [ud boolForKey:dk] : defOpen;
+
+    UILabel *head = [self label:[NSString stringWithFormat:@"%@  %@", icon, title.uppercaseString] size:12 weight:UIFontWeightBold color:Dim(0.6)];
+    UILabel *chev = [self label:@"\u203A" size:22 weight:UIFontWeightBold color:Dim(0.45)];
+    chev.transform = open ? CGAffineTransformMakeRotation(M_PI_2) : CGAffineTransformIdentity;
+    [chev setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIStackView *headRow = [self hstack:@[head, chev] spacing:8];
+    headRow.userInteractionEnabled = NO;
+    headRow.translatesAutoresizingMaskIntoConstraints = NO;
+    UIButton *headButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [headButton addSubview:headRow];
+    [NSLayoutConstraint activateConstraints:@[
+        [headRow.leadingAnchor constraintEqualToAnchor:headButton.leadingAnchor constant:4],
+        [headRow.trailingAnchor constraintEqualToAnchor:headButton.trailingAnchor constant:-4],
+        [headRow.topAnchor constraintEqualToAnchor:headButton.topAnchor constant:2],
+        [headRow.bottomAnchor constraintEqualToAnchor:headButton.bottomAnchor constant:-2],
+        [headButton.heightAnchor constraintGreaterThanOrEqualToConstant:30],
+    ]];
+
+    UIView *panel = [UIView new];
+    panel.backgroundColor = PanelColor();
+    panel.layer.cornerRadius = 14;
+    panel.layer.borderWidth = 1;
+    panel.layer.borderColor = Dim(0.06).CGColor;
+    panel.clipsToBounds = YES;
+    UIStackView *inner = [UIStackView new];
+    inner.axis = UILayoutConstraintAxisVertical;
+    inner.spacing = 0;
+    inner.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSUInteger i = 0; i < cells.count; i++) {
+        if (i) {
+            UIView *sep = [UIView new];
+            sep.backgroundColor = Dim(0.07);
+            [sep.heightAnchor constraintEqualToConstant:1].active = YES;
+            [inner addArrangedSubview:sep];
+        }
+        [inner addArrangedSubview:cells[i]];
+    }
+    [panel addSubview:inner];
+    [NSLayoutConstraint activateConstraints:@[
+        [inner.topAnchor constraintEqualToAnchor:panel.topAnchor], [inner.bottomAnchor constraintEqualToAnchor:panel.bottomAnchor],
+        [inner.leadingAnchor constraintEqualToAnchor:panel.leadingAnchor], [inner.trailingAnchor constraintEqualToAnchor:panel.trailingAnchor],
+    ]];
+    panel.hidden = !open;
+
+    __weak BFMenu *weak = self;
+    [headButton addAction:[UIAction actionWithHandler:^(UIAction *a) {
+        BOOL nowOpen = panel.hidden;
+        [ud setBool:nowOpen forKey:dk];
+        [UIView animateWithDuration:0.22 animations:^{
+            panel.hidden = !nowOpen;
+            chev.transform = nowOpen ? CGAffineTransformMakeRotation(M_PI_2) : CGAffineTransformIdentity;
+            [weak.card layoutIfNeeded];
+        }];
+    }] forControlEvents:UIControlEventTouchUpInside];
+
+    UIStackView *g = [[UIStackView alloc] initWithArrangedSubviews:@[headButton, panel]];
+    g.axis = UILayoutConstraintAxisVertical;
+    g.spacing = 6;
+    return g;
+}
+
+// title + live value + reset button, the slider, and a description
+- (UIView *)sliderCell:(NSString *)title value:(UILabel *)value reset:(SEL)reset slider:(UISlider *)slider help:(NSString *)help {
+    [value setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIButton *r = [self button:@"Reset" filled:NO small:YES action:reset];
+    [r setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIView *head = [self row:title help:help control:nil];     // gives the (i) and the description
+    UIStackView *headStack = (UIStackView *)head;
+    UIStackView *topRow = (UIStackView *)headStack.arrangedSubviews.firstObject;
+    [topRow addArrangedSubview:value];
+    [topRow addArrangedSubview:r];
+    UIStackView *v = [[UIStackView alloc] initWithArrangedSubviews:@[head, slider]];
+    v.axis = UILayoutConstraintAxisVertical;
+    v.spacing = 8;
+    return [self cell:v];
+}
+
+- (UIView *)buttonCell:(UIButton *)b {
+    return [self cell:b];
+}
+
+#pragma mark - the menu
 
 // GitHub's "latest release" (the one marked Latest on the Releases page; drafts and pre-releases are
 // skipped). The tag can be "1.4.3" or "v1.4.3".
@@ -216,50 +373,36 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     if (self.updateURL) [[UIApplication sharedApplication] openURL:[NSURL URLWithString:self.updateURL] options:@{} completionHandler:nil];
 }
 
-- (UIButton *)linkButton:(NSString *)title url:(NSString *)url {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightBold],
-                             NSForegroundColorAttributeName: Accent(),
-                             NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle) };
-    [b setAttributedTitle:[[NSAttributedString alloc] initWithString:title attributes:attrs] forState:UIControlStateNormal];
-    if (url) [b addAction:[UIAction actionWithHandler:^(UIAction *a) {
-        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
-    }] forControlEvents:UIControlEventTouchUpInside];
-    return b;
-}
 
-- (UIStackView *)hstack:(NSArray<UIView *> *)views spacing:(CGFloat)spacing {
-    UIStackView *s = [[UIStackView alloc] initWithArrangedSubviews:views];
-    s.axis = UILayoutConstraintAxisHorizontal;
-    s.spacing = spacing;
-    s.alignment = UIStackViewAlignmentCenter;
-    return s;
+// two lines so nothing can get cut off on a narrow screen:  logo  BowlingPlus  .  Donate   /   Check for updates
+- (UIView *)footer {
+    UIImageView *logo = [[UIImageView alloc] initWithImage:[UIImage imageWithData:[NSData dataWithBytes:kBPLogoPNG length:kBPLogoPNGLen] scale:3]];
+    logo.contentMode = UIViewContentModeScaleAspectFit;
+    [logo.widthAnchor constraintEqualToConstant:25].active = YES;
+    [logo.heightAnchor constraintEqualToConstant:25].active = YES;
+    UIButton *gh = [self linkButton:@"BowlingPlus" url:@"https://github.com/NicholasBly/BowlingPlus"];
+    UIButton *donate = [self linkButton:@"\u2665 Donate" url:@"https://github.com/sponsors/NicholasBly"];
+    UILabel *dot = [self label:@"\u00B7" size:15 weight:UIFontWeightBold color:Dim(0.35)];
+    UIStackView *row1 = [self hstack:@[logo, gh, dot, donate] spacing:8];
+    UIButton *updates = [self linkButton:@"Check for updates" url:nil];
+    [updates addTarget:self action:@selector(checkForUpdates) forControlEvents:UIControlEventTouchUpInside];
+    self.updateButton = [UIButton buttonWithType:UIButtonTypeSystem];       // what the check found (tap it to open the release)
+    self.updateButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    self.updateButton.titleLabel.numberOfLines = 0;
+    self.updateButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+    self.updateButton.hidden = YES;
+    [self.updateButton addTarget:self action:@selector(openUpdate) forControlEvents:UIControlEventTouchUpInside];
+    UILabel *ver = [self label:[NSString stringWithFormat:@"v%@ \u00B7 Shake again or tap outside to close", BF_VERSION] size:11 weight:UIFontWeightRegular color:Dim(0.35)];
+    ver.textAlignment = NSTextAlignmentCenter;
+    UIStackView *col = [[UIStackView alloc] initWithArrangedSubviews:@[row1, updates, self.updateButton, ver]];
+    col.axis = UILayoutConstraintAxisVertical;
+    col.alignment = UIStackViewAlignmentCenter;
+    col.spacing = 4;
+    return col;
 }
-
-- (UIView *)cardView {
-    UIView *card = [UIView new];
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:0.97];
-    card.layer.cornerRadius = 20;
-    card.layer.borderWidth = 1;
-    card.layer.borderColor = Dim(0.08).CGColor;
-    card.clipsToBounds = YES;
-    return card;
-}
-
-- (UIStackView *)vstack {
-    UIStackView *s = [UIStackView new];
-    s.axis = UILayoutConstraintAxisVertical;
-    s.spacing = 14;
-    s.translatesAutoresizingMaskIntoConstraints = NO;
-    s.layoutMargins = UIEdgeInsetsMake(18, 18, 18, 18);
-    s.layoutMarginsRelativeArrangement = YES;
-    return s;
-}
-
-#pragma mark - main menu
 
 - (void)buildMenuIn:(UIView *)host {
+    self.helpLabels = [NSMutableArray array];
     UIView *overlay = [[UIView alloc] initWithFrame:host.bounds];
     overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     overlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
@@ -276,9 +419,10 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     scroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [card addSubview:scroll];
     UIStackView *stack = [self vstack];
+    stack.spacing = 12;
     [scroll addSubview:stack];
 
-    // header
+    // header: title, the (i) that shows every description, close
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     [close setTitle:@"\u2715" forState:UIControlStateNormal];
     close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
@@ -287,20 +431,28 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     close.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
     [close.widthAnchor constraintEqualToConstant:44].active = YES;
     [close.heightAnchor constraintEqualToConstant:44].active = YES;
+    self.helpButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.helpButton.layer.cornerRadius = 17;
+    [self.helpButton.widthAnchor constraintEqualToConstant:34].active = YES;
+    [self.helpButton.heightAnchor constraintEqualToConstant:34].active = YES;
+    [self.helpButton addTarget:self action:@selector(helpToggled) forControlEvents:UIControlEventTouchUpInside];
+    self.helpButton.accessibilityLabel = @"Show or hide the descriptions";
+    [self syncHelpButton];
     UILabel *title = [self label:@"\U0001F3B3 BowlingPlus" size:22 weight:UIFontWeightHeavy color:UIColor.whiteColor];
+    title.numberOfLines = 1;
+    title.adjustsFontSizeToFitWidth = YES;
     [title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [self.helpButton setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     [close setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [stack addArrangedSubview:[self hstack:@[title, close] spacing:8]];
+    [stack addArrangedSubview:[self hstack:@[title, self.helpButton, close] spacing:8]];
     self.statusLabel = [self label:@"" size:13 weight:UIFontWeightMedium color:Accent()];
     [stack addArrangedSubview:self.statusLabel];
     self.resumeButton = [self button:@"Turn BowlingPlus back on" filled:YES small:NO action:@selector(resumeTapped)];
     [stack addArrangedSubview:self.resumeButton];
 
-    // arsenal search (near the top so the keyboard never covers it)
-    [stack addArrangedSubview:[self sectionTitle:@"Arsenal search"]];
+    // ---- Arsenal search (near the top so the keyboard never covers it)
     UITextField *f = [UITextField new];
-    f.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@"Ball name, e.g. match up"
-                                                              attributes:@{ NSForegroundColorAttributeName: Dim(0.35) }];
+    f.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@"Ball name, e.g. match up" attributes:@{ NSForegroundColorAttributeName: Dim(0.35) }];
     f.textColor = UIColor.whiteColor;
     f.backgroundColor = Dim(0.08);
     f.layer.cornerRadius = 10;
@@ -313,64 +465,23 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     f.keyboardAppearance = UIKeyboardAppearanceDark;
     f.delegate = self;
     [f.heightAnchor constraintEqualToConstant:40].active = YES;
-    [f setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     self.searchField = f;
     UIButton *go = [self button:@"Search" filled:YES small:NO action:@selector(searchTapped)];
     UIButton *clear = [self button:@"Clear" filled:NO small:NO action:@selector(clearTapped)];
-    [go setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [clear setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [f setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [f setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-    [go setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [clear setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [stack addArrangedSubview:[self hstack:@[f, go, clear] spacing:8]];
+    for (UIButton *b in @[go, clear]) {
+        [b setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [b setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    }
     self.arsenalLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.55)];
-    [stack addArrangedSubview:self.arsenalLabel];
+    UIStackView *searchCell = [[UIStackView alloc] initWithArrangedSubviews:@[[self hstack:@[f, go, clear] spacing:8], self.arsenalLabel]];
+    searchCell.axis = UILayoutConstraintAxisVertical;
+    searchCell.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Arsenal search" icon:@"\U0001F50E" key:@"search" open:YES cells:@[[self cell:searchCell]]]];
 
-    // fixes
-    [stack addArrangedSubview:[self sectionTitle:@"Fixes"]];
-    self.skinSwitch = [self switchOn:gBF.textureFix action:@selector(skinChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Match Up skins"
-                                          detail:@"Fixes the Match Up Pearl/BP ball textures."
-                                         control:self.skinSwitch]];
-    self.ballLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.5)];
-    [stack addArrangedSubview:self.ballLabel];
-    self.pinSwitch = [self switchOn:gBF.pinFix action:@selector(pinChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Pin physics fix"
-                                          detail:@"Fast pins can't fly through other pins, and pins clipped low at the base can tip over properly. Practice only."
-                                         control:self.pinSwitch]];
-    self.specSwitch = [self switchOn:gBF.pinSpec action:@selector(specChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Improve spinning pin collision (experimental)"
-                                          detail:@"Uses Unity's speculative collisions, which also predict spin."
-                                         control:self.specSwitch]];
-    self.unstickSwitch = [self switchOn:gBF.unstick action:@selector(unstickChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Fix connection"
-                                          detail:@"If loading sits on \"connecting\" for 30 s, shows the game's gray offline button. A loading circle stuck for 30 s gets hidden so you can try again."
-                                         control:self.unstickSwitch]];
-    self.ipv4Switch = [self switchOn:gBF.gameIPv4 action:@selector(ipv4Changed:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Game server over IPv4"
-                                          detail:@"The game always picks IPv6 when some DNS servers offer it, but its servers don't answer on IPv6, so it hangs indefinitely. This forces IPv4."
-                                         control:self.ipv4Switch]];
-
-    [stack addArrangedSubview:[self sectionTitle:@"Display & startup"]];
-    self.fpsSwitch = [self switchOn:gBF.fps120 action:@selector(fpsChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"120 FPS mode"
-                                          detail:@"Runs menus and gameplay at 120 FPS on 120 Hz screens: smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery."
-                                         control:self.fpsSwitch]];
-    self.fpsLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.5)];
-    [stack addArrangedSubview:self.fpsLabel];
-    self.privacySwitch = [self switchOn:gBF.autoPrivacy action:@selector(privacyChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Auto-accept the privacy popup"
-                                          detail:@"Presses \"Sign up\" for you on the My.Games privacy page that shows every launch."
-                                         control:self.privacySwitch]];
-
-    // fun
-    [stack addArrangedSubview:[self sectionTitle:@"Practice fun (offline only)"]];
+    // ---- Practice fun
     self.speedLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
-    [self.speedLabel setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    UILabel *speedTitle = [self label:@"Ball speed" size:16 weight:UIFontWeightSemibold color:UIColor.whiteColor];
-    UIButton *reset = [self button:@"Reset to 1x" filled:NO small:YES action:@selector(speedReset)];
-    [reset setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    [stack addArrangedSubview:[self hstack:@[speedTitle, self.speedLabel, reset] spacing:10]];
     UISlider *slider = [UISlider new];
     slider.minimumValue = 1;
     slider.maximumValue = BF_MAX_SPEED;
@@ -378,23 +489,32 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [slider addTarget:self action:@selector(speedChanged:) forControlEvents:UIControlEventValueChanged];
     [slider addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     self.speedSlider = slider;
-    [stack addArrangedSubview:slider];
-    self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Spare shooting mode"
-                                          detail:@"Pick which pins stand at the start of every frame."
-                                         control:self.spareSwitch]];
-    self.autoSwitch = [self switchOn:gBF.spareAuto action:@selector(autoChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Auto-rack"
-                                          detail:@"Sets up the same pins every frame without asking. Tip: pick your pins once and tap Auto in the pin picker."
-                                         control:self.autoSwitch]];
-    self.autoLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
-    [stack addArrangedSubview:self.autoLabel];
+    UIView *speedCell = [self sliderCell:@"Ball speed" value:self.speedLabel reset:@selector(speedReset) slider:slider
+                                    help:@"Multiplies the ball's speed right after you let go of it. 1x to 5x."];
 
-    [stack addArrangedSubview:[self sectionTitle:@"Oil (practice)"]];
-    self.oilMirrorSwitch = [self switchOn:gBF.oilMirrorFix action:@selector(oilMirrorChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Fix oil display side"
-                                          detail:@"The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went."
-                                         control:self.oilMirrorSwitch]];
+    self.spinLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
+    UISlider *spin = [UISlider new];
+    spin.minimumValue = 1;
+    spin.maximumValue = BF_MAX_SPIN;
+    spin.minimumTrackTintColor = Accent();
+    [spin addTarget:self action:@selector(spinChanged:) forControlEvents:UIControlEventValueChanged];
+    [spin addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    self.spinSlider = spin;
+    UIView *spinCell = [self sliderCell:@"Ball spin (RPM)" value:self.spinLabel reset:@selector(spinReset) slider:spin
+                                   help:@"Multiplies your throw's spin right after release (the game caps it near 600 rpm). 17x takes a 600 rpm throw to about 10,000. The extra revs also add grip on the lane, so the ball hooks more. Very fast spin can look slow or backwards on screen (like car wheels in videos)."];
+
+    self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];
+    self.autoSwitch = [self switchOn:gBF.spareAuto action:@selector(autoChanged:)];
+    self.autoLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    UIView *spareCell = [self cell:[self row:@"Spare shooting mode" help:@"Pick which pins stand at the start of every frame. Tip: you don't need this on to pick pins for one shot. Tap the pin layout (top right while you hold the ball, or the little screen under the ball return in the overhead view) and the pin picker opens just for that shot. Scores in this mode are just for fun."
+                                     control:self.spareSwitch]];
+    UIStackView *autoStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"Auto-rack" help:@"Sets up the same pins every frame without asking. Tip: pick your pins once and tap Auto in the pin picker." control:self.autoSwitch], self.autoLabel]];
+    autoStack.axis = UILayoutConstraintAxisVertical;
+    autoStack.spacing = 6;
+    [stack addArrangedSubview:[self group:@"Practice fun" icon:@"\U0001F3AF" key:@"fun" open:YES
+                                    cells:@[speedCell, spinCell, spareCell, [self cell:autoStack]]]];
+
+    // ---- Oil
     self.oilColorButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.oilColorButton.layer.cornerRadius = 15;
     self.oilColorButton.layer.borderWidth = 2;
@@ -402,41 +522,79 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self.oilColorButton.widthAnchor constraintEqualToConstant:44].active = YES;
     [self.oilColorButton.heightAnchor constraintEqualToConstant:30].active = YES;
     [self.oilColorButton addTarget:self action:@selector(oilColorTapped) forControlEvents:UIControlEventTouchUpInside];
-    [stack addArrangedSubview:[self rowWithTitle:@"Oil color"
-                                          detail:@"Pick the color the lane shows oil in, or keep the game's."
-                                         control:self.oilColorButton]];
     self.oilThickSwitch = [self switchOn:gBF.oilThickness action:@selector(oilThickChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Show oil thickness"
-                                          detail:@"Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same."
-                                         control:self.oilThickSwitch]];
     self.oilBreakSwitch = [self switchOn:gBF.oilBreakdown action:@selector(oilBreakChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Show oil breakdown"
-                                          detail:@"Redraws the lane oil after every shot so you can watch it break down over the game."
-                                         control:self.oilBreakSwitch]];
     self.oilInvisSwitch = [self switchOn:gBF.oilInvisible action:@selector(oilInvisChanged:)];
-    [stack addArrangedSubview:[self rowWithTitle:@"Invisible oil"
-                                          detail:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing."
-                                         control:self.oilInvisSwitch]];
-    [stack addArrangedSubview:[self button:@"\U0001F6E2 Custom oil patterns" filled:NO small:NO action:@selector(oilLibraryTapped)]];
+    self.oilMirrorSwitch = [self switchOn:gBF.oilMirrorFix action:@selector(oilMirrorChanged:)];
+    UILabel *always = [self label:@"ALWAYS ON" size:10 weight:UIFontWeightBold color:Accent()];
+    always.numberOfLines = 1;
     self.oilLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
-    [stack addArrangedSubview:self.oilLabel];
+    UIStackView *libStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self button:@"\U0001F6E2  Custom oil patterns" filled:NO small:NO action:@selector(oilLibraryTapped)], self.oilLabel]];
+    libStack.axis = UILayoutConstraintAxisVertical;
+    libStack.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Oil (practice)" icon:@"\U0001F6E2" key:@"oil" open:YES cells:@[
+        [self cell:[self row:@"Real-life oil" help:@"In Practice, the game's own patterns and yours are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Online matches, tournaments and the tutorial always use the game's own oil." control:always]],
+        [self cell:[self row:@"Oil color" help:@"Pick the color the lane shows oil in, or keep the game's." control:self.oilColorButton]],
+        [self cell:[self row:@"Show oil thickness" help:@"Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same." control:self.oilThickSwitch]],
+        [self cell:[self row:@"Show oil breakdown" help:@"Redraws the lane oil after every shot so you can watch it break down over the game." control:self.oilBreakSwitch]],
+        [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing." control:self.oilInvisSwitch]],
+        [self cell:[self row:@"Fix oil display side" help:@"The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went." control:self.oilMirrorSwitch]],
+        [self cell:libStack],
+    ]]];
 
-    [stack addArrangedSubview:[self sectionTitle:@"Help"]];
+    // ---- Fixes
+    self.skinSwitch = [self switchOn:gBF.textureFix action:@selector(skinChanged:)];
+    self.ballLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.5)];
+    UIStackView *skinStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"Match Up skins" help:@"Fixes the Match Up Pearl/BP ball textures." control:self.skinSwitch], self.ballLabel]];
+    skinStack.axis = UILayoutConstraintAxisVertical;
+    skinStack.spacing = 6;
+    self.pinSwitch = [self switchOn:gBF.pinFix action:@selector(pinChanged:)];
+    self.specSwitch = [self switchOn:gBF.pinSpec action:@selector(specChanged:)];
+    self.unstickSwitch = [self switchOn:gBF.unstick action:@selector(unstickChanged:)];
+    self.ipv4Switch = [self switchOn:gBF.gameIPv4 action:@selector(ipv4Changed:)];
+    [stack addArrangedSubview:[self group:@"Fixes" icon:@"\U0001F6E0" key:@"fixes" open:YES cells:@[
+        [self cell:skinStack],
+        [self cell:[self row:@"Pin physics fix" help:@"Fast pins can't fly through other pins, and pins clipped low at the base can tip over properly. Practice only." control:self.pinSwitch]],
+        [self cell:[self row:@"Improve spinning pin collision (experimental)" help:@"Uses Unity's speculative collisions, which also predict spin." control:self.specSwitch]],
+        [self cell:[self row:@"Fix connection" help:@"If loading sits on \"connecting\" for 30 s, shows the game's gray offline button. A loading circle stuck for 30 s gets hidden so you can try again." control:self.unstickSwitch]],
+        [self cell:[self row:@"Game server over IPv4" help:@"The game always picks IPv6 when some DNS servers offer it, but its servers don't answer on IPv6, so it hangs indefinitely. This forces IPv4." control:self.ipv4Switch]],
+    ]]];
+
+    // ---- Pins & display
+    self.fpsSwitch = [self switchOn:gBF.fps120 action:@selector(fpsChanged:)];
+    self.fpsLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.5)];
+    UIStackView *fpsStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"120 FPS mode" help:@"Runs menus and gameplay at 120 FPS on 120 Hz screens: smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery." control:self.fpsSwitch], self.fpsLabel]];
+    fpsStack.axis = UILayoutConstraintAxisVertical;
+    fpsStack.spacing = 6;
+    self.pinImageSwitch = [self switchOn:gBF.pinImage action:@selector(pinImageChanged:)];
+    UIButton *photos = [self button:@"From Photos" filled:NO small:YES action:@selector(pinImageFromPhotos)];
+    UIButton *files = [self button:@"From Files" filled:NO small:YES action:@selector(pinImageFromFiles)];
+    UIStackView *pickRow = [self hstack:@[photos, files] spacing:8];
+    pickRow.distribution = UIStackViewDistributionFillEqually;
+    self.pinImageLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    UIStackView *pinStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        [self row:@"Use my own pin image" help:@"Puts your own picture on the pins (all lanes). Draw on the wrap template: one sheet that wraps around the pin like paper, so there are no seams. Looks only." control:self.pinImageSwitch],
+        pickRow, [self button:@"Get the wrap template + guide" filled:NO small:YES action:@selector(pinImageGuide)], self.pinImageLabel]];
+    pinStack.axis = UILayoutConstraintAxisVertical;
+    pinStack.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Pins & display" icon:@"\U0001F3A8" key:@"look" open:YES cells:@[[self cell:fpsStack], [self cell:pinStack]]]];
+
+    // ---- Help & diagnostics (folded by default)
     self.debugButton = [self button:@"Copy debug info" filled:NO small:NO action:@selector(copyDebugTapped)];
-    [stack addArrangedSubview:self.debugButton];
     self.logButton = [self button:@"Copy log" filled:NO small:NO action:@selector(copyLogTapped)];
     self.netButton = [self button:@"Run connection test" filled:NO small:NO action:@selector(netTestTapped)];
     UIStackView *logRow = [self hstack:@[self.logButton, self.netButton] spacing:8];
     logRow.distribution = UIStackViewDistributionFillEqually;
-    [stack addArrangedSubview:logRow];
-    [stack addArrangedSubview:[self label:@"The log records loading, the connection and network checks from the moment the game starts. Run the connection test, wait ~20 s, then Copy log."
-                                     size:11 weight:UIFontWeightRegular color:Dim(0.45)]];
-    [stack addArrangedSubview:[self label:@"If something looks off, tap this and paste it in a GitHub issue."
-                                     size:11 weight:UIFontWeightRegular color:Dim(0.45)]];
+    UILabel *dh = [self label:@"If something looks off, tap Copy debug info and paste it in a GitHub issue. The log records loading, the connection and network checks from the moment the game starts: run the connection test, wait ~20 s, then Copy log."
+                         size:12 weight:UIFontWeightRegular color:Dim(0.6)];
+    dh.hidden = !gBF.menuHelp;
+    [self.helpLabels addObject:dh];
+    UIStackView *diag = [[UIStackView alloc] initWithArrangedSubviews:@[self.debugButton, logRow, dh]];
+    diag.axis = UILayoutConstraintAxisVertical;
+    diag.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Help & diagnostics" icon:@"\U0001FA7A" key:@"help" open:NO cells:@[[self cell:diag]]]];
 
     [stack addArrangedSubview:[self footer]];
-    [stack addArrangedSubview:[self label:[NSString stringWithFormat:@"v%@ \u00B7 Shake again or tap outside to close", BF_VERSION]
-                                     size:11 weight:UIFontWeightRegular color:Dim(0.35)]];
 
     CGFloat width = MIN(380, host.bounds.size.width - 24);
     self.cardCenterY = [card.centerYAnchor constraintEqualToAnchor:overlay.centerYAnchor];
@@ -516,11 +674,29 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 - (void)unstickChanged:(UISwitch *)s { gBF.unstick = s.on; BFSaveConfig(); }
 - (void)ipv4Changed:(UISwitch *)s  { gBF.gameIPv4 = s.on; BFSaveConfig(); }
 - (void)fpsChanged:(UISwitch *)s   { gBF.fps120 = s.on; BFSaveConfig(); [self refresh]; }
-- (void)privacyChanged:(UISwitch *)s { gBF.autoPrivacy = s.on; BFSaveConfig(); }
 - (void)spareChanged:(UISwitch *)s { gBF.spareMode = s.on; BFSaveConfig(); [self refresh]; }
 - (void)oilMirrorChanged:(UISwitch *)s { gBF.oilMirrorFix = s.on; BFSaveConfig(); }
 - (void)oilBreakChanged:(UISwitch *)s  { gBF.oilBreakdown = s.on; BFSaveConfig(); }
 - (void)oilThickChanged:(UISwitch *)s  { gBF.oilThickness = s.on; BFSaveConfig(); }
+- (void)pinImageChanged:(UISwitch *)s {
+    gBF.pinImage = s.on;
+    BFSaveConfig();
+    if (s.on && ![[NSFileManager defaultManager] fileExistsAtPath:BFPinImagePath()]) [self pinImageFromPhotos];   // nothing picked yet
+    [self refresh];
+}
+- (void)pinImagePicked:(NSString *)message {
+    [self refresh];
+    self.pinImageLabel.text = message;
+}
+- (void)pinImageFromPhotos {
+    __weak BFMenu *weak = self;
+    BFPinImagePick(NO, ^(NSString *m) { [weak pinImagePicked:m]; });
+}
+- (void)pinImageFromFiles {
+    __weak BFMenu *weak = self;
+    BFPinImagePick(YES, ^(NSString *m) { [weak pinImagePicked:m]; });
+}
+- (void)pinImageGuide { BFPinImageShareGuide(); }
 - (void)oilColorTapped { [self hideMenu]; BFOilShowColorPicker(); }
 - (void)oilInvisChanged:(UISwitch *)s  { gBF.oilInvisible = s.on; BFSaveConfig(); [self refresh]; }
 - (void)oilLibraryTapped { [self hideMenu]; BFOilShowLibrary(); }
@@ -562,7 +738,19 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self updateSpeedLabel];
     BFSaveConfig();
 }
+- (void)spinChanged:(UISlider *)s {            // 1x ... 17x in 0.5 steps
+    float m = roundf(s.value * 2.0f) / 2.0f;
+    gBF.spinMult = fminf(fmaxf(m, 1.0f), BF_MAX_SPIN);
+    [self updateSpeedLabel];
+}
+- (void)spinReset {
+    gBF.spinMult = 1.0f;
+    self.spinSlider.value = 1;
+    [self updateSpeedLabel];
+    BFSaveConfig();
+}
 - (void)updateSpeedLabel {
+    self.spinLabel.text = gBF.spinMult < 1.01f ? @"1x" : [NSString stringWithFormat:@"%.1fx (600 \u2192 %d)", gBF.spinMult, (int)lroundf(600 * gBF.spinMult)];
     float m = gBF.speedMult;
     self.speedLabel.text = [NSString stringWithFormat:@"%.1fx", m];
 }
@@ -604,20 +792,26 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
         ? [NSString stringWithFormat:@"Auto-racking %@ every frame", BFPinsText(gBF.lastPinMask)]
         : @"Turn on Spare shooting mode to use Auto-rack";
     self.autoLabel.hidden = !gBF.spareAuto;
+    self.arsenalLabel.hidden = self.arsenalLabel.text.length == 0;
+    self.fpsLabel.hidden = self.fpsLabel.text.length == 0;
+    self.pinImageLabel.hidden = self.pinImageLabel.text.length == 0;
 }
 
 - (void)syncControls {
+    [self syncHelpButton];
+    for (UILabel *h in self.helpLabels) h.hidden = !gBF.menuHelp;
     self.skinSwitch.on = gBF.textureFix;
     self.pinSwitch.on = gBF.pinFix;
     self.specSwitch.on = gBF.pinSpec;
     self.unstickSwitch.on = gBF.unstick;
     self.ipv4Switch.on = gBF.gameIPv4;
     self.fpsSwitch.on = gBF.fps120;
-    self.privacySwitch.on = gBF.autoPrivacy;
     self.oilMirrorSwitch.on = gBF.oilMirrorFix;
     self.oilBreakSwitch.on = gBF.oilBreakdown;
     self.oilInvisSwitch.on = gBF.oilInvisible;
     self.oilThickSwitch.on = gBF.oilThickness;
+    self.pinImageSwitch.on = gBF.pinImage;
+    self.pinImageLabel.text = BFPinImageStatus();
     self.oilColorButton.backgroundColor = gBF.oilHue < 0 ? [UIColor colorWithRed:0.86 green:0.70 blue:0.50 alpha:1]
                                                         : [UIColor colorWithHue:gBF.oilHue saturation:0.85 brightness:0.95 alpha:1];
     [self.oilColorButton setTitle:gBF.oilHue < 0 ? @"game" : @"" forState:UIControlStateNormal];
@@ -626,6 +820,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.spareSwitch.on = gBF.spareMode;
     self.autoSwitch.on = gBF.spareAuto;
     self.speedSlider.value = fminf(fmaxf(gBF.speedMult, 1.0f), BF_MAX_SPEED);
+    self.spinSlider.value = fminf(fmaxf(gBF.spinMult, 1.0f), BF_MAX_SPIN);
     [self updateSpeedLabel];
 }
 
@@ -655,9 +850,22 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     stack.spacing = 12;
     [card addSubview:stack];
 
-    [stack addArrangedSubview:[self label:@"Spare mode: pick your pins" size:18 weight:UIFontWeightHeavy color:UIColor.whiteColor]];
-    [stack addArrangedSubview:[self label:@"Tap pins to add or remove them, then hit Rack 'em. Auto racks the same pins every frame until you turn it off (shake for the menu). Scores in this mode are just for fun."
-                                     size:12 weight:UIFontWeightRegular color:Dim(0.55)]];
+    UIButton *x = [UIButton buttonWithType:UIButtonTypeSystem];            // leaves without changing anything
+    [x setTitle:@"\u2715" forState:UIControlStateNormal];
+    x.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    [x setTitleColor:Dim(0.7) forState:UIControlStateNormal];
+    x.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+    [x.widthAnchor constraintEqualToConstant:44].active = YES;
+    [x.heightAnchor constraintEqualToConstant:36].active = YES;
+    [x addTarget:self action:@selector(pickerClosed) forControlEvents:UIControlEventTouchUpInside];
+    x.accessibilityLabel = @"Close without changes";
+    [x setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    self.pickerTitle = [self label:@"Spare mode: pick your pins" size:18 weight:UIFontWeightHeavy color:UIColor.whiteColor];
+    self.pickerTitle.numberOfLines = 1;
+    self.pickerTitle.adjustsFontSizeToFitWidth = YES;
+    [stack addArrangedSubview:[self hstack:@[self.pickerTitle, x] spacing:8]];
+    self.pickerHint = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.55)];
+    [stack addArrangedSubview:self.pickerHint];
 
     // the rack as you see it from the foul line: back row on top, head pin at the bottom
     self.pinButtons = [NSMutableArray array];
@@ -739,22 +947,33 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 
 - (void)allTapped  { self.pickerMask = BF_ALL_PINS; [self updatePins]; }
 - (void)noneTapped { self.pickerMask = 0; [self updatePins]; }
-- (void)skipTapped { [self hidePicker]; BFApplySpareSelection(BF_ALL_PINS); }
+
+- (void)skipTapped {                                   // a full rack
+    BOOL oneShot = self.pickerOneShot;
+    [self hidePicker];
+    if (oneShot) BFApplySpareSelectionNow(BF_ALL_PINS); else BFApplySpareSelection(BF_ALL_PINS);
+}
 
 - (void)rackTapped {
     if (!self.pickerMask) return;
     uint16_t m = self.pickerMask;
+    BOOL oneShot = self.pickerOneShot;
     [self hidePicker];
-    BFApplySpareSelection(m);
+    if (oneShot) BFApplySpareSelectionNow(m); else BFApplySpareSelection(m);
 }
 
 - (void)autoTapped {
-    if (!self.pickerMask) return;
+    if (!self.pickerMask || self.pickerOneShot) return;
     uint16_t m = self.pickerMask;
     gBF.spareAuto = true;
     BFSaveConfig();
     [self hidePicker];
     BFApplySpareSelection(m);
+}
+
+- (void)pickerClosed {                                 // the X: nothing changes
+    [self hidePicker];
+    BFSpareDismissed();
 }
 
 #pragma mark - skip tutorial button
@@ -801,11 +1020,17 @@ static UIViewController *TopController(void) {
     [TopController() presentViewController:a animated:YES completion:nil];
 }
 
-- (void)showPickerWithMask:(uint16_t)mask {
+- (void)showPickerWithMask:(uint16_t)mask oneShot:(BOOL)oneShot {
     UIWindow *w = HostWindow();
     if (!w) return;
     if (self.menuShowing) [self hideMenu];
     if (!self.pickerOverlay) [self buildPickerIn:w];
+    self.pickerOneShot = oneShot;
+    self.pickerTitle.text = oneShot ? @"Pick your pins" : @"Spare mode: pick your pins";
+    self.pickerHint.text = oneShot
+        ? @"Tap pins to add or remove them, then hit Rack 'em. This is just for this shot: next frame is a full rack again. Turn on Spare shooting mode in the menu to be asked every frame. Scores are just for fun."
+        : @"Tap pins to add or remove them, then hit Rack 'em. Auto racks the same pins every frame until you turn it off (shake for the menu). The X leaves everything as it is. Scores in this mode are just for fun.";
+    self.autoButton.hidden = oneShot;
     self.pickerMask = (mask & BF_ALL_PINS) ? (mask & BF_ALL_PINS) : BF_ALL_PINS;
     [self updatePins];
     self.pickerOverlay.frame = w.bounds;
@@ -820,13 +1045,57 @@ static UIViewController *TopController(void) {
 
 @end
 
+// ---- tapping the game's pin layouts (see Game.mm, BFPinTapAt) ----
+@interface BFTapListener : NSObject <UIGestureRecognizerDelegate>
+@end
+@implementation BFTapListener
+- (void)tapped:(UITapGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateEnded) return;
+    UIView *w = g.view;
+    CGPoint p = [g locationInView:w];
+    if (w.bounds.size.width < 1 || w.bounds.size.height < 1) return;
+    BFPinTapAt((float)(p.x / w.bounds.size.width), (float)(1.0 - p.y / w.bounds.size.height));
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t {
+    return !([[BFMenu shared] menuVisible] || [[BFMenu shared] pickerVisible]);
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)o { return YES; }
+@end
+
+static BFTapListener *sTapListener;
+static UITapGestureRecognizer *sTapRecognizer;
+static __weak UIWindow *sTapWindow;
+
+void BFPinTapInstall(void) {
+    static NSTimer *timer;
+    if (timer) return;
+    sTapListener = [BFTapListener new];
+    timer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
+        id d = [UIApplication sharedApplication].delegate;
+        UIWindow *w = [d respondsToSelector:@selector(window)] ? [d window] : HostWindow();   // the game's own window
+        if (!w || w == sTapWindow) return;
+        [sTapRecognizer.view removeGestureRecognizer:sTapRecognizer];
+        sTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:sTapListener action:@selector(tapped:)];
+        sTapRecognizer.cancelsTouchesInView = NO;      // the game still gets every touch
+        sTapRecognizer.delaysTouchesBegan = NO;
+        sTapRecognizer.delaysTouchesEnded = NO;
+        sTapRecognizer.delegate = sTapListener;
+        [w addGestureRecognizer:sTapRecognizer];
+        sTapWindow = w;
+    }];
+    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+}
+
 void BFMenuToggle(void) {
     BFMenu *m = [BFMenu shared];
     if ([m pickerVisible]) return;     // finish picking pins first
     if ([m menuVisible]) [m hideMenu];
     else [m showMenu];
 }
-void BFMenuShowPinPicker(uint16_t mask) { [[BFMenu shared] showPickerWithMask:mask]; }
+void BFMenuShowPinPicker(uint16_t mask) { [[BFMenu shared] showPickerWithMask:mask oneShot:NO]; }
+void BFMenuShowPinPickerOneShot(uint16_t mask) { [[BFMenu shared] showPickerWithMask:mask oneShot:YES]; }
 void BFMenuHidePinPicker(void) { [[BFMenu shared] hidePicker]; }
 bool BFMenuPickerVisible(void) { return [[BFMenu shared] pickerVisible]; }
+bool BFMenuPickerOneShot(void) { return [[BFMenu shared] pickerVisible] && [BFMenu shared].pickerOneShot; }
+bool BFMenuVisible(void) { return [[BFMenu shared] menuVisible]; }
 void BFMenuSetSkipTutorialVisible(bool visible) { [[BFMenu shared] setSkipVisible:visible]; }

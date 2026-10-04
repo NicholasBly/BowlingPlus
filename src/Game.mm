@@ -2,6 +2,9 @@
 #import "BFShared.h"
 #import "Il2Cpp.h"
 #include <math.h>
+#include <string>
+#include <vector>
+#include "KegelParse.h"
 #include <ctype.h>
 #include <string.h>
 #include <sys/utsname.h>
@@ -61,6 +64,21 @@ static struct {
     const MethodInfo *IVD_GetItemDataByID;
     int ivd_items;
     int rpt_sphere, rpt_sphereRender, rpt_kegsUp, rpt_kegsUpdate;
+    int pin_visual, pin_hq, pin_lq, pin_mirror;
+    const MethodInfo *M_setMainTex;
+    const MethodInfo *TA_getText;
+    // tapping the game's pin layouts
+    const MethodInfo *Scr_w, *Scr_h, *Cv_mode, *Cv_cam, *Cv_root, *RT_corners, *Cam_w2s, *Cam_all, *Cam_depth, *Cam_mask,
+                     *Cam_target, *Cam_main, *Beh_enabled, *GO_activeH, *GO_layer, *GO_inParent, *Col_bounds, *RTO_render;
+    Il2CppClass *Vec3Cls;
+    Il2CppObject *tBoxCollider, *tCanvas, *tMMBM;
+    int mmbm_pinObj, mmbm_pinBack, rpt_renderMon;
+    const MethodInfo *RB_getAngVel, *RB_setAngVel, *RB_getMaxAng, *Txt_get, *Txt_set;
+    int rpt_rpmText;
+    Il2CppClass *InvData;
+    Il2CppObject *tInvData;
+    int inv_pinMat, inv_mirrorMat, inv_rpmFactor, inv_maxOmega, inv_maxRpm;
+    const MethodInfo *Comp_getTransform, *GO_getTransform, *Tr_getRot, *Tr_setRot, *Tr_getLocalRot, *Tr_setLocalRot;
     int ph_pins, pin_physic, ldt_dlcID, ldt_toChange, ldt_objectID, item_itemId, item_baseId, shop_name, si_dlcLink;
     int ih_shop, ars_ballsData, ars_scroll;
     FieldInfo *gp_gameMode, *gp_location, *inv_currentBall, *ih_instance, *invd_instance;
@@ -195,11 +213,49 @@ static bool Resolve() {
     N.RB_setCDM      = Meth(N.Rigidbody, "set_collisionDetectionMode", 1);
     N.RB_getVel      = Meth(N.Rigidbody, "get_linearVelocity", 0);
     N.RB_setVel      = Meth(N.Rigidbody, "set_linearVelocity", 1);
+    N.RB_getAngVel   = Meth(N.Rigidbody, "get_angularVelocity", 0);
+    N.RB_setAngVel   = Meth(N.Rigidbody, "set_angularVelocity", 1);
+    N.RB_getMaxAng   = Meth(N.Rigidbody, "get_maxAngularVelocity", 0);
+    N.rpt_rpmText    = Off(N.RunPsycsTest, "rpm");
+    if (Il2CppClass *tx = FindClass("UnityEngine.UI", "Text")) { N.Txt_get = Meth(tx, "get_text", 0); N.Txt_set = Meth(tx, "set_text", 1); }
     N.RB_setMaxAngVel = Meth(N.Rigidbody, "set_maxAngularVelocity", 1);
     N.RB_getLinDamp  = Meth(N.Rigidbody, "get_linearDamping", 0);
     N.RB_getAngDamp  = Meth(N.Rigidbody, "get_angularDamping", 0);
     N.R_getMaterial      = Meth(N.Renderer, "get_material", 0);
     N.M_getMainTex       = Meth(N.Material, "get_mainTexture", 0);
+    N.M_setMainTex       = Meth(N.Material, "set_mainTexture", 1);
+    N.Vec3Cls = FindClass("UnityEngine", "Vector3");
+    if (Il2CppClass *k = FindClass("UnityEngine", "Screen")) { N.Scr_w = Meth(k, "get_width", 0); N.Scr_h = Meth(k, "get_height", 0); }
+    if (Il2CppClass *k = FindClass("UnityEngine", "Canvas")) {
+        N.Cv_mode = Meth(k, "get_renderMode", 0); N.Cv_cam = Meth(k, "get_worldCamera", 0); N.Cv_root = Meth(k, "get_rootCanvas", 0);
+        N.tCanvas = TypeOf(k);
+    }
+    if (Il2CppClass *k = FindClass("UnityEngine", "RectTransform")) N.RT_corners = Meth(k, "GetWorldCorners", 1);
+    if (Il2CppClass *k = FindClass("UnityEngine", "Camera")) {
+        N.Cam_w2s = Meth(k, "WorldToScreenPoint", 1, "UnityEngine.Vector3"); N.Cam_all = Meth(k, "get_allCameras", 0); N.Cam_depth = Meth(k, "get_depth", 0);
+        N.Cam_mask = Meth(k, "get_cullingMask", 0); N.Cam_target = Meth(k, "get_targetTexture", 0); N.Cam_main = Meth(k, "get_main", 0);
+    }
+    if (Il2CppClass *k = FindClass("UnityEngine", "Behaviour")) N.Beh_enabled = Meth(k, "get_enabled", 0);
+    N.GO_activeH = Meth(N.GameObject, "get_activeInHierarchy", 0);
+    N.GO_layer = Meth(N.GameObject, "get_layer", 0);
+    N.GO_inParent = Meth(N.GameObject, "GetComponentInParent", 1, "System.Type");
+    if (Il2CppClass *k = FindClass("UnityEngine", "Collider")) N.Col_bounds = Meth(k, "get_bounds", 0);
+    if (Il2CppClass *k = FindClass("UnityEngine", "BoxCollider")) N.tBoxCollider = TypeOf(k);
+    if (Il2CppClass *k = FindClass("Managers.Bowling", "MainMenuButtonMan")) {        // the in-game top-right pin layout
+        N.tMMBM = TypeOf(k);
+        N.mmbm_pinObj = Off(k, "pinObj");
+        N.mmbm_pinBack = Off(k, "pinObjBack");
+    }
+    if (Il2CppClass *k = FindClass("", "RenderToTextureOnce")) N.RTO_render = Meth(k, "renderOnce", 0);   // refreshes the little screen under the ball return
+    N.rpt_renderMon = Off(N.RunPsycsTest, "renderToTexMonitor");
+    if (Il2CppClass *ta = FindClass("UnityEngine", "TextAsset")) N.TA_getText = Meth(ta, "get_text", 0);   // the built-in patterns' Kegel files
+    N.InvData            = FindClass("", "InventaryData");     // holds every pin model's material
+    N.tInvData           = N.InvData ? TypeOf(N.InvData) : nullptr;
+    N.inv_pinMat         = N.InvData ? Off(N.InvData, "pinMaterial") : -1;
+    N.inv_mirrorMat      = N.InvData ? Off(N.InvData, "mirrorPinMaterial") : -1;
+    N.inv_rpmFactor      = N.InvData ? Off(N.InvData, "rpmFactor") : -1;       // spin -> grip (BallSoundManager)
+    N.inv_maxOmega       = N.InvData ? Off(N.InvData, "_ballMaxOmega") : -1;   // the spin the grip formula caps at
+    N.inv_maxRpm         = N.InvData ? Off(N.InvData, "ballMaxRmp") : -1;      // _ballMaxOmega = this x 2 pi / 60, filled on first use
     N.T2D_ctor        = Meth(N.Texture2D, ".ctor", 2, "System.Int32", "System.Int32");
     N.LoadImage       = Meth(N.ImageConversion, "LoadImage", 2, "UnityEngine.Texture2D", "System.Byte[]");
     N.AB_LoadFromFile = Meth(N.AssetBundle, "LoadFromFile", 1, "System.String");
@@ -222,6 +278,18 @@ static bool Resolve() {
     N.rpt_kegsUpdate   = Off(N.RunPsycsTest, "kegsUpdate");
     N.ph_pins       = Off(N.PinHolder, "_pins");
     N.pin_physic    = Off(N.Pin, "_physic");
+    N.pin_visual    = Off(N.Pin, "_objVisualRoot");
+    N.pin_hq        = Off(N.Pin, "_highQualityRender");
+    N.pin_lq        = Off(N.Pin, "_lowQualityRender");
+    N.pin_mirror    = Off(N.Pin, "_mirrorRenderer");
+    N.Comp_getTransform = Meth(N.Component, "get_transform", 0);
+    N.GO_getTransform   = Meth(N.GameObject, "get_transform", 0);
+    if (Il2CppClass *tr = FindClass("UnityEngine", "Transform")) {
+        N.Tr_getRot      = Meth(tr, "get_rotation", 0);
+        N.Tr_setRot      = Meth(tr, "set_rotation", 1);
+        N.Tr_getLocalRot = Meth(tr, "get_localRotation", 0);
+        N.Tr_setLocalRot = Meth(tr, "set_localRotation", 1);
+    }
     N.ldt_dlcID     = Off(N.LoadDLCTex, "dlcIDToLoad");
     N.ldt_toChange  = Off(N.LoadDLCTex, "toChangeTexture");
     N.ldt_objectID  = Off(N.LoadDLCTex, "objectID");
@@ -468,6 +536,149 @@ static void PinFixTick() {
     sPinFixOn = want;
 }
 
+// ---- your own pin image (looks only) ----
+// Every pin (all lanes) shares one material, "pin_diff" (Legacy Shaders/Reflective/Diffuse), and the
+// lane reflection uses "keg_d"; both show the pin image as _MainTex (the game's own is "pins1", 512 x
+// 512, from the pins/fulltextures bundle; Pin Arsenal designs swap it). The player's square PNG is
+// loaded into a Texture2D and set as those materials' main texture; whatever the game had is kept per
+// material and put back when the switch goes off. If the game changes pins (Pin Arsenal), the new
+// texture becomes the one to put back and the player's image goes on again.
+// Besides the 10 real pins, the scene has more pin models: the ones the pinsetter carries down for a new
+// rack (pinspotter joints), the pin deck, reflections and the Arsenal display. They all share
+// InventaryData.pinMaterial / mirrorPinMaterial (InventaryData.ApplyTexturePins assigns them), so those
+// two get the image too; otherwise every new rack came down with the game's pins and then popped.
+// Materials already changed are re-checked every frame, so a reset by the game never shows.
+NSString *BFPinImagePath(void) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    return [[docs stringByAppendingPathComponent:@"BowlingPlus"] stringByAppendingPathComponent:@"pin_image.png"];
+}
+
+static uintptr_t sPinImgTex = 0;
+static NSDate *sPinImgStamp;
+static int sPinImgSize = 0, sPinImgFails = 0, sPinImgMats = 0;
+static const int kPinMatMax = 16;
+static Ref sInvData;
+static ObjRef sPinMat[kPinMatMax];                // materials we changed
+static uintptr_t sPinMatOrig[kPinMatMax];         // what each one showed before (strong handles)
+static int sPinMatCount = 0;
+
+static void *PinImageTexture() {
+    NSString *path = BFPinImagePath();
+    NSDate *stamp = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil].fileModificationDate;
+    void *t = sPinImgTex ? Target(sPinImgTex) : nullptr;
+    if (Alive(t) && stamp && [stamp isEqualToDate:sPinImgStamp]) return t;
+    if (!stamp || sPinImgFails >= 3 || !N.Texture2D || !N.T2D_ctor || !N.LoadImage || !N.Byte) return nullptr;
+    NSData *png = [NSData dataWithContentsOfFile:path];
+    if (!png.length) return nullptr;
+    Il2CppObject *tex = NewObject(N.Texture2D);
+    int w = 2, h = 2;
+    bool ok = false;
+    void *ca[] = { &w, &h };
+    if (tex) Invoke(N.T2D_ctor, tex, ca, &ok);
+    Il2CppArray *bytes = ok ? NewArray(N.Byte, png.length) : nullptr;
+    if (bytes) memcpy(Data(bytes), png.bytes, png.length);
+    void *la[] = { tex, bytes };
+    if (!bytes || !InvokeBool(N.LoadImage, nullptr, la, false)) { sPinImgFails++; BFLog(@"pin image: couldn't load it"); return nullptr; }
+    DontUnload(tex);
+    if (sPinImgTex) Release(sPinImgTex);
+    sPinImgTex = Keep(tex);
+    sPinImgStamp = stamp;
+    sPinImgFails = 0;
+    UIImage *ui = [UIImage imageWithData:png];
+    sPinImgSize = (int)ui.size.width;
+    BFLog(@"pin image loaded (%d px)", sPinImgSize);
+    return tex;
+}
+
+static int PinMatIndex(void *mat) {
+    for (int i = 0; i < sPinMatCount; i++) if (sPinMat[i].get() == mat) return i;
+    return -1;
+}
+
+static void PinImageOn(void *mat, void *tex) {
+    if (!Alive(mat)) return;
+    void *cur = (void *)Invoke(N.M_getMainTex, mat, nullptr);
+    if (cur == tex) return;
+    int i = PinMatIndex(mat);
+    if (i < 0) {
+        if (sPinMatCount >= kPinMatMax) return;
+        i = sPinMatCount++;
+        sPinMat[i].set(mat);
+        sPinMatOrig[i] = 0;
+    }
+    if (sPinMatOrig[i]) Release(sPinMatOrig[i]);  // the game's texture (it may have just changed pins)
+    sPinMatOrig[i] = Alive(cur) ? Keep(cur) : 0;
+    void *a[] = { tex };
+    Invoke(N.M_setMainTex, mat, a);
+}
+
+static void PinImageRestore() {
+    void *mine = sPinImgTex ? Target(sPinImgTex) : nullptr;
+    for (int i = 0; i < sPinMatCount; i++) {
+        void *mat = sPinMat[i].get();
+        void *orig = sPinMatOrig[i] ? Target(sPinMatOrig[i]) : nullptr;
+        if (Alive(mat) && Alive(orig) && (void *)Invoke(N.M_getMainTex, mat, nullptr) == mine) {
+            void *a[] = { orig };
+            Invoke(N.M_setMainTex, mat, a);
+        }
+        if (sPinMatOrig[i]) Release(sPinMatOrig[i]);
+        sPinMatOrig[i] = 0;
+        sPinMat[i].set(nullptr);
+    }
+    sPinMatCount = 0;
+}
+
+static void PinImageTick() {
+    if (!sSettled || !N.M_getMainTex || !N.M_setMainTex || !N.R_getSharedMat) return;
+    bool full = sFrame % 30 == 0;
+    void *tex = nullptr;
+    if (gBF.pinImage) tex = full ? PinImageTexture() : (sPinImgTex ? Target(sPinImgTex) : nullptr);
+    if (!Alive(tex)) {
+        if (full && sPinMatCount) { PinImageRestore(); BFLog(@"pin image off: the game's pins are back"); }
+        if (full) sPinImgMats = 0;
+        return;
+    }
+    for (int i = 0; i < sPinMatCount; i++) {      // every frame: the materials already showing it
+        void *mat = sPinMat[i].get();
+        if (Alive(mat) && (void *)Invoke(N.M_getMainTex, mat, nullptr) != tex) PinImageOn(mat, tex);
+    }
+    if (!full) return;
+    void *inv = sInvData.get();                   // the pinsetter / pin deck / reflection / Arsenal pins
+    if (!inv && N.tInvData && sFrame % 120 == 0) { inv = FirstAlive(FindAll(N.tInvData)); sInvData.set(inv); }
+    if (inv) {
+        if (N.inv_pinMat >= 0) PinImageOn(At<void *>(inv, N.inv_pinMat), tex);
+        if (N.inv_mirrorMat >= 0) PinImageOn(At<void *>(inv, N.inv_mirrorMat), tex);
+    }
+    if (N.PinHolder && N.ph_pins >= 0) {          // the real pins
+        for (int i = 0; i < 4; i++) {
+            void *holder = sHolders[i].get();
+            ListView lv;
+            if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
+            for (int p = 0; p < lv.size; p++) {
+                void *pin = lv.items[p];
+                if (!Alive(pin)) continue;
+                int offs[3] = { N.pin_hq, N.pin_lq, N.pin_mirror };
+                for (int k = 0; k < 3; k++) {
+                    void *r = offs[k] >= 0 ? At<void *>(pin, offs[k]) : nullptr;
+                    if (!Alive(r)) continue;
+                    void *mat = (void *)Invoke(N.R_getSharedMat, r, nullptr);
+                    if (Alive(mat)) PinImageOn(mat, tex);
+                }
+            }
+        }
+    }
+    sPinImgMats = sPinMatCount;
+}
+
+NSString *BFPinImageStatus(void) {
+    BOOL have = [[NSFileManager defaultManager] fileExistsAtPath:BFPinImagePath()];
+    if (!have) return @"No image yet. Get the wrap template, draw your design on it (2:1), then pick it.";
+    if (!gBF.pinImage) return @"Your image is saved. Turn the switch on to use it.";
+    if (sPinImgFails >= 3) return @"Couldn't load that image. Try picking it again (PNG or JPEG).";
+    if (sPinImgMats > 0) return [NSString stringWithFormat:@"On the pins now (%d px image).", sPinImgSize];
+    return @"Shows on the pins when a lane is on screen.";
+}
+
 static void BallCCDTick() {   // the ball too, while the pin fix or a speed boost is on
     if (sFrame % 15 != 0) return;
     bool want = gBFStatus.offline && (gBF.pinFix || gBF.speedMult > 1.5f);
@@ -506,6 +717,94 @@ static void SpeedTick() {
 }
 
 // ---------------------------------------------------------------------------
+// Spin (RPM) boost (Practice only)
+// At release the game turns the throw's spin (RunPsycsTest.rotation, in rpm, capped near 600 by the
+// controls) into the ball's spin once: AddTorque(rotation x 2 pi / 60, VelocityChange). The hook is
+// the physics engine's friction, which BallSoundManager.OnCollisionStay sets every step:
+//   friction = oil x min(spin, BallMaxOmega) / BallMaxOmega x InventaryData.rpmFactor x (wear)
+// so spin above BallMaxOmega adds nothing (1.4.9 spun the ball faster but didn't hook more). The boost
+// multiplies the ball's spin once right after release (same axis, same hook side) and, for the spin the
+// cap cuts off, raises rpmFactor by the same amount while that ball rolls (exactly the friction an
+// uncapped formula would give), then puts the game's value back.
+// ---------------------------------------------------------------------------
+static bool sSpun = false;
+static int sSpunFrom = 0, sSpunTo = 0;
+static float sRpmFactorOrig = -1, sGrip = 1;
+static Ref sSpinInv;
+
+static void *SpinInventary() {
+    void *inv = sSpinInv.get();
+    if (!inv && N.tInvData) { inv = FirstAlive(FindAll(N.tInvData)); sSpinInv.set(inv); }
+    return inv;
+}
+
+static void SpinGripRestore() {
+    if (sRpmFactorOrig < 0) return;
+    void *inv = SpinInventary();
+    if (inv && N.inv_rpmFactor >= 0) At<float>(inv, N.inv_rpmFactor) = sRpmFactorOrig;
+    BFLog(@"ball grip back to the game's (rpmFactor %.3f)", sRpmFactorOrig);
+    sRpmFactorOrig = -1;
+}
+
+static void SpinTick() {
+    float mult = fminf(fmaxf(gBF.spinMult, 1.0f), BF_MAX_SPIN);
+    if (!gBFStatus.offline || mult < 1.01f || sLoc != LOC_THROWING) { sSpun = false; SpinGripRestore(); return; }
+    if (sSpun || !N.RB_getAngVel || !N.RB_setAngVel || !N.RB_getVel) return;
+    void *rb = BallBody();
+    if (!rb || InvokeBool(N.RB_isKinematic, rb, nullptr, true)) return;
+    bool ok = false;
+    Il2CppObject *bv = Invoke(N.RB_getVel, rb, nullptr, &ok);
+    if (!ok || !bv) return;
+    Vec3 v = *(Vec3 *)Unbox(bv);
+    if (sqrtf(v.x * v.x + v.y * v.y + v.z * v.z) < 1.0f) return;   // not released yet
+    sSpun = true;
+    Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+    if (!ok || !bw) return;
+    Vec3 w = *(Vec3 *)Unbox(bw);
+    float rad = sqrtf(w.x * w.x + w.y * w.y + w.z * w.z);
+    if (rad < 0.5f) return;                       // a no-spin throw: nothing to multiply
+    if (N.RB_getMaxAng) {
+        Il2CppObject *bm = Invoke(N.RB_getMaxAng, rb, nullptr, &ok);
+        float maxw = (ok && bm) ? *(float *)Unbox(bm) : 0;
+        if (maxw > 0 && rad * mult > maxw) mult = maxw / rad;   // never past the engine's own limit
+    }
+    Vec3 nw = { w.x * mult, w.y * mult, w.z * mult };
+    void *a[] = { &nw };
+    Invoke(N.RB_setAngVel, rb, a);
+    // grip: the friction formula caps spin at BallMaxOmega; make up for what it cuts off
+    void *inv = SpinInventary();
+    sGrip = 1;
+    if (inv && N.inv_rpmFactor >= 0 && N.inv_maxOmega >= 0) {
+        float maxOmega = At<float>(inv, N.inv_maxOmega);
+        if (maxOmega <= 0 && N.inv_maxRpm >= 0) maxOmega = At<float>(inv, N.inv_maxRpm) * 6.2831853f / 60.f;   // like get_BallMaxOmega
+        if (maxOmega > 1) {
+            sGrip = fmaxf(1.f, rad * mult / maxOmega);
+            if (sGrip > 1.001f) {
+                if (sRpmFactorOrig < 0) sRpmFactorOrig = At<float>(inv, N.inv_rpmFactor);
+                At<float>(inv, N.inv_rpmFactor) = sRpmFactorOrig * sGrip;
+            }
+        }
+    }
+    sSpunFrom = (int)lroundf(rad * 60.f / 6.2831853f);
+    sSpunTo = (int)lroundf(rad * mult * 60.f / 6.2831853f);
+    BFLog(@"ball spin x%.1f (%d -> %d rpm), grip x%.2f", mult, sSpunFrom, sSpunTo, sGrip);
+    // the scoreboard's "599 rpm": show the boosted number
+    void *rpt = sRPT.get();
+    Il2CppArray *texts = (rpt && N.rpt_rpmText >= 0) ? At<Il2CppArray *>(rpt, N.rpt_rpmText) : nullptr;
+    for (size_t i = 0; i < Len(texts) && N.Txt_get && N.Txt_set; i++) {
+        void *t = Elem(texts, i);
+        if (!Alive(t)) continue;
+        NSString *cur = Str((Il2CppString *)Invoke(N.Txt_get, t, nullptr));
+        int shown = cur.intValue;
+        if (shown <= 0) continue;
+        NSString *rest = [cur substringFromIndex:[cur rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location == NSNotFound
+                                                 ? cur.length : [cur rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location];
+        void *ta[] = { NewString([NSString stringWithFormat:@"%d%@", (int)lroundf(shown * mult), rest].UTF8String) };
+        Invoke(N.Txt_set, t, ta);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Spare shooting mode (Practice only)
 // Every shot, the game builds a 10-slot "pins standing" list (RunPsycsTest._kegsUp)
 // and racks it with UpdatePinPositions(). Pins set to false are dropped far below
@@ -534,15 +833,21 @@ static bool ApplyPinMask(uint16_t mask) {
 }
 
 static void SpareTick() {
-    bool active = gBF.spareMode && gBFStatus.offline;
+    bool oneShotUp = BFMenuPickerVisible() && BFMenuPickerOneShot();
+    if (oneShotUp) {                                   // opened by tapping a pin layout: stays while a shot is being set up
+        bool setup = sLoc == LOC_START_POS || sLoc == LOC_BALL_RETURNER || sLoc == LOC_BOTTOM_MONITOR;
+        if (!gBFStatus.offline || !setup) { BFMenuHidePinPicker(); oneShotUp = false; }
+    }
+    // a pick made by tapping stays in force until you throw, even with Spare shooting mode off
+    bool active = gBFStatus.offline && (gBF.spareMode || sSparePending);
     if (!active) {
-        if (BFMenuPickerVisible()) BFMenuHidePinPicker();
+        if (BFMenuPickerVisible() && !oneShotUp) BFMenuHidePinPicker();
         sSparePending = false;
         return;
     }
     if (sLoc == LOC_THROWING) sSparePending = false;
     if (sLoc != LOC_START_POS) {
-        if (BFMenuPickerVisible()) BFMenuHidePinPicker();
+        if (BFMenuPickerVisible() && !oneShotUp) BFMenuHidePinPicker();
         return;
     }
     if (sPrevLoc == LOC_START_POS) return;           // act once, right when the shot gets set up
@@ -557,6 +862,7 @@ static void SpareTick() {
         if (sSpareMask != BF_ALL_PINS) ApplyPinMask(sSpareMask);
         return;
     }
+    if (!gBF.spareMode) return;
     if (gBF.spareAuto) {                               // auto-rack: same pins every frame, no questions
         BFApplySpareSelection(gBF.lastPinMask);
         return;
@@ -574,6 +880,27 @@ void BFApplySpareSelection(uint16_t mask) {
         BFSaveConfig();
         ApplyPinMask(mask);
     }
+}
+
+// Closed the picker with the X: no changes. In Spare mode that also means "don't ask again this frame".
+void BFSpareDismissed(void) {
+    if (BFMenuPickerOneShot()) return;
+    sSpareMask = BF_ALL_PINS;
+    sSparePending = true;
+}
+
+// Tapped a pin layout: re-rack exactly these pins right now (even all ten), and keep them if the game re-racks
+// before you throw (switching balls). Only for this shot: Spare shooting mode stays off.
+void BFApplySpareSelectionNow(uint16_t mask) {
+    mask &= BF_ALL_PINS;
+    if (!mask) mask = BF_ALL_PINS;
+    sSpareMask = mask;
+    sSparePending = true;
+    if (mask != BF_ALL_PINS) { gBF.lastPinMask = mask; BFSaveConfig(); }
+    ApplyPinMask(mask);
+    void *rpt = sRPT.get();                            // the little screen under the ball return shows a picture of the pins
+    void *rm = (rpt && N.rpt_renderMon >= 0) ? At<void *>(rpt, N.rpt_renderMon) : nullptr;
+    if (Alive(rm) && N.RTO_render) Invoke(N.RTO_render, rm, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -1797,6 +2124,8 @@ static NSString *sCustomAppliedId;
 static ObjRef sCustomTarget;
 static int sCustomTargetIdx = -1;               // its list position (the picture cache's key)
 static NSDictionary *sLastKegel;                  // what the engine computed for the custom pattern (oil report)
+static NSString *sOilReportSource;
+static int sBuiltinPatched = 0;                   // how many of the game's own patterns are drawn from their Kegel files right now
 static int sLastKegelBase = -1;
 static std::vector<float> sCustomBackup;
 static NSString *sCustomNote = @"";
@@ -1915,7 +2244,7 @@ static NSDictionary *KegelRun(int templateIndex, NSArray *fwd, NSArray *rev, int
 // PatternLoadScreens.Add, which rejects forward travel (zero-load) steps and places the first reverse
 // step at a template setting (Pattern 0xC8), so sheets came out wrong. Here every step's distance is
 // the sheet's (exact patterns) or the engine's own "new math" (patterns made in the editor).
-struct KStep { int start, stop, loads, speed; float end; };
+struct KStep { int start, stop, loads, speed; float end; float ul = 50; };   // ul: the step's microliters per board
 
 static int NetRound(double x) {                   // .NET Math.Round: halves go to the even number
     double f = floor(x), d = x - f;
@@ -1930,7 +2259,8 @@ static void KegelEnds(NSArray *fwdIn, NSArray *revIn, bool exact, std::vector<KS
     for (int d = 0; d < 2; d++) {
         for (NSArray *a in (d == 0 ? fwdIn : revIn)) {
             if (a.count < 4) continue;
-            KStep k = { [a[0] intValue], [a[1] intValue], [a[2] intValue], [a[3] intValue], a.count > 4 ? [a[4] floatValue] : 0 };
+            KStep k = { [a[0] intValue], [a[1] intValue], [a[2] intValue], [a[3] intValue], a.count > 4 ? [a[4] floatValue] : 0,
+                        a.count > 5 && [a[5] floatValue] > 0 ? [a[5] floatValue] : 50.f };
             if (k.speed <= 0) continue;
             if (!exact && k.loads != 0) {
                 float dist = k.loads * k.speed * 17.f / 120.f;
@@ -2036,11 +2366,130 @@ static void KegelDraw(const std::vector<KStep> &fwd, const std::vector<KStep> &r
 // The game's own grids have lane column 0 on the bowler's RIGHT (OilMatrix[w] = Units[w + 1]), so its
 // Kegel patterns are mirrored; device screenshots of 2026 PBA Regional 37 (lopsided: 2L-6R, 4L-9R)
 // showed the left-side features on the right. custom = false reproduces the game exactly (self-check).
-static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, bool exact, bool custom) {
+// ---- Kegel-accurate oil, v2 (custom patterns, "Kegel-accurate oil" on) ----
+// Everything below was measured from Kegel's own charts and files (2025 U.S. Open #4, 2017 SEA Games Long,
+// 2026 Regional 37, the Start 5 / Stop 15 calibration pattern; see VERIFIED_NOTES.md "Kegel's chart"):
+//  * Geometry is continuous. A load travels speed x 0.14 ft (14 in/s = 1.96 ft per load), the first step of
+//    the forward pass counts loads - 1, and a step covers exactly [previous end, end]. The sheet's whole-foot
+//    "10 -> 14" is that rounded for display (it is 9.80 -> 13.72). The lane's oil map has 4 rows per foot, so
+//    edges land within 0.125 ft and a partly covered row gets its share of the oil.
+//  * Oil per foot per board = 339 / speed x uL / 50 (the game's density, Kegel's own for 50 uL), added for
+//    every pass over a cell. Reverse oil counts only below the reverse brush drop.
+//  * The final travel to the foul line carries the last loaded reverse step's oil down the front of the lane
+//    (over that step's boards), like the brush on a real machine.
+//  * A brushed film covers EVERY board from 2 to 38 (also boards the oil head never crossed) from the foul
+//    line to the pattern distance: strongest at the foul line, fading linearly, then a lighter tier from the
+//    reverse brush drop to the distance. Kegel's chart draws exactly this under the passes.
+//  * No scaling to the game's total: the units are the game's own single-pass units (a 50 uL pass at 14 in/s
+//    is 24), so the oil amounts are the sheet's, not inflated.
+static const float kFilmFront = 25.f;           // film at the foul line, in game oil units (about one 50 uL pass)
+static float KegelDensity(const KStep &k) { return k.speed > 0 ? 339.f / k.speed * (k.ul / 50.f) : 0.f; }
+
+// Step ends from the sheet's loads and speeds. precise: the given ends are exact (Kegel's .Pattern file, the
+// collection): use them as they are. Otherwise (PDF / text / editor) the loaded steps are recomputed with
+// Kegel's rule and only the travel destinations (zero-load steps) are taken from the sheet.
+static void KegelExactChainV(const std::vector<KStep> &fwdIn, const std::vector<KStep> &revIn, int drop, bool precise,
+                             std::vector<KStep> &fwd, std::vector<KStep> &rev) {
+    float pos = 0;
+    bool first = true;
+    for (KStep k : fwdIn) {
+        if (k.speed <= 0) continue;
+        if (k.loads > 0 && !precise) k.end = pos + fmaxf(0, (float)(first ? k.loads - 1 : k.loads)) * k.speed * 0.14f;
+        if (k.end < pos) k.end = pos;              // oil never goes back up the lane in the forward pass
+        pos = k.end;
+        first = false;
+        fwd.push_back(k);
+    }
+    float rpos = 0;
+    bool started = false;
+    for (KStep k : revIn) {
+        if (k.speed <= 0) continue;
+        if (k.loads > 0) {
+            if (!started) { rpos = drop > 0 ? (float)drop : pos; started = true; }
+            if (!precise) k.end = rpos - k.loads * k.speed * 0.14f;
+        } else if (started && k.end > rpos) k.end = rpos;   // a travel never goes back up either
+        if (k.end < 0) k.end = 0;
+        started = true;
+        rpos = k.end;
+        rev.push_back(k);
+    }
+}
+
+static std::vector<KStep> KegelParseSteps(NSArray *in) {
+    std::vector<KStep> out;
+    for (NSArray *a in in) {
+        if (a.count < 4) continue;
+        out.push_back({ [a[0] intValue], [a[1] intValue], [a[2] intValue], [a[3] intValue], a.count > 4 ? [a[4] floatValue] : 0,
+                        a.count > 5 && [a[5] floatValue] > 0 ? [a[5] floatValue] : 50.f });
+    }
+    return out;
+}
+
+static void KegelDrawExactK(const std::vector<KStep> &fwd, const std::vector<KStep> &rev, int drop, int feet, float V[41][240]) {
+    memset(V, 0, sizeof(float) * 41 * 240);
+    float lastFwd = 0;
+    for (const KStep &k : fwd) lastFwd = fmaxf(lastFwd, k.end);
+    float dist = feet > 0 ? (float)feet : ceilf(lastFwd);
+    if (dist > 60.f) dist = 60.f;
+    float dropEff = (drop > 0 && drop < dist) ? (float)drop : dist;
+    // [boards b0..b1] x [ft a..b] += v, each 0.25 ft row by the share of it the interval covers
+    auto addRect = [&](int b0, int b1, float a, float b, float v) {
+        a = fmaxf(a, 0.f);
+        b = fminf(b, 60.f);
+        if (b <= a || v == 0) return;
+        int r0 = (int)floorf(a * 4.f), r1 = (int)ceilf(b * 4.f) - 1;
+        for (int r = r0; r <= r1 && r < 240; r++) {
+            float lo = fmaxf(a, r / 4.f), hi = fminf(b, (r + 1) / 4.f);
+            float cov = (hi - lo) * 4.f;
+            if (cov <= 0) continue;
+            for (int bd = b0; bd <= b1; bd++) if (bd >= 1 && bd <= 39) V[bd][r] += v * cov;
+        }
+    };
+    // the brushed film, boards 2..38 (Kegel's chart: strongest at the foul line, lighter past the brush drop)
+    auto film = [&](float ft) -> float {
+        float fa = kFilmFront * (1.f - 0.01177f * ft);
+        if (ft < dropEff) return fa;
+        float atDrop = 0.6f * kFilmFront * (1.f - 0.01177f * dropEff), atEnd = 0.27f * kFilmFront;
+        return dist > dropEff ? atDrop + (atEnd - atDrop) * (ft - dropEff) / (dist - dropEff) : atDrop;
+    };
+    for (int r = 0; r < 240; r++) {
+        float ft = (r + 0.5f) / 4.f;
+        if (ft >= dist) break;
+        float f = film(ft);
+        for (int bd = 2; bd <= 38; bd++) V[bd][r] += f;
+    }
+    float prev = 0;
+    for (const KStep &k : fwd) {                   // forward passes: [previous end, end]
+        if (k.loads > 0) addRect(k.start, k.stop, prev, k.end, KegelDensity(k));
+        prev = k.end;
+    }
+    float p = drop > 0 ? (float)drop : dist;       // reverse passes: [end, previous end], below the brush drop
+    bool haveLast = false;
+    int lb0 = 0, lb1 = -1;
+    float ldens = 0;
+    for (const KStep &k : rev) {
+        if (k.loads > 0) {
+            float hi = drop > 0 ? fminf(p, (float)drop) : p;
+            addRect(k.start, k.stop, k.end, hi, KegelDensity(k));
+            haveLast = true; lb0 = k.start; lb1 = k.stop; ldens = KegelDensity(k);
+        } else if (k.end < 0.5f && haveLast) {     // the last travel to the foul line: the brush carries the last load down
+            addRect(lb0, lb1, 0.f, p, ldens);
+        }
+        p = k.end;
+    }
+}
+
+static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, bool exact, bool custom, int feet = 0, bool precise = false) {
     std::vector<KStep> fwd, rev;
-    KegelEnds(fwdIn, revIn, exact, fwd, rev);
-    static float U[41][60];
-    KegelDraw(fwd, rev, drop > 0 ? drop : 60, U, custom);
+    bool kegel2 = custom;                          // BowlingPlus patterns always use the Kegel-accurate model
+    static float U[41][60], V[41][240];
+    if (kegel2) {                                  // Kegel-accurate v2: exact distances, 0.25 ft rows, full-lane film
+        KegelExactChainV(KegelParseSteps(fwdIn), KegelParseSteps(revIn), drop, precise, fwd, rev);
+        KegelDrawExactK(fwd, rev, drop, feet, V);
+    } else {                                       // the game's own model
+        KegelEnds(fwdIn, revIn, exact, fwd, rev);
+        KegelDraw(fwd, rev, drop > 0 ? drop : 60, U, custom);
+    }
     int w = 0, h = 0;
     if (!sGpMapW) sGpMapW = StaticField(N.GameParams, "OIL_MAP_WIDTH");
     if (!sGpMapH) sGpMapH = StaticField(N.GameParams, "OIL_MAP_LENGTH");
@@ -2052,16 +2501,20 @@ static NSDictionary *KegelDrawPattern(NSArray *fwdIn, NSArray *revIn, int drop, 
     for (int x = 0; x < w; x++)
         for (int y = 0; y < h; y++) {               // like OilDescription.Parce: OilMatrix[w,h] = Units[w + 1, h / 4]
             int board = custom ? w - x : x + 1;
-            float v = (board >= 0 && board < 41 && y / 4 < 60) ? U[board][y / 4] : 0;
+            float v = 0;
+            if (board >= 0 && board < 41) {
+                if (kegel2) v = V[board][y * 240 / h];            // the map's rows are the model's rows (4 per foot)
+                else if (y / 4 < 60) v = U[board][y / 4];
+            }
             g[(size_t)x * h + y] = v;
             maxv = fmaxf(maxv, v);
             sum += v;
         }
     NSMutableArray *fo = [NSMutableArray array], *ro = [NSMutableArray array];
-    for (const KStep &k : fwd) [fo addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end) ]];
-    for (const KStep &k : rev) [ro addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end) ]];
+    for (const KStep &k : fwd) [fo addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(k.ul) ]];
+    for (const KStep &k : rev) [ro addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(k.ul) ]];
     return @{ @"w": @(w), @"h": @(h), @"grid": grid, @"max": @(maxv), @"sum": @(sum), @"fwd": fo, @"rev": ro,
-              @"drop": @(drop > 0 ? drop : 60), @"tdrop": @(drop) };
+              @"drop": @(drop > 0 ? drop : 60), @"tdrop": @(drop), @"feet": @(feet) };
 }
 
 // Engine self-check for the oil report: draw one of the game's own patterns with our copy (its steps and
@@ -2113,7 +2566,8 @@ static void OilCustomTick() {
     int base = [sCustomPattern[@"base"] intValue];
     if (!OilList(ol) || base < 0 || base >= ol.size) base = 0;
     NSDictionary *r = KegelDrawPattern(sCustomPattern[@"fwd"], sCustomPattern[@"rev"], [sCustomPattern[@"drop"] intValue],
-                                       [sCustomPattern[@"exact"] boolValue], true);
+                                       [sCustomPattern[@"exact"] boolValue], true,
+                                       [sCustomPattern[@"feet"] intValue], [sCustomPattern[@"precise"] boolValue]);
     sLastKegel = r;
     sLastKegelBase = base;
     NSData *grid = r[@"grid"];
@@ -2131,6 +2585,123 @@ static void OilCustomTick() {
     sCustomNote = @"";
     ReloadOilIndex(sCustomTargetIdx);
     BFLog(@"custom oil: \"%@\" is on the lane", sCustomPattern[@"name"]);
+}
+
+// ---- 4b) the game's own patterns, drawn like real life (Practice) ----
+// The game builds its 48 patterns with its simplified Kegel engine (whole-foot rows, reverse oil doubling,
+// no film on boards the oil head never crossed, left and right mirrored). Each pattern still carries its
+// real Kegel file (OilDescription._source, a TextAsset), so in Practice the lane's oil grids are replaced by
+// the Kegel-accurate drawing of that file: exact distances on the lane's quarter-foot rows, microliters,
+// the brushed film, and Kegel's left on the bowler's left. All 48 are swapped at once (so the pattern
+// carousel shows them right away), the originals are kept, and everything is put back the moment you're not
+// in Practice (online matches, tournaments, the tutorial always get the game's own oil).
+static NSMutableDictionary<NSNumber *, NSDictionary *> *sBuiltinSpec;
+static struct BuiltinState { void *desc = nullptr; bool applied = false; std::vector<float> backup; } sBI[64];
+static uint64_t sBuiltinRedraw = 0;               // patterns whose lane picture still needs redrawing
+static int sBuiltinFails = 0;
+
+static NSDictionary *BuiltinSpec(int idx, void *desc) {
+    if (idx < 0 || idx >= 64 || !desc) return nil;
+    if (!sBuiltinSpec) sBuiltinSpec = [NSMutableDictionary dictionary];
+    NSDictionary *c = sBuiltinSpec[@(idx)];
+    if (c) return c.count ? c : nil;
+    OilDescOffsets(desc);
+    NSDictionary *spec = nil;
+    void *ta = sOdSrcAsset >= 0 ? At<void *>(desc, sOdSrcAsset) : nullptr;
+    if (Alive(ta) && N.TA_getText) {
+        NSString *text = Str(Invoke(N.TA_getText, ta, nullptr));
+        if (text.length) {
+            std::vector<std::string> lines;
+            for (NSString *l in [text componentsSeparatedByString:@"\n"]) lines.push_back(l.UTF8String ?: "");
+            KegelFile f = KegelParseLines(lines);
+            if (f.ok) {
+                NSMutableArray *fw = [NSMutableArray array], *rv = [NSMutableArray array];
+                for (const KegelFileStep &k : f.fwd) [fw addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(f.ul) ]];
+                for (const KegelFileStep &k : f.rev) [rv addObject:@[ @(k.start), @(k.stop), @(k.loads), @(k.speed), @(k.end), @(f.ul) ]];
+                NSString *nm = sOdName >= 0 ? Str(At<void *>(desc, sOdName)) : nil;
+                spec = @{ @"fwd": fw, @"rev": rv, @"drop": @(f.drop), @"feet": @(f.feet), @"ul": @(f.ul), @"name": nm ?: @"pattern" };
+            }
+        }
+    }
+    sBuiltinSpec[@(idx)] = spec ?: @{};
+    if (!spec) { sBuiltinFails++; BFLog(@"built-in oil pattern %d: couldn't read its Kegel file, it keeps the game's drawing", idx + 1); }
+    return spec;
+}
+
+NSDictionary *BFOilBuiltinSpec(int idx) {          // for the editor's "Start from"
+    void *d = OilDescAt(idx);
+    return d ? BuiltinSpec(idx, d) : nil;
+}
+
+static void BuiltinRestoreAll() {
+    if (!sBuiltinPatched) { for (int i = 0; i < 64; i++) sBI[i] = BuiltinState(); return; }
+    if (sCustomAppliedId) RestoreCustom();         // a custom pattern may sit on top of one of them: back to the patched first
+    ListView lv;
+    bool haveList = OilList(lv);
+    for (int i = 0; i < 64; i++) {
+        if (!sBI[i].applied) continue;
+        if (haveList && i < lv.size && lv.items[i] == sBI[i].desc && sOdSource >= 0 && sOdMatrix >= 0) {
+            void *d = lv.items[i];
+            OilGrid src, live;
+            if (GridOf(At<void *>(d, sOdSource), src) && (size_t)src.w * src.h == sBI[i].backup.size()) {
+                memcpy(src.data, sBI[i].backup.data(), sizeof(float) * sBI[i].backup.size());
+                if (GridOf(At<void *>(d, sOdMatrix), live) && live.w == src.w && live.h == src.h)
+                    memcpy(live.data, src.data, sizeof(float) * sBI[i].backup.size());
+                sBuiltinRedraw |= 1ull << i;
+            }
+        }
+        sBI[i] = BuiltinState();
+    }
+    sBuiltinPatched = 0;
+    BFLog(@"the game's own oil patterns are back (not in Practice)");
+}
+
+static void BuiltinApplyAll() {
+    ListView lv;
+    if (!OilList(lv)) return;
+    int n = lv.size < 64 ? lv.size : 64, added = 0;
+    for (int i = 0; i < n; i++) {
+        void *d = lv.items[i];
+        if (!d) continue;
+        if (sBI[i].applied && sBI[i].desc == d) continue;
+        if (sBI[i].applied) sBI[i] = BuiltinState();                 // the list changed under us
+        if (sCustomAppliedId && i == sCustomTargetIdx) continue;     // a custom pattern is on this one right now
+        OilDescOffsets(d);
+        if (sOdSource < 0 || sOdMatrix < 0) return;
+        NSDictionary *spec = BuiltinSpec(i, d);
+        if (!spec) continue;
+        OilGrid src, live;
+        if (!GridOf(At<void *>(d, sOdSource), src) || !GridOf(At<void *>(d, sOdMatrix), live) || src.w != live.w || src.h != live.h) continue;
+        NSDictionary *r = KegelDrawPattern(spec[@"fwd"], spec[@"rev"], [spec[@"drop"] intValue], true, true, [spec[@"feet"] intValue], true);
+        NSData *grid = r[@"grid"];
+        if ([r[@"w"] intValue] != src.w || [r[@"h"] intValue] != src.h || grid.length != sizeof(float) * src.w * src.h) continue;
+        sBI[i].backup.assign(src.data, src.data + (size_t)src.w * src.h);
+        memcpy(src.data, grid.bytes, grid.length);                    // a new game copies this clean grid back, so it stays
+        memcpy(live.data, grid.bytes, grid.length);
+        sBI[i].desc = d;
+        sBI[i].applied = true;
+        sBuiltinRedraw |= 1ull << i;
+        added++;
+    }
+    int total = 0;
+    for (int i = 0; i < 64; i++) total += sBI[i].applied;
+    sBuiltinPatched = total;
+    if (added) BFLog(@"Practice: %d of the game's oil patterns are now drawn from their Kegel files (%d couldn't be read)", total, sBuiltinFails);
+}
+
+static void BuiltinRedrawStep() {                 // lane pictures: the selected pattern first, then a few per call
+    if (!sBuiltinRedraw) return;
+    int budget = 6, cur = OilSelected() - 1;
+    if (cur >= 0 && cur < 64 && ((sBuiltinRedraw >> cur) & 1)) { sBuiltinRedraw &= ~(1ull << cur); ReloadOilIndex(cur); budget--; }
+    for (int i = 0; i < 64 && budget > 0; i++)
+        if ((sBuiltinRedraw >> i) & 1) { sBuiltinRedraw &= ~(1ull << i); ReloadOilIndex(i); budget--; }
+}
+
+static void OilBuiltinTick() {
+    bool want = InPracticeOil();
+    if (!want) { if (sBuiltinPatched) BuiltinRestoreAll(); }
+    else if (sFrame % 15 == 0 || !sBuiltinPatched) BuiltinApplyAll();
+    if (sFrame % 3 == 0) BuiltinRedrawStep();
 }
 
 // ---- 5) show oil thickness (display only) ----
@@ -2224,6 +2795,16 @@ static void OilThicknessTick() {                  // every 30 frames
 static NSString *OilReport(bool live) {
     NSMutableString *s = [NSMutableString string];
     NSDictionary *r = sLastKegel;
+    sOilReportSource = sCustomAppliedId ? @"custom pattern, Kegel-accurate model" : @"";
+    if (!sCustomAppliedId && live && sBuiltinPatched) {          // the game's own pattern, drawn from its Kegel file
+        int idx = OilSelected() - 1;
+        void *dd = CurrentOilDesc();
+        NSDictionary *spec = (dd && idx >= 0) ? BuiltinSpec(idx, dd) : nil;
+        if (spec) {
+            r = KegelDrawPattern(spec[@"fwd"], spec[@"rev"], [spec[@"drop"] intValue], true, true, [spec[@"feet"] intValue], true);
+            sOilReportSource = [NSString stringWithFormat:@"game pattern \"%@\" from its Kegel file, Kegel-accurate model (%d of 48 patterns patched)", spec[@"name"], sBuiltinPatched];
+        }
+    }
     int w = [r[@"w"] intValue], h = [r[@"h"] intValue];
     const float *eg = (const float *)[r[@"grid"] bytes];
     OilGrid lane = {};
@@ -2231,8 +2812,8 @@ static NSString *OilReport(bool live) {
     if (d) { OilDescOffsets(d); if (sOdMatrix >= 0) GridOf(At<void *>(d, sOdMatrix), lane); }
     if (!r && !lane.data) return @"";
     int lw = lane.data ? lane.w : w, lh = lane.data ? lane.h : h;
-    [s appendFormat:@"oil report: map %dx%d (%.2f rows/ft) | custom template #%d brush drop used %@ (template %@) | lane = pattern %d\n",
-        lw, lh, lh / 60.0, sLastKegelBase, r[@"drop"] ?: @"-", r[@"tdrop"] ?: @"-", live ? OilSelected() : -1];
+    [s appendFormat:@"oil report: map %dx%d (%.2f rows/ft) | custom template #%d brush drop used %@ (template %@) | %@ | lane = pattern %d\n",
+        lw, lh, lh / 60.0, sLastKegelBase, r[@"drop"] ?: @"-", r[@"tdrop"] ?: @"-", sOilReportSource ?: @"", live ? OilSelected() : -1];
     NSMutableArray *fe = [NSMutableArray array], *re = [NSMutableArray array];
     for (NSArray *st in r[@"fwd"]) [fe addObject:[NSString stringWithFormat:@"%.1f", [st[4] floatValue]]];
     for (NSArray *st in r[@"rev"]) [re addObject:[NSString stringWithFormat:@"%.1f", [st[4] floatValue]]];
@@ -2263,6 +2844,7 @@ void BFOilApplyHue(void) {                         // called by the color picker
 static void OilTick() {
     OilBreakdownTick();                           // every frame (it watches for the end of a shot)
     OilMirrorTick();                              // every frame (cheap texture check), full pass every 30
+    if (sSettled && N.ok) OilBuiltinTick();       // every frame: leaving Practice must put the game's oil back at once
     if (sFrame % 30 != 0) return;
     OilThicknessTick();
     OilInvisibleTick();
@@ -2295,10 +2877,14 @@ NSArray<NSDictionary *> *BFOilBuiltins(void) {
 
 // fwd/rev nil: the game's own pattern at templateIndex (its steps, as the game reads them, and its drop).
 // Otherwise: our copy of the engine draws the given steps.
-NSDictionary *BFOilCompute(int templateIndex, NSArray *fwd, NSArray *rev, int drop, BOOL exact) {
+NSDictionary *BFOilCompute(int templateIndex, NSArray *fwd, NSArray *rev, int drop, BOOL exact, int feet, BOOL precise) {
     @try {
-        if (!fwd && !rev) return KegelRun(templateIndex, nil, nil, 0);
-        return KegelDrawPattern(fwd, rev, drop, exact, true);
+        if (!fwd && !rev) {                        // one of the game's own patterns: its real Kegel file (microliters, exact ends)
+            NSDictionary *spec = BFOilBuiltinSpec(templateIndex);
+            if (spec) return KegelDrawPattern(spec[@"fwd"], spec[@"rev"], [spec[@"drop"] intValue], true, true, [spec[@"feet"] intValue], true);
+            return KegelRun(templateIndex, nil, nil, 0);
+        }
+        return KegelDrawPattern(fwd, rev, drop, exact, true, feet, precise);
     } @catch (NSException *e) { return nil; }
 }
 
@@ -2351,6 +2937,155 @@ NSString *BFOilStatusLine(void) {
     return parts.count ? [parts componentsJoinedByString:@" \u00B7 "] : @"";
 }
 
+// ---- tap the game's pin layouts to pick pins (Practice) ----
+// Holding the ball, the top-right pin layout (MainMenuButtonMan.pinObj) shows which pins stand; in the overhead
+// view of the ball return, the little screen under it (the "MonitorCollider" box) does. A tap on either opens
+// the pin picker for this shot only.
+static Ref sMmbm, sMonCol;
+static NSString *sTapNote = @"no tap yet";
+
+static uint16_t StandingMask() {
+    void *rpt = sRPT.get();
+    if (!rpt || N.rpt_kegsUp < 0) return BF_ALL_PINS;
+    Il2CppArray *kegs = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
+    size_t n = Len(kegs);
+    if (!n || n > 32) return BF_ALL_PINS;
+    bool *k = (bool *)Data(kegs);
+    uint16_t m = 0;
+    for (size_t i = 0; i < 10 && i < n; i++) if (k[i]) m |= (uint16_t)(1u << i);
+    return m ? m : BF_ALL_PINS;
+}
+
+static bool ScreenWH(float &w, float &h) {
+    if (!N.Scr_w || !N.Scr_h) return false;
+    w = (float)InvokeInt(N.Scr_w, nullptr, nullptr, 0);
+    h = (float)InvokeInt(N.Scr_h, nullptr, nullptr, 0);
+    return w > 1 && h > 1;
+}
+
+static bool ProjectPoint(void *cam, Vec3 p, float &x, float &y) {      // world -> screen pixels (y up); false when behind the camera
+    if (!Alive(cam) || !N.Cam_w2s) return false;
+    void *a[] = { &p };
+    bool ok = false;
+    Il2CppObject *b = Invoke(N.Cam_w2s, cam, a, &ok);
+    if (!ok || !b) return false;
+    Vec3 q = *(Vec3 *)Unbox(b);
+    if (q.z <= 0) return false;
+    x = q.x; y = q.y;
+    return true;
+}
+
+static void *WorldCameraFor(int layer) {           // the enabled camera that draws this layer to the screen, highest depth
+    Il2CppArray *cams = N.Cam_all ? (Il2CppArray *)Invoke(N.Cam_all, nullptr, nullptr) : nullptr;
+    void *best = nullptr;
+    float bestDepth = -1e9f;
+    for (size_t i = 0; i < Len(cams); i++) {
+        void *c = Elem(cams, i);
+        if (!Alive(c)) continue;
+        if (N.Beh_enabled && !InvokeBool(N.Beh_enabled, c, nullptr, true)) continue;
+        if (N.Cam_target && Invoke(N.Cam_target, c, nullptr)) continue;                    // draws into a texture, not the screen
+        int mask = N.Cam_mask ? InvokeInt(N.Cam_mask, c, nullptr, -1) : -1;
+        if (layer >= 0 && layer < 32 && !((mask >> layer) & 1)) continue;
+        Il2CppObject *db = N.Cam_depth ? Invoke(N.Cam_depth, c, nullptr) : nullptr;
+        float d = db ? *(float *)Unbox(db) : 0;
+        if (d > bestDepth) { bestDepth = d; best = c; }
+    }
+    if (!best && N.Cam_main) { void *m = Invoke(N.Cam_main, nullptr, nullptr); if (Alive(m)) best = m; }
+    return best;
+}
+
+// a UI object's rectangle on screen, as 0..1 of the screen with y up: {minU, minV, maxU, maxV}
+static bool UiRectOnScreen(void *go, float r[4]) {
+    if (!Alive(go) || !N.GO_getTransform || !N.RT_corners || !N.Vec3Cls || !N.GO_activeH) return false;
+    if (!InvokeBool(N.GO_activeH, go, nullptr, false)) return false;
+    void *tr = Invoke(N.GO_getTransform, go, nullptr);
+    float sw, sh;
+    if (!Alive(tr) || !ScreenWH(sw, sh)) return false;
+    Il2CppArray *arr = NewArray(N.Vec3Cls, 4);
+    if (!arr) return false;
+    void *a[] = { arr };
+    Invoke(N.RT_corners, tr, a);
+    Vec3 *c = (Vec3 *)Data(arr);
+    int mode = 0;
+    void *cam = nullptr;
+    void *cv = nullptr;
+    if (N.GO_inParent && N.tCanvas) { void *ca[] = { N.tCanvas }; cv = Invoke(N.GO_inParent, go, ca); }
+    if (Alive(cv)) {
+        void *root = N.Cv_root ? Invoke(N.Cv_root, cv, nullptr) : cv;
+        if (Alive(root)) cv = root;
+        mode = N.Cv_mode ? InvokeInt(N.Cv_mode, cv, nullptr, 0) : 0;
+        cam = (mode != 0 && N.Cv_cam) ? Invoke(N.Cv_cam, cv, nullptr) : nullptr;
+    }
+    float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+    for (int i = 0; i < 4; i++) {
+        float x = c[i].x, y = c[i].y;
+        if (mode != 0 && Alive(cam) && !ProjectPoint(cam, c[i], x, y)) return false;      // overlay canvas: already pixels
+        mnx = fminf(mnx, x); mxx = fmaxf(mxx, x); mny = fminf(mny, y); mxy = fmaxf(mxy, y);
+    }
+    r[0] = mnx / sw; r[1] = mny / sh; r[2] = mxx / sw; r[3] = mxy / sh;
+    return r[2] > r[0] && r[3] > r[1];
+}
+
+// a collider's box on screen (the little screen under the ball return)
+static bool ColliderRectOnScreen(void *col, float r[4]) {
+    if (!Alive(col) || !N.Col_bounds) return false;
+    void *go = GameObjectOf(col);
+    float sw, sh;
+    if (!Alive(go) || !ScreenWH(sw, sh)) return false;
+    if (N.GO_activeH && !InvokeBool(N.GO_activeH, go, nullptr, false)) return false;
+    bool ok = false;
+    Il2CppObject *b = Invoke(N.Col_bounds, col, nullptr, &ok);
+    if (!ok || !b) return false;
+    const float *f = (const float *)Unbox(b);                       // Bounds: center xyz, extents xyz
+    int layer = N.GO_layer ? InvokeInt(N.GO_layer, go, nullptr, -1) : -1;
+    void *cam = WorldCameraFor(layer);
+    if (!Alive(cam)) return false;
+    float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+    for (int i = 0; i < 8; i++) {
+        Vec3 p = { f[0] + ((i & 1) ? f[3] : -f[3]), f[1] + ((i & 2) ? f[4] : -f[4]), f[2] + ((i & 4) ? f[5] : -f[5]) };
+        float x, y;
+        if (!ProjectPoint(cam, p, x, y)) return false;
+        mnx = fminf(mnx, x); mxx = fmaxf(mxx, x); mny = fminf(mny, y); mxy = fmaxf(mxy, y);
+    }
+    r[0] = mnx / sw; r[1] = mny / sh; r[2] = mxx / sw; r[3] = mxy / sh;
+    return r[2] > r[0] && r[3] > r[1];
+}
+
+static bool Inside(const float r[4], float u, float v) {            // with a little extra room for a fingertip
+    float mx = (r[2] - r[0]) * 0.12f + 0.012f, my = (r[3] - r[1]) * 0.12f + 0.012f;
+    return u >= r[0] - mx && u <= r[2] + mx && v >= r[1] - my && v <= r[3] + my;
+}
+
+// u, v: the tap as 0..1 of the screen, v up. Returns true when it opened the pin picker.
+bool BFPinTapAt(float u, float v) {
+    if (!N.ok || !sSettled || gBFSafeMode || !gBFStatus.offline || sMode != MODE_FUN || sInTutorial) return false;
+    if (BFMenuPickerVisible() || BFMenuVisible()) return false;
+    NSString *what = nil;
+    float r[4] = {};
+    if (sLoc == LOC_START_POS) {                                     // holding the ball: the top-right layout
+        void *m = sMmbm.get();
+        if (!m && N.tMMBM) { m = FirstAlive(FindAll(N.tMMBM)); sMmbm.set(m); }
+        if (m && N.mmbm_pinBack >= 0 && UiRectOnScreen(At<void *>(m, N.mmbm_pinBack), r) && Inside(r, u, v)) what = @"top-right pin layout";
+        else if (m && N.mmbm_pinObj >= 0 && UiRectOnScreen(At<void *>(m, N.mmbm_pinObj), r) && Inside(r, u, v)) what = @"top-right pin layout";
+    } else if (sLoc == LOC_BALL_RETURNER || sLoc == LOC_BOTTOM_MONITOR) {   // overhead of the ball return: the screen under it
+        void *c = sMonCol.get();
+        if (!c && N.tBoxCollider) {
+            Il2CppArray *all = FindAll(N.tBoxCollider);
+            for (size_t i = 0; i < Len(all) && !c; i++) {
+                void *o = Elem(all, i);
+                if (Alive(o) && [NameOf(o) isEqualToString:@"MonitorCollider"]) c = o;
+            }
+            sMonCol.set(c);
+        }
+        if (c && ColliderRectOnScreen(c, r) && Inside(r, u, v)) what = @"screen under the ball return";
+    }
+    sTapNote = [NSString stringWithFormat:@"loc=%d tap u=%.3f v=%.3f rect=%.2f,%.2f-%.2f,%.2f -> %@", sLoc, u, v, r[0], r[1], r[2], r[3], what ?: @"not on a pin layout"];
+    if (!what) return false;
+    BFLog(@"pin layout tapped (%@): opening the pin picker for this shot", what);
+    BFMenuShowPinPickerOneShot(StandingMask());
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Main loop + menu text
 // ---------------------------------------------------------------------------
@@ -2378,8 +3113,10 @@ void BFEngineTick(void) {
             OilTick();
             FpsTick();
             PinFixTick();
+            PinImageTick();
             BallCCDTick();
             SpeedTick();
+            SpinTick();
             SpareTick();
             CurrentBallTick();
             SkinDataTick();
@@ -2452,8 +3189,8 @@ NSString *BFDebugInfo(void) {
     [s appendFormat:@"BowlingPlus v%@ | iOS %@ | %s\n", BF_VERSION, [UIDevice currentDevice].systemVersion, u.machine];
     [s appendFormat:@"engine=%d settled=%d safe=%d mode=%d loc=%d offline=%d tutorial=%d frame=%d\n",
         gBFStatus.engineReady, sSettled, gBFSafeMode, sMode, sLoc, gBFStatus.offline, sInTutorial, sFrame];
-    [s appendFormat:@"cfg: skin=%d pins=%d pinSpec=%d speed=%.1f spare=%d auto=%d mask=0x%03x fps120=%d privacy=%d\n",
-        gBF.textureFix, gBF.pinFix, gBF.pinSpec, gBF.speedMult, gBF.spareMode, gBF.spareAuto, gBF.lastPinMask, gBF.fps120, gBF.autoPrivacy];
+    [s appendFormat:@"cfg: skin=%d pins=%d pinSpec=%d speed=%.1f spare=%d auto=%d mask=0x%03x fps120=%d\n",
+        gBF.textureFix, gBF.pinFix, gBF.pinSpec, gBF.speedMult, gBF.spareMode, gBF.spareAuto, gBF.lastPinMask, gBF.fps120];
     [s appendFormat:@"%@ | skinKind=%d\n", sBallLine.length ? sBallLine : @"no current ball", sCurSkin];
     bool live = N.ok && !gBFSafeMode && sSettled;
     ListView cat;
@@ -2471,9 +3208,9 @@ NSString *BFDebugInfo(void) {
     }
     [s appendFormat:@"arsenal: query=%@ shown=%d total=%d\n", sQuery ?: @"-", sShown, sTotal];
     int tgt = live && N.App_getFps ? InvokeInt(N.App_getFps, nullptr, nullptr, -1) : -1;
-    [s appendFormat:@"fps: on=%d applied=%d target=%d table(orig)=%d/%d plist120=%d screenMax=%ld | privacy auto=%d pressed=%d\n",
+    [s appendFormat:@"fps: on=%d applied=%d target=%d table(orig)=%d/%d plist120=%d screenMax=%ld | %@\n",
         gBF.fps120, sFpsApplied, tgt, sOrigMenuFps, sOrigGameFps, PlistAllows120(), (long)[UIScreen mainScreen].maximumFramesPerSecond,
-        gBF.autoPrivacy, BFPrivacyAcceptCount()];
+        BFPrivacyDebug()];
     {
         ListView ol;
         int nOils = OilList(ol) ? ol.size : -1;
@@ -2483,8 +3220,17 @@ NSString *BFDebugInfo(void) {
             sCustomPattern[@"name"] ?: @"-", sCustomAppliedId ? @"yes" : @"no", live ? OilSelected() : -1, nOils, sCustomNote];
         [s appendString:OilReport(live)];
     }
+    {
+        [s appendFormat:@"pin image: on=%d materials=%d size=%d fails=%d\n", gBF.pinImage, sPinImgMats, sPinImgSize, sPinImgFails];
+    }
     [s appendFormat:@"loading: unstick=%d rescued=%d spinner=%d | ipv4=%d dnsSlots=%d | pinSpec(pins only)=%d ball=%d\n",
         gBF.unstick, sUnstuckCount, sSpinnerCount, gBF.gameIPv4, BFDnsHookSlots(), gBF.pinSpec, BallCDM()];
+    {
+        void *inv = SpinInventary();
+        [s appendFormat:@"pin tap: %@\n", sTapNote];
+    [s appendFormat:@"spin boost: x%.1f last %d -> %d rpm grip x%.2f | rpmFactor=%.3f maxOmega=%.1f\n", gBF.spinMult, sSpunFrom, sSpunTo, sGrip,
+            (inv && N.inv_rpmFactor >= 0) ? At<float>(inv, N.inv_rpmFactor) : -1.f, (inv && N.inv_maxOmega >= 0) ? At<float>(inv, N.inv_maxOmega) : -1.f];
+    }
     void *holder = sHolders[0].get();
     ListView lv;
     if (live && holder && N.ph_pins >= 0 && ReadList(At<void *>(holder, N.ph_pins), lv) && lv.size > 0 && lv.items[0]) {

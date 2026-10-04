@@ -3,7 +3,7 @@
 #import "BFShared.h"
 #include <math.h>
 
-BFConfig gBF = { true, true, 1.0f, false, BF_ALL_PINS, false, false, false, false, true, true, true, false, false, false, -1.0f };
+BFConfig gBF = { true, true, 1.0f, false, BF_ALL_PINS, false, false, false, false, true, true, true, false, false, false, -1.0f, false, 1.0f, false };
 BFStatus gBFStatus = { false, false, -1, -1 };
 bool gBFSafeMode = false;
 
@@ -38,6 +38,8 @@ void BFLoadConfig(void) {
     if (d[@"tex"])   gBF.textureFix  = [d[@"tex"] boolValue];
     if (d[@"pin"])   gBF.pinFix      = [d[@"pin"] boolValue];
     if (d[@"speed"]) gBF.speedMult   = [d[@"speed"] floatValue];
+    if (d[@"spin"])  gBF.spinMult    = [d[@"spin"] floatValue];
+    if (d[@"menuHelp"]) gBF.menuHelp = [d[@"menuHelp"] boolValue];
     if (d[@"spare"]) gBF.spareMode   = [d[@"spare"] boolValue];
     if (d[@"mask"])  gBF.lastPinMask = (uint16_t)[d[@"mask"] unsignedIntValue];
     if (d[@"auto"])  gBF.spareAuto   = [d[@"auto"] boolValue];
@@ -50,20 +52,24 @@ void BFLoadConfig(void) {
     if (d[@"oilInvis"])  gBF.oilInvisible = [d[@"oilInvis"] boolValue];
     if (d[@"oilThick2"]) gBF.oilThickness = [d[@"oilThick2"] boolValue];   // new name: 1.4.1's default-on is dropped
     if (d[@"oilHue"])    gBF.oilHue = [d[@"oilHue"] floatValue];
-    if (d[@"privacy"]) gBF.autoPrivacy = [d[@"privacy"] boolValue];
+    if (d[@"pinImage"])  gBF.pinImage = [d[@"pinImage"] boolValue];
+    if (d[@"privacyOK"]) gBF.privacyOK = [d[@"privacyOK"] boolValue];
+    else if ([d[@"privacy"] boolValue]) gBF.privacyOK = true;     // auto-accept was on: you had accepted before
     if (isnan(gBF.speedMult) || gBF.speedMult < 1.f) gBF.speedMult = 1.f;
     if (gBF.speedMult > BF_MAX_SPEED) gBF.speedMult = BF_MAX_SPEED;   // v1.0 allowed up to 500x
+    if (isnan(gBF.spinMult) || gBF.spinMult < 1.f) gBF.spinMult = 1.f;
+    if (gBF.spinMult > BF_MAX_SPIN) gBF.spinMult = BF_MAX_SPIN;
     gBF.lastPinMask &= BF_ALL_PINS;
     if (!gBF.lastPinMask) gBF.lastPinMask = BF_ALL_PINS;
 }
 
 void BFSaveConfig(void) {
-    NSDictionary *d = @{ @"tex": @(gBF.textureFix), @"pin": @(gBF.pinFix), @"speed": @(gBF.speedMult),
+    NSDictionary *d = @{ @"tex": @(gBF.textureFix), @"pin": @(gBF.pinFix), @"speed": @(gBF.speedMult), @"spin": @(gBF.spinMult), @"menuHelp": @(gBF.menuHelp),
                          @"spare": @(gBF.spareMode), @"mask": @(gBF.lastPinMask),
                          @"auto": @(gBF.spareAuto),
-                         @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacy": @(gBF.autoPrivacy),
+                         @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
                          @"unstick": @(gBF.unstick), @"ipv4": @(gBF.gameIPv4),
-                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue) };
+                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage) };
     [[NSUserDefaults standardUserDefaults] setObject:d forKey:kCfgKey];
 }
 
@@ -82,7 +88,7 @@ static CADisplayLink *sLink;
 static void BFEngineStart(void) {
     if (sLink) return;
     BFLoadConfig();
-    // Crash guard: count launches that never got to the lane. After 2 in a row, BowlingPlus
+    // Crash guard: count launches that crashed before the game finished starting. After 2 in a row, BowlingPlus
     // stays out of the way so the game still works (the shake menu can turn it back on).
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     NSInteger unfinished = [ud integerForKey:kGuardKey];
@@ -91,6 +97,14 @@ static void BFEngineStart(void) {
         BFLog(@"SAFE MODE: the last %ld launches didn't finish starting, so BowlingPlus is paused", (long)unfinished);
     }
     [ud setInteger:unfinished + 1 forKey:kGuardKey];
+    // A launch still running after 60 s didn't crash, even if the game is stuck loading (for example its
+    // server can't be reached): that must not pause BowlingPlus, whose "Fix connection" helps exactly then.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(60 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if ([[NSUserDefaults standardUserDefaults] integerForKey:kGuardKey] > 0) {
+            [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:kGuardKey];
+            BFLog(@"still running after 60 s (no crash) - crash guard reset");
+        }
+    });
     sTicker = [BFTicker new];
     sLink = [CADisplayLink displayLinkWithTarget:sTicker selector:@selector(tick:)];
     sLink.preferredFramesPerSecond = 60;   // our checks never need more than 60 per second
@@ -98,6 +112,7 @@ static void BFEngineStart(void) {
     BFShakeStart();
     if (!gBFSafeMode) {
         BFPrivacyStart();
+        BFPinTapInstall();
         BFOilUIStart();
         BFNetMonitorStart();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ BFNetTest(); });

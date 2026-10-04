@@ -4,8 +4,9 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.4.4"
+#define BF_VERSION @"1.6.0"
 #define BF_MAX_SPEED 5.0f
+#define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 
 // Settings (saved in NSUserDefaults)
 typedef struct {
@@ -17,7 +18,7 @@ typedef struct {
     bool     spareAuto;    // rack lastPinMask every frame without asking
     bool     fps120;       // 120 FPS mode (needs CADisableMinimumFrameDurationOnPhone in Info.plist)
     bool     pinSpec;      // experimental: pins (never the ball) use speculative collisions
-    bool     autoPrivacy;  // press "Sign up" on the My.Games privacy page that shows every launch
+    bool     privacyOK;    // you accepted the My.Games privacy page once: it's pressed for you, out of sight, from now on
     bool     unstick;      // time limits for loading waits / spinners that can hang forever
     bool     gameIPv4;     // resolve the game's servers to IPv4 only (their IPv6 doesn't answer)
     bool     oilMirrorFix; // draw the oil on the side the physics uses (fixes mirrored carrydown)
@@ -25,6 +26,9 @@ typedef struct {
     bool     oilInvisible; // hide the oil + random unlocked built-in pattern every game (practice)
     bool     oilThickness; // lane oil colors show thickness (display only)
     float    oilHue;       // oil color hue 0-1 for the lane, -1 = the game's own
+    bool     pinImage;     // pins use the player's own image (looks only)
+    float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
+    bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
 } BFConfig;
 
 // Live game status for the menu
@@ -68,11 +72,16 @@ void BFNetTest(void);
 @class UIColor;
 bool BFOilReady(void);
 NSArray<NSDictionary *> *BFOilBuiltins(void);                                   // [{index, name, feet, ml}]
-NSDictionary *BFOilCompute(int templateIndex, NSArray *fwd, NSArray *rev, int drop, BOOL exact);  // exact: use each step's own end distance
+NSDictionary *BFOilCompute(int templateIndex, NSArray *fwd, NSArray *rev, int drop, BOOL exact, int feet, BOOL precise);  // exact: use each step's own end distance
 void BFOilShowColorPicker(void);                  // OilUI.mm
+NSString *BFPinImagePath(void);                   // Game.mm: Documents/BowlingPlus/pin_image.png
+NSString *BFPinImageStatus(void);                 // Game.mm: what the pins show right now
+void BFPinImagePick(BOOL fromFiles, void (^done)(NSString *message));   // OilUI.mm
+void BFPinImageShareGuide(void);                  // OilUI.mm
 void BFOilApplyHue(void);                         // Game.mm: push gBF.oilHue to the lane now      // runs the game's Kegel engine
 NSArray<UIColor *> *BFOilColors(int n, float *maxHeight);                       // the game's oil color gradient
 void BFOilSetCustom(NSDictionary *pattern);
+NSDictionary *BFOilBuiltinSpec(int index);        // Game.mm: a game pattern's Kegel file as steps ({fwd, rev, drop, feet, ul, name}) or nil
 NSArray<NSDictionary *> *BFOilCollection(void);   // OilCollection.mm: built-in BowlingPlus patterns
 bool BFPracticeLobbyOpen(void);
 NSString *BFOilStatusLine(void);
@@ -88,7 +97,17 @@ int BFDnsHookSlots(void);
 // Privacy.mm
 void BFPrivacyStart(void);
 int BFPrivacyAcceptCount(void);
+NSString *BFPrivacyDebug(void);
 bool BFPrivacyPageVisible(void);
+
+// pin layouts + the spare picker
+bool BFPinTapAt(float u, float v);                  // Game.mm: a tap (0..1 of the screen, v up); true if it opened the picker
+void BFApplySpareSelectionNow(uint16_t mask);       // Game.mm: re-rack these pins right now, for this shot only
+void BFSpareDismissed(void);                        // Game.mm: the picker was closed with the X
+void BFMenuShowPinPickerOneShot(uint16_t mask);     // Menu.mm: the picker without Auto (this shot only)
+bool BFMenuPickerOneShot(void);
+bool BFMenuVisible(void);
+void BFPinTapInstall(void);                         // Menu.mm: listen for taps on the game's window
 void BFApplySpareSelection(uint16_t mask);
 void BFSetArsenalQuery(NSString *query);
 NSString *BFStatusLine(void);

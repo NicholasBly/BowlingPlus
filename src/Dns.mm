@@ -117,20 +117,26 @@ static int Rebind(const struct mach_header_64 *mh, intptr_t slide, const char *s
     return count;
 }
 
+// Unity's app loads UnityFramework on demand (NSBundle load from main), after BowlingPlus starts, so the
+// filter is attached when that image arrives (iOS calls this for every image already loaded and every new
+// one). Before 1.4.8 it only looked once at startup and found no UnityFramework: "0 slots".
+static void BFDnsImageAdded(const struct mach_header *mh, intptr_t slide) {
+    Dl_info info;
+    if (!mh || mh->magic != MH_MAGIC_64 || !dladdr(mh, &info) || !info.dli_fname) return;
+    if (!strstr(info.dli_fname, "/UnityFramework.framework/UnityFramework")) return;
+    int n = Rebind((const struct mach_header_64 *)mh, slide, "_getaddrinfo", (void *)BF_getaddrinfo);
+    sRebound += n;
+    BFLogEvent(@"dns", [NSString stringWithFormat:@"game DNS filter attached to the game (%d slot%s)", n, n == 1 ? "" : "s"]);
+}
+
 void BFDnsHookStart(void) {
     static bool done = false;
     if (done) return;
     done = true;
     sRealGetaddrinfo = (getaddrinfo_t)dlsym(RTLD_DEFAULT, "getaddrinfo");
     if (!sRealGetaddrinfo) return;
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (!name || !strstr(name, "/UnityFramework.framework/UnityFramework")) continue;
-        const struct mach_header *mh = _dyld_get_image_header(i);
-        if (!mh || mh->magic != MH_MAGIC_64) continue;
-        sRebound = Rebind((const struct mach_header_64 *)mh, _dyld_get_image_vmaddr_slide(i), "_getaddrinfo", (void *)BF_getaddrinfo);
-    }
-    BFLogEvent(@"dns", [NSString stringWithFormat:@"game DNS filter installed (%d slot%s)", sRebound, sRebound == 1 ? "" : "s"]);
+    _dyld_register_func_for_add_image(BFDnsImageAdded);
+    BFLogEvent(@"dns", @"game DNS filter waiting for the game to load");
 }
 
 int BFDnsHookSlots(void) { return sRebound; }

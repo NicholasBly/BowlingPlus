@@ -23,7 +23,7 @@ NSArray<NSDictionary *> *BFOilCollection(void) {
             // 385 forward / 119 reverse boards crossed, reverse brush drop 34 ft.
             @{ @"id": @"bp.batonrouge2012", @"collection": @YES,
                @"name": @"Baton Rouge", @"event": @"2012 USBC Open Championships",
-               @"feet": @39, @"ml": @25.2, @"ul": @50, @"base": @0, @"drop": @34, @"exact": @YES,
+               @"feet": @39, @"ml": @25.2, @"ul": @50, @"base": @0, @"drop": @34, @"exact": @YES, @"precise": @YES,
                @"fwd": @[ B(2, 38, 6, 14, 9.9),  B(5, 35, 1, 18, 12.4), B(6, 34, 1, 18, 14.9), B(7, 33, 1, 18, 17.4),
                           B(9, 31, 1, 18, 19.9), B(10, 30, 1, 18, 22.4), B(12, 28, 1, 18, 24.9), B(13, 27, 1, 18, 27.4),
                           B(2, 38, 0, 22, 35.0), B(2, 38, 0, 26, 39.0) ],
@@ -35,7 +35,7 @@ NSArray<NSDictionary *> *BFOilCollection(void) {
             // Lopsided (2L-6R, 4L-9R, 11L-10R, 13L-12R): needs Kegel sides, which BowlingPlus draws.
             @{ @"id": @"bp.pbaregional37.2026", @"collection": @YES,
                @"name": @"PBA Regional 37", @"event": @"2026 PBA Regional",
-               @"feet": @37, @"ml": @32.65, @"ul": @50, @"base": @0, @"drop": @30, @"exact": @YES,
+               @"feet": @37, @"ml": @32.65, @"ul": @50, @"base": @0, @"drop": @30, @"exact": @YES, @"precise": @YES,
                @"fwd": @[ B(2, 38, 3, 14, 3.92), B(2, 34, 1, 14, 5.88), B(7, 33, 3, 14, 11.76), B(4, 31, 2, 14, 15.68),
                           B(11, 30, 3, 18, 23.24), B(13, 28, 2, 18, 28.28), B(2, 38, 0, 22, 37.0) ],
                @"rev": @[ B(2, 38, 0, 30, 29.0), B(11, 29, 2, 22, 22.84), B(9, 32, 2, 18, 17.8), B(7, 33, 2, 18, 12.76),
