@@ -16,14 +16,28 @@ public final class Config {
 
     static synchronized JSONObject get() { return cfg; }
 
-    static boolean b(String key, boolean def) { return get().optBoolean(key, def); }
+    // The native side sends switches as booleans, but a value set from here may be a number: accept both.
+    static boolean b(String key, boolean def) {
+        Object v = get().opt(key);
+        if (v instanceof Boolean) return (Boolean) v;
+        if (v instanceof Number) return ((Number) v).doubleValue() != 0;
+        if (v instanceof String) return "true".equals(v) || "1".equals(v);
+        return def;
+    }
     static double d(String key, double def) { return get().optDouble(key, def); }
     static int i(String key, int def) { return get().optInt(key, def); }
 
-    static void set(String key, boolean v) { set(key, v ? 1.0 : 0.0); }
+    static synchronized void set(String key, boolean v) {
+        try { cfg.put(key, v); } catch (Throwable ignored) {}
+        send(key, v ? 1.0 : 0.0);
+    }
 
     static synchronized void set(String key, double v) {
         try { cfg.put(key, v); } catch (Throwable ignored) {}
+        send(key, v);
+    }
+
+    private static void send(String key, double v) {
         N.call("set", key + "=" + v);
         // some switches change what the window should ask for (120 Hz)
         if (key.equals("fps120")) BP.UI.post(BP::applyFps);

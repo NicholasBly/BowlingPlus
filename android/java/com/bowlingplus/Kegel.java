@@ -100,13 +100,10 @@ final class Kegel {
         return t.endsWith("R") ? 40 - n : n;
     }
 
-    // Android 15+ (API 35) has PdfDocument text; older versions fall back to raw stream text, which works on
+    // Android 15+ (API 35) has PdfRenderer text; older versions fall back to raw stream text, which works on
     // some uncompressed-text PDFs and fails cleanly otherwise (the Kegel .Pattern / .txt import still works).
     static String pdfText(byte[] data) {
         if (Build.VERSION.SDK_INT >= 35) {
-            try {
-                Class<?> loader = Class.forName("android.graphics.pdf.PdfDocument");   // placeholder: real text API below
-            } catch (Throwable ignored) {}
             String viaRenderer = pdfTextViaRenderer(data);
             if (viaRenderer != null && !viaRenderer.isEmpty()) return viaRenderer;
         }

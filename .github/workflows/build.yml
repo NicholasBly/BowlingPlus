@@ -1,0 +1,39 @@
+# Builds the iOS tweak (BowlingPlus.dylib + .deb) with Theos.
+name: Build BowlingPlus
+
+on:
+  push:
+    paths-ignore:
+      - "android/**"
+      - ".github/workflows/build-android.yml"
+      - "**.md"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install ldid make xz
+
+      - name: Get Theos
+        run: |
+          git clone --recursive --depth=1 --shallow-submodules https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: gmake package FINALPACKAGE=1
+
+      - name: Collect files
+        run: |
+          mkdir -p out
+          cp "$(find .theos/obj -name BowlingPlus.dylib -not -path '*/arm64/*' | head -n 1)" out/
+          cp packages/*.deb out/ 2>/dev/null || true
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BowlingPlus
+          path: out/

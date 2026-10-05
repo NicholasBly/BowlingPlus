@@ -4,8 +4,9 @@
 // libmain_orig.so. Unity's Java code loads "main" first thing; our JNI_OnLoad loads the original and hands
 // it the call (so Unity starts exactly as before), then:
 //  - starts the IPv4 DNS filter (it attaches to libil2cpp.so as soon as that loads),
-//  - loads BowlingPlus's Java side (the menu; compiled to a .dex and embedded below) and starts it.
-// No Java code, manifest or resource of the game is changed.
+//  - starts BowlingPlus's Java side (the menu). Its classes ship as an extra classesN.dex in the patched APK
+//    (tools/patch_apk.py), so the game's own class loader finds them like any other app class.
+// None of the game's own code, resources or libraries is changed.
 //
 // Threads: on iOS the game and UIKit share the main thread. On Android, Unity runs on its own "UnityMain"
 // thread and the menu on the UI thread, so every menu action that touches the game is queued here and run
@@ -27,7 +28,6 @@
 #include "PinWrap.h"
 #include "PinGuide.h"
 #include "Logo.h"
-#include "bp_dex.h"   // generated at build time: kBPDex[], kBPDexLen (the Java side, classes.dex)
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "BowlingPlus", __VA_ARGS__)
 
@@ -37,7 +37,7 @@ void BFEngineGuardTick(void);
 
 static JavaVM *sVM;
 static jclass sBP;                        // com.bowlingplus.BP (global ref)
-static jmethodID sUi, sEncodePng, sAssetList, sHttpTest;
+static jmethodID sUi, sEncodePng, sAssetList, sHttpTest, sPoke;
 static std::atomic<bool> sStarted{ false };
 
 // ---------------------------------------------------------------------------
@@ -91,6 +91,13 @@ static void UiCall(const char *cmd, const Str &arg) {   // posts to the Android 
     if (a) e.env->DeleteLocalRef(a);
 }
 
+static void PokeGame() {   // BP.poke(): ask Unity to run our queue on its next frame
+    Env e;
+    if (!e.env || !sBP || !sPoke) return;
+    e.env->CallStaticVoidMethod(sBP, sPoke);
+    e.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Unity-thread job queue
 // ---------------------------------------------------------------------------
@@ -104,15 +111,19 @@ static std::deque<std::shared_ptr<Job>> sJobs;
 static std::atomic<pid_t> sGameTid{ 0 };
 
 // Runs fn on Unity's thread. timeoutMs = 0: fire and forget. Returns false if Unity didn't get to it in
-// time (paused, or busy loading), in which case fn never runs. The Java side posts a "drain" job to
-// Unity first (BP.call), so the queue is looked at on the very next frame.
+// time (paused, or busy loading), in which case fn never runs. Queuing pokes Unity (BP.poke), so the queue
+// is looked at on the very next frame.
 static bool RunOnGame(std::function<void()> fn, int timeoutMs) {
     if (sGameTid && gettid() == sGameTid) { fn(); return true; }
     auto j = std::make_shared<Job>();
     j->fn = std::move(fn);
-    std::unique_lock<std::mutex> lk(sJobLock);
-    sJobs.push_back(j);
+    {
+        std::lock_guard<std::mutex> g(sJobLock);
+        sJobs.push_back(j);
+    }
+    PokeGame();   // the per-frame tick would get to it too, but not while this (UI) thread is waiting
     if (timeoutMs <= 0) return true;
+    std::unique_lock<std::mutex> lk(sJobLock);
     if (sJobCv.wait_for(lk, std::chrono::milliseconds(timeoutMs), [&] { return j->state == 2; })) return true;
     if (j->state == 0) { j->state = 3; return false; }               // never started: drop it
     sJobCv.wait(lk, [&] { return j->state == 2; });                   // already running: it uses our stack, wait
@@ -400,61 +411,21 @@ static void JNICALL N_pinFill(JNIEnv *env, jclass, jbyteArray jpx, jint side, jb
 // ---------------------------------------------------------------------------
 // start-up
 // ---------------------------------------------------------------------------
-static int SdkInt() {
-    char v[PROP_VALUE_MAX] = { 0 };
-    __system_property_get("ro.build.version.sdk", v);
-    return atoi(v);
-}
-
-static Str PackageName() {
-    std::vector<uint8_t> d;
-    if (!ReadFile("/proc/self/cmdline", d)) return Str();
-    Str s((const char *)d.data(), strnlen((const char *)d.data(), d.size()));
-    size_t colon = s.find(':');
-    return colon == Str::npos ? s : s.substr(0, colon);
-}
-
-// The Java side's class loader: the game's own loader is the parent, so it can see Unity's classes.
-static jobject MakeLoader(JNIEnv *env) {
-    jclass up = env->FindClass("com/unity3d/player/UnityPlayer");     // inside JNI_OnLoad: the game's class loader
-    if (!up) { env->ExceptionClear(); return nullptr; }
-    jclass clsCls = env->FindClass("java/lang/Class");
-    jobject parent = env->CallObjectMethod(up, env->GetMethodID(clsCls, "getClassLoader", "()Ljava/lang/ClassLoader;"));
-    if (env->ExceptionCheck() || !parent) { env->ExceptionClear(); return nullptr; }
-    if (SdkInt() >= 26) {
-        jclass mem = env->FindClass("dalvik/system/InMemoryDexClassLoader");
-        jobject buf = env->NewDirectByteBuffer((void *)kBPDex, (jlong)kBPDexLen);
-        jobject loader = mem ? env->NewObject(mem, env->GetMethodID(mem, "<init>", "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V"), buf, parent) : nullptr;
-        if (!env->ExceptionCheck() && loader) return loader;
+// Inside JNI_OnLoad, FindClass uses the class loader that is loading this library: the game's own, which
+// also holds our classesN.dex.
+static jclass FindAppClass(JNIEnv *env, const char *name) {
+    jclass c = env->FindClass(name);
+    if (env->ExceptionCheck() || !c) {
         env->ExceptionClear();
+        LOGE("class %s not found - was the APK patched with tools/patch_apk.py (it adds BowlingPlus's dex)?", name);
+        return nullptr;
     }
-    // Android 6-7: write the dex to the app's code cache and load it from there
-    Str dir = "/data/data/" + PackageName() + "/code_cache";
-    mkdir(dir.c_str(), 0700);
-    Str path = dir + "/bowlingplus.dex";
-    if (!WriteFile(path, kBPDex, kBPDexLen)) return nullptr;
-    chmod(path.c_str(), 0400);
-    jclass dcl = env->FindClass("dalvik/system/DexClassLoader");
-    jstring jp = env->NewStringUTF(path.c_str()), jd = env->NewStringUTF(dir.c_str());
-    jobject loader = env->NewObject(dcl, env->GetMethodID(dcl, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V"),
-                                    jp, jd, nullptr, parent);
-    if (env->ExceptionCheck()) { env->ExceptionClear(); return nullptr; }
-    return loader;
-}
-
-static jclass LoadClass(JNIEnv *env, jobject loader, const char *name) {
-    jclass cl = env->FindClass("java/lang/ClassLoader");
-    jstring n = env->NewStringUTF(name);
-    jclass c = (jclass)env->CallObjectMethod(loader, env->GetMethodID(cl, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;"), n);
-    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); return nullptr; }
     return c;
 }
 
 static void StartJavaSide(JNIEnv *env) {
-    jobject loader = MakeLoader(env);
-    if (!loader) { LOGE("couldn't load the BowlingPlus menu code"); return; }
-    jclass bp = LoadClass(env, loader, "com.bowlingplus.BP");
-    jclass n = LoadClass(env, loader, "com.bowlingplus.N");
+    jclass bp = FindAppClass(env, "com/bowlingplus/BP");
+    jclass n = FindAppClass(env, "com/bowlingplus/N");
     if (!bp || !n) return;
     static const JNINativeMethod methods[] = {
         { (char *)"call", (char *)"(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", (void *)N_call },
@@ -474,6 +445,8 @@ static void StartJavaSide(JNIEnv *env) {
     sEncodePng = env->GetStaticMethodID(bp, "encodePng", "([BII)[B");
     sAssetList = env->GetStaticMethodID(bp, "assetList", "()Ljava/lang/String;");
     sHttpTest = env->GetStaticMethodID(bp, "httpTest", "(Ljava/lang/String;)V");
+    sPoke = env->GetStaticMethodID(bp, "poke", "()V");
+    if (env->ExceptionCheck()) { env->ExceptionClear(); LOGE("a BP bridge method is missing"); }
     jmethodID boot = env->GetStaticMethodID(bp, "boot", "()V");
     if (env->ExceptionCheck() || !boot) { env->ExceptionClear(); LOGE("BP.boot missing"); return; }
     env->CallStaticVoidMethod(bp, boot);

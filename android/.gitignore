@@ -1,0 +1,10 @@
+# build output (android/build.sh)
+/out/
+# never commit the game itself
+/game/
+*.apk
+*.apks
+*.xapk
+*.apkm
+*.keystore
+*.jks

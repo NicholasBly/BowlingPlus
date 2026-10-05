@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -124,8 +125,8 @@ static void TestHost(const char *host, int tcpPort) {
 void BFHttpTest(const char *url);   // Jni.cpp (Java HttpURLConnection)
 
 void BFNetTest(void) {
-    static std::mutex running;
-    if (!running.try_lock()) return;
+    static std::atomic<bool> running{ false };
+    if (running.exchange(true)) return;   // one test at a time
     std::thread([] {
         BFLogEvent("net", "--- connection test start ---");
         TestHost("s1.wannaplay.studio", 4055);      // the game's master server (Photon)
@@ -138,6 +139,6 @@ void BFNetTest(void) {
         BFHttpTest("http://api.wannaplay.studio/scripts");
         BFHttpTest("https://wannaplay.studio/privacy-policy/");
         BFLogEvent("net", "--- connection test done ---");
-        running.unlock();
+        running = false;
     }).detach();
 }

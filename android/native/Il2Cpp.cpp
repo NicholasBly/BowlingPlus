@@ -2,6 +2,7 @@
 #include "Il2Cpp.h"
 #include "BFShared.h"
 #include <dlfcn.h>
+#include <link.h>
 #include <string.h>
 #include <string>
 #include <unordered_map>
@@ -53,9 +54,21 @@ static int sImageCount = 0;
 
 #define LOAD(name) name##_ = (decltype(name##_))dlsym(sLib, #name)
 
+static int FindIl2cppPath(struct dl_phdr_info *info, size_t, void *data) {
+    if (!info->dlpi_name || !strstr(info->dlpi_name, "/libil2cpp.so")) return 0;
+    *(std::string *)data = info->dlpi_name;
+    return 1;
+}
+
 static bool LoadApi() {
-    // Android: the game loads libil2cpp.so with dlopen (not into the global group), so ask for it by name
+    // Android: Unity loads libil2cpp.so with dlopen (not into the global group). Ask for the already-loaded
+    // copy by name, then by the full path the linker reports (never loads a second copy: RTLD_NOLOAD).
     if (!sLib) sLib = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!sLib) {
+        std::string path;
+        dl_iterate_phdr(FindIl2cppPath, &path);
+        if (!path.empty()) sLib = dlopen(path.c_str(), RTLD_NOW | RTLD_NOLOAD);
+    }
     if (!sLib) return false;
     LOAD(il2cpp_get_corlib); LOAD(il2cpp_domain_get); LOAD(il2cpp_domain_get_assemblies);
     LOAD(il2cpp_assembly_get_image); LOAD(il2cpp_image_get_name); LOAD(il2cpp_class_from_name);

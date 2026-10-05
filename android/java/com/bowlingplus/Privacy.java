@@ -2,6 +2,7 @@ package com.bowlingplus;
 
 import android.app.Activity;
 import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebView;
@@ -20,7 +21,7 @@ import java.util.List;
 // We can't swizzle the SDK, so we poll the view tree for a WebView, like the iOS version polls for WKWebView.
 public final class Privacy {
     static final int ST_WAIT = 0, ST_SIGNUP = 1, ST_OTHER = 2, ST_PRESSED = 3;
-    static Handler timer = new Handler();
+    static final Handler timer = new Handler(Looper.getMainLooper());
     static long startMs;
     static int accepted, hiddenCount;
     static boolean watching;
@@ -67,9 +68,7 @@ public final class Privacy {
         }
         if (gBFSafe()) return;
         List<WebView> webs = new ArrayList<>();
-        Activity act = BP.activity;
-        if (act == null) return;
-        collect(act.getWindow().getDecorView(), webs);
+        for (View root : roots()) collect(root, webs);
         boolean anyVisible = false;
         for (final WebView w : webs) {
             if (w.getWindowToken() == null) continue;
@@ -90,6 +89,24 @@ public final class Privacy {
             probe(w);
         }
         sPrivacyVisible = anyVisible;
+    }
+
+    // Every window of the app: the activities we've seen (the page is its own activity, MRGSWebViewActivity)
+    // plus, when Android allows reading it, the window list itself (dialogs and popups).
+    static List<View> roots() {
+        List<View> out = new ArrayList<>();
+        for (Activity a : BP.liveActivities()) {
+            try { View d = a.getWindow().getDecorView(); if (d != null && !out.contains(d)) out.add(d); } catch (Throwable ignored) {}
+        }
+        try {
+            Class<?> wmg = Class.forName("android.view.WindowManagerGlobal");
+            Object g = wmg.getMethod("getInstance").invoke(null);
+            java.lang.reflect.Field f = wmg.getDeclaredField("mViews");
+            f.setAccessible(true);
+            Object views = f.get(g);
+            if (views instanceof List) for (Object v : new ArrayList<Object>((List<?>) views)) if (v instanceof View && !out.contains(v)) out.add((View) v);
+        } catch (Throwable ignored) {}
+        return out;
     }
 
     static void collect(View v, List<WebView> out) {
@@ -121,7 +138,7 @@ public final class Privacy {
     static void conceal(WebView w) {
         // hide the smallest ancestor that holds only the page (not the game's own view)
         View v = w;
-        View root = BP.activity != null ? BP.activity.getWindow().getDecorView() : null;
+        View root = w.getRootView();
         while (v.getParent() instanceof View && v.getParent() != root) v = (View) v.getParent();
         if (v != root && v.getAlpha() > 0.01f) { v.setAlpha(0f); hidden.put(w, v); }
         else if (w.getAlpha() > 0.01f) { w.setAlpha(0f); hidden.put(w, w); }

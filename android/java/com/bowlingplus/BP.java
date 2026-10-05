@@ -25,7 +25,12 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -45,24 +50,37 @@ public final class BP {
 
     private BP() {}
 
-    // Called from JNI_OnLoad, on Unity's load thread. Hook into the app's activity lifecycle, then start
-    // once the game's activity exists (the native engine starts with it).
+    // Called from JNI_OnLoad (Jni.cpp), on the thread that loads libmain.so: the game's activity is being
+    // created at that moment. Hook the activity lifecycle, start the shake detector, and start for real once the
+    // game's activity is up (onActivity).
     public static void boot() {
         try {
             app = currentApplication();
             if (app == null) { Log.e(TAG, "no application context"); return; }
             hookLifecycle((Application) app.getApplicationContext());
-            // if an activity is already up (e.g. a late inject), start now
-            Activity a = currentActivity();
+            UI.post(BP::startShake);   // sensors need a Looper thread
+            Activity a = unityActivity();
+            if (a == null) a = currentActivity();
             if (a != null) onActivity(a);
             Log.i(TAG, "BowlingPlus Java side up");
         } catch (Throwable t) { Log.e(TAG, "boot failed", t); }
     }
 
-    private static Application currentApplication() throws Exception {
-        Class<?> at = Class.forName("android.app.ActivityThread");
-        Object thread = at.getMethod("currentActivityThread").invoke(null);
-        return (Application) at.getMethod("getApplication").invoke(thread);
+    // UnityPlayer.currentActivity: set by Unity as soon as its player exists (that is what loads libmain.so)
+    private static Activity unityActivity() {
+        try {
+            java.lang.reflect.Field f = Class.forName("com.unity3d.player.UnityPlayer").getField("currentActivity");
+            return (Activity) f.get(null);
+        } catch (Throwable t) { return null; }
+    }
+
+    private static Application currentApplication() {
+        try {
+            return (Application) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
+        } catch (Throwable t) {
+            Activity a = unityActivity();
+            return a != null ? a.getApplication() : null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -89,17 +107,33 @@ public final class BP {
 
     private static void hookLifecycle(Application a) {
         a.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-            public void onActivityResumed(Activity act) { onActivity(act); }
+            public void onActivityResumed(Activity act) { if (!liveActivities().contains(act)) resumed.add(new WeakReference<>(act)); onActivity(act); }
             public void onActivityCreated(Activity act, android.os.Bundle b) {}
             public void onActivityStarted(Activity act) {}
             public void onActivityPaused(Activity act) {}
             public void onActivityStopped(Activity act) {}
             public void onActivitySaveInstanceState(Activity act, android.os.Bundle b) {}
-            public void onActivityDestroyed(Activity act) { if (activity == act) activity = null; }
+            public void onActivityDestroyed(Activity act) {
+                if (activity == act) activity = null;
+                for (int i = resumed.size() - 1; i >= 0; i--) { Activity r = resumed.get(i).get(); if (r == null || r == act) resumed.remove(i); }
+            }
         });
     }
 
     static boolean started = false;
+    // every activity of the app that has been resumed and not destroyed (Privacy looks at all of them: the
+    // privacy page is its own activity, MRGSWebViewActivity)
+    static final List<WeakReference<Activity>> resumed = new ArrayList<>();
+
+    static List<Activity> liveActivities() {
+        List<Activity> out = new ArrayList<>();
+        for (int i = resumed.size() - 1; i >= 0; i--) {
+            Activity a = resumed.get(i).get();
+            if (a == null || a.isFinishing()) { resumed.remove(i); continue; }
+            if (!out.contains(a)) out.add(a);
+        }
+        return out;
+    }
 
     static void onActivity(final Activity act) {
         if (!isGameActivity(act)) return;   // the game's UnityPlayerActivity, not an ad/SDK one
@@ -114,6 +148,7 @@ public final class BP {
                 a.put("maxHz", maxHz(act));
                 String cfg = N.call("start", a.toString());   // loads settings, starts the crash guard
                 Config.load(cfg);
+                Oil.start();                                  // the custom pattern you had on last time
                 Privacy.start();
                 installTap(act);
                 startTick();
@@ -134,27 +169,38 @@ public final class BP {
     // we drive it once per screen refresh with the Choreographer. N.tick() then runs on Unity's thread.
     private static Method sInvokeOnMainThread;
     private static Object sUnityPlayer;
-    private static final Runnable sTickJob = () -> { try { N.tick(); } catch (Throwable ignored) {} };
+    // One tick in flight at most: the screen refreshes faster than the game draws (120 Hz screen, 30/60 FPS
+    // game), and the game logic must run once per game frame, not once per refresh.
+    private static final AtomicBoolean sTickPending = new AtomicBoolean(false), sDrainPending = new AtomicBoolean(false);
+    private static final Runnable sTickJob = () -> { sTickPending.set(false); try { N.tick(); } catch (Throwable ignored) {} };
+    private static final Runnable sDrainJob = () -> { sDrainPending.set(false); try { N.drain(); } catch (Throwable ignored) {} };
 
     static void startTick() {
         Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
             public void doFrame(long frameTimeNanos) {
-                postToGame(sTickJob);
+                if (sTickPending.compareAndSet(false, true) && !postToGame(sTickJob)) sTickPending.set(false);
                 Choreographer.getInstance().postFrameCallback(this);
             }
         });
     }
 
     // Also used by the menu to make the game look at its queued actions on the very next frame.
-    static void postToGame(Runnable job) {
+    static boolean postToGame(Runnable job) {
         try {
             if (sInvokeOnMainThread == null) resolveUnityPlayer();
-            if (sInvokeOnMainThread != null && sUnityPlayer != null)
+            if (sInvokeOnMainThread != null && sUnityPlayer != null) {
                 sInvokeOnMainThread.invoke(sUnityPlayer, job);
+                return true;
+            }
         } catch (Throwable ignored) {}
+        return false;
     }
 
-    static void poke() { postToGame(() -> { try { N.drain(); } catch (Throwable ignored) {} }); }
+    // Make the game run the menu's queued actions on its very next frame. Also called by the native side
+    // (Jni.cpp RunOnGame) whenever it queues something, from any thread.
+    public static void poke() {
+        if (sDrainPending.compareAndSet(false, true) && !postToGame(sDrainJob)) sDrainPending.set(false);
+    }
 
     private static void resolveUnityPlayer() {
         try {
@@ -182,7 +228,7 @@ public final class BP {
     static float gx, gy, gz;
     static boolean gInit;
     static int lastSign, peakCount;
-    static final long[] peakTimes = new long[8];
+    static final double[] peakTimes = new double[8];
 
     static void startShake() {
         if (sensors != null || app == null) return;
@@ -212,7 +258,7 @@ public final class BP {
         int k = 0;
         for (int i = 0; i < peakCount; i++) if (t - peakTimes[i] < 1.0) peakTimes[k++] = peakTimes[i];
         peakCount = k;
-        if (peakCount < 8) peakTimes[peakCount++] = (long) t;
+        if (peakCount < 8) peakTimes[peakCount++] = t;
         if (peakCount >= 3) { peakCount = 0; lastSign = 0; handleShake(); }
     }
 
@@ -223,22 +269,47 @@ public final class BP {
         UI.post(() -> Menu.toggle(activity));
     }
 
-    // ---- tap the game's pin layouts (BFPinTapAt): a pass-through touch spy on the game's content view ----
+    // ---- tap the game's pin layouts (BFPinTapAt) ----
+    // Unity's own view takes every touch, so a listener on a view never hears about them. Instead we sit in
+    // front of the activity's Window.Callback (the first stop of every touch) and only watch: every call goes
+    // on to the game unchanged.
     static void installTap(Activity act) {
         try {
-            final View content = act.findViewById(android.R.id.content);
-            if (content == null || content.getTag(0x7f0b0001) != null) return;
-            content.setTag(0x7f0b0001, Boolean.TRUE);
-            content.setOnTouchListener((v, ev) -> {
-                if (ev.getActionMasked() == MotionEvent.ACTION_UP && !Menu.visible() && !Menu.pickerVisible()
-                        && v.getWidth() > 0 && v.getHeight() > 0) {
-                    float u = ev.getX() / v.getWidth();
-                    float vv = 1f - ev.getY() / v.getHeight();   // v up, like iOS
-                    N.call("pinTap", u + "," + vv);              // native decides if it's on a layout
-                }
-                return false;   // never consume: the game still gets every touch
-            });
+            Window w = act.getWindow();
+            Window.Callback cb = w.getCallback();
+            if (cb == null) return;
+            if (Proxy.isProxyClass(cb.getClass()) && Proxy.getInvocationHandler(cb) instanceof TapSpy) return;
+            Object spy = Proxy.newProxyInstance(BP.class.getClassLoader(), new Class<?>[]{ Window.Callback.class }, new TapSpy(cb, w));
+            w.setCallback((Window.Callback) spy);
         } catch (Throwable t) { Log.e(TAG, "tap listener failed", t); }
+    }
+
+    static final class TapSpy implements InvocationHandler {
+        final Window.Callback orig;
+        final Window window;
+        float downX, downY;
+        long downAt;
+        TapSpy(Window.Callback orig, Window window) { this.orig = orig; this.window = window; }
+
+        @Override public Object invoke(Object proxy, Method m, Object[] args) throws Throwable {
+            if (args != null && args.length == 1 && args[0] instanceof MotionEvent && "dispatchTouchEvent".equals(m.getName())) {
+                try { watch((MotionEvent) args[0]); } catch (Throwable ignored) {}
+            }
+            try { return m.invoke(orig, args); } catch (InvocationTargetException e) { throw e.getCause() != null ? e.getCause() : e; }
+        }
+
+        void watch(MotionEvent ev) {
+            int a = ev.getActionMasked();
+            if (a == MotionEvent.ACTION_DOWN) { downX = ev.getX(); downY = ev.getY(); downAt = ev.getEventTime(); return; }
+            if (a != MotionEvent.ACTION_UP || Menu.visible() || Menu.pickerVisible()) return;
+            View d = window.getDecorView();
+            if (d == null || d.getWidth() <= 0 || d.getHeight() <= 0) return;
+            float slop = 24 * d.getResources().getDisplayMetrics().density;
+            if (Math.abs(ev.getX() - downX) > slop || Math.abs(ev.getY() - downY) > slop || ev.getEventTime() - downAt > 600) return;   // a tap, not a swipe
+            float u = ev.getX() / d.getWidth();
+            float v = 1f - ev.getY() / d.getHeight();   // v up, like iOS
+            N.call("pinTap", u + "," + v);               // native decides if it's on a layout (never blocks)
+        }
     }
 
     // ---- 120 FPS: ask the window for the display's fastest mode while it's on ----
@@ -250,7 +321,7 @@ public final class BP {
             WindowManager.LayoutParams lp = w.getAttributes();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 int best = bestModeId(act);
-                if (Config.get().optBoolean("fps120", false) && best > 0) lp.preferredDisplayModeId = best;
+                if (Config.b("fps120", false) && best > 0) lp.preferredDisplayModeId = best;
                 else lp.preferredDisplayModeId = 0;
                 w.setAttributes(lp);
             }
@@ -347,12 +418,9 @@ public final class BP {
             String path = dir + "/" + name;
             if (name.endsWith(".manifest")) {
                 try (InputStream is = am.open(path)) {
-                    byte[] buf = new byte[is.available()];
-                    int n = is.read(buf);
-                    if (n > 0) {
-                        for (String line : new String(buf, 0, n).split("\n"))
-                            if (line.contains("- Assets/")) sb.append(line).append('\n');
-                    }
+                    byte[] buf = Pickers.readAll(is);
+                    for (String line : new String(buf, "UTF-8").split("\n"))
+                        if (line.contains("- Assets/")) sb.append(line).append('\n');
                 } catch (Throwable ignored) {}
             } else {
                 String[] sub = am.list(path);

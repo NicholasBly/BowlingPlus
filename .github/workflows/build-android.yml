@@ -1,22 +1,26 @@
-# Builds BowlingPlus for Android and produces a patched, installable APK.
+# Builds BowlingPlus for Android (android/build.sh) and, when it can get the game, a patched installable APK.
 #
-# The game APK is NOT committed. Provide it one of two ways:
-#   * set the repository secret GAME_APK_URL to a direct link to the game's .apks/.xapk bundle (or a single
-#     universal .apk), or
-#   * trigger the workflow manually and paste a URL into the apk_url input.
-# The build downloads it, compiles the Java side to a dex, embeds it in libmain.so, builds the native library
-# with the NDK, then merges + patches + signs the APK with tools/patch_apk.py.
+# The game is NOT in the repo (it's the developer's app, and too big for git). Give the workflow a direct
+# download link to the game's .apks / .xapk bundle or a single .apk, either:
+#   * as the repository secret GAME_APK_URL (Settings > Secrets and variables > Actions), or
+#   * in the apk_url box when you start it by hand (Actions > Build BowlingPlus (Android) > Run workflow).
+# Without one, it still builds and uploads libmain.so + bowlingplus.dex, so you see whether the code compiles.
 #
-# Output: an artifact "BowlingPlus-android" containing BowlingPlus.apk (signed with a throwaway debug key, so
-# uninstall the Play Store copy before installing).
+# Optional, to sign every build with the same key (so a new build installs over the old one and keeps your
+# game data): secrets ANDROID_KEYSTORE_B64 (base64 of the .jks/.keystore), ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. See android/README.md.
 name: Build BowlingPlus (Android)
 
 on:
   push:
+    paths:
+      - "android/**"
+      - "src/**"
+      - ".github/workflows/build-android.yml"
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Direct URL to the game APK / .apks / .xapk bundle (overrides the GAME_APK_URL secret)"
+        description: "Direct link to the game's .apks / .xapk / .apk (overrides the GAME_APK_URL secret)"
         required: false
         type: string
 
@@ -35,6 +39,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The action's default package list asks for the retired "tools" package, so list what we need.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -42,81 +47,56 @@ jobs:
             platform-tools
             platforms;android-35
             build-tools;35.0.0
+            ndk;27.2.12479018
 
-      - name: Install NDK, build-tools, platform
-        run: |
-          sdkmanager --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0" >/dev/null
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "BUILD_TOOLS=$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_ENV"
-
-      - name: Get APKEditor
-        run: |
-          curl -L -o "$HOME/APKEditor.jar" \
-            https://github.com/REAndroid/APKEditor/releases/download/V1.4.3/APKEditor-1.4.3.jar
-          echo "APKEDITOR=$HOME/APKEditor.jar" >> "$GITHUB_ENV"
-
-      # 1) Java side -> classes.dex
-      - name: Build the Java side (dex)
-        run: |
-          AJAR="$ANDROID_SDK_ROOT/platforms/android-35/android.jar"
-          curl -sSL -o /tmp/zxing.jar https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
-          mkdir -p /tmp/cls "$GITHUB_WORKSPACE/dexout"
-          javac --release 11 -cp "$AJAR:/tmp/zxing.jar" -d /tmp/cls $(find android/java -name '*.java')
-          "$BUILD_TOOLS/d8" --release --min-api 23 --lib "$AJAR" --classpath /tmp/zxing.jar \
-            --output "$GITHUB_WORKSPACE/dexout" $(find /tmp/cls -name '*.class')
-
-      - name: Merge multidex if needed, then embed the dex
-        run: |
-          cd "$GITHUB_WORKSPACE/dexout"
-          # The Java side is small and single-dex, but merge defensively so the embed is always one file.
-          if [ -f classes2.dex ]; then
-            "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/d8" --version || true
-            "$BUILD_TOOLS/d8" classes*.dex --output .
-          fi
-          cp classes.dex "$GITHUB_WORKSPACE/android/native/bowlingplus.dex"
-          python3 "$GITHUB_WORKSPACE/android/tools/bin2header.py" \
-            "$GITHUB_WORKSPACE/android/native/bowlingplus.dex" kBPDex \
-            "$GITHUB_WORKSPACE/android/native/bp_dex.h"
-
-      # 2) native library -> libmain.so (arm64)
-      - name: Build the native library
-        working-directory: android/native
-        run: |
-          cmake -B build -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 \
-            -DGENERATED_DIR="$PWD" -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release -j
-          cp build/libmain.so "$GITHUB_WORKSPACE/libmain.so"
-          ls -la "$GITHUB_WORKSPACE/libmain.so"
-
-      # 3) fetch the game
-      - name: Download the game APK
+      - name: Get the game
+        id: game
         env:
           GAME_APK_URL: ${{ secrets.GAME_APK_URL }}
           INPUT_URL: ${{ github.event.inputs.apk_url }}
         run: |
           URL="${INPUT_URL:-$GAME_APK_URL}"
           if [ -z "$URL" ]; then
-            echo "::error::No game APK URL. Set the GAME_APK_URL secret or pass apk_url on manual run."
-            exit 1
+            echo "::warning::No game link (GAME_APK_URL secret or apk_url input): building the library and dex only."
+            echo "have=0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          curl -L -o "$GITHUB_WORKSPACE/game_input" "$URL"
-          file "$GITHUB_WORKSPACE/game_input"
+          mkdir -p "$RUNNER_TEMP/game"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/game/game_input" "$URL"
+          file "$RUNNER_TEMP/game/game_input"
+          echo "have=1" >> "$GITHUB_OUTPUT"
 
-      # 4) merge + patch + sign
-      - name: Patch the APK
+      - name: Signing key (optional)
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
-          python3 android/tools/patch_apk.py "$GITHUB_WORKSPACE/game_input" \
-            --lib "$GITHUB_WORKSPACE/libmain.so" \
-            --out "$GITHUB_WORKSPACE/BowlingPlus.apk" \
-            --apkeditor "$APKEDITOR" \
-            --apksigner "$BUILD_TOOLS/apksigner" \
-            --zipalign "$BUILD_TOOLS/zipalign" \
-            --aapt2 "$BUILD_TOOLS/aapt2"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/bowlingplus.keystore"
+            echo "BP_KEYSTORE=$RUNNER_TEMP/bowlingplus.keystore" >> "$GITHUB_ENV"
+            echo "Signing with the repository's keystore."
+          else
+            echo "No ANDROID_KEYSTORE_B64 secret: signing with a throwaway key."
+          fi
 
-      - name: Upload artifact
+      - name: Build
+        env:
+          BP_KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BP_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          BP_KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x android/build.sh
+          if [ "${{ steps.game.outputs.have }}" = "1" ]; then
+            android/build.sh "$RUNNER_TEMP/game/game_input"
+          else
+            android/build.sh
+          fi
+
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: BowlingPlus-android
-          path: BowlingPlus.apk
+          path: |
+            android/out/BowlingPlus.apk
+            android/out/libmain.so
+            android/out/bowlingplus.dex
           if-no-files-found: error

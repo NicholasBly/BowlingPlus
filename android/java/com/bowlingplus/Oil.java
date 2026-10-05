@@ -33,7 +33,7 @@ import java.util.zip.Inflater;
 // or "BJBOIL1:" code. Also the pin-image picker (SavePinImage) and the oil color picker.
 //
 // What differs from iOS: QR scanning uses the camera-import-from-photo path plus pasting a code (we don't ship
-// a camera preview); Kegel PDF import uses Android 15's PdfDocument text, else fails gracefully.
+// a camera preview); Kegel PDF import uses Android 15's PdfRenderer text, else a best-effort fallback.
 public final class Oil {
     static final String CODE_PREFIX = "BJBOIL1:";
     static final float THICK_MAX = 75;
@@ -44,7 +44,7 @@ public final class Oil {
     private Oil() {}
 
     // ========================= storage =========================
-    static android.content.SharedPreferences prefs() { return act.getSharedPreferences("BowlingPlus", Context.MODE_PRIVATE); }
+    static android.content.SharedPreferences prefs() { return (act != null ? act : BP.app).getSharedPreferences("BowlingPlus", Context.MODE_PRIVATE); }
 
     static JSONArray loadPatterns() {
         try { return new JSONArray(prefs().getString("oilPatterns", "[]")); } catch (Throwable t) { return new JSONArray(); }
@@ -464,7 +464,7 @@ public final class Oil {
             ft = Math.round(Math.min(Math.max(ft, 0), 70) * 100) / 100f;
             int ul = s.length() > 5 ? clamp(s.optInt(5, 50), 5, 150) : 50;
             JSONArray step = new JSONArray();
-            step.put(Math.min(a, b)); step.put(Math.max(a, b)); step.put(clamp(s.optInt(2, 2), 0, 99)); step.put(clamp(s.optInt(3, 14), 6, 30)); step.put(ft); step.put(ul);
+            step.put(Math.min(a, b)); step.put(Math.max(a, b)); step.put(clamp(s.optInt(2, 2), 0, 99)); step.put(clamp(s.optInt(3, 14), 6, 30)); step.put(Double.valueOf(ft));   // put(double) throws JSONException; put(Object) does not step.put(ul);
             out.put(step);
         }
         return out;

@@ -37,7 +37,7 @@ public final class Menu {
     static EditText searchField;
     static Button helpButton, oilColorButton;
     static String updateUrl;
-    static android.os.Handler refresh = new android.os.Handler();
+    static final android.os.Handler refresh = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private Menu() {}
 
