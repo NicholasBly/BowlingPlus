@@ -56,20 +56,31 @@ public final class Pickers {
         }
     }
 
-    static void deliver(int req, int result, Intent data) {
-        Uri uri = result == Activity.RESULT_OK && data != null ? data.getData() : null;
-        if (req == REQ_IMAGE) {
-            ImageCb cb = imageCb; imageCb = null;
-            if (cb == null) return;
-            Bitmap bmp = uri != null ? loadBitmap(uri) : null;
-            BP.UI.post(() -> cb.run(bmp));
-        } else if (req == REQ_FILE) {
-            FileCb cb = fileCb; fileCb = null;
-            if (cb == null) return;
-            byte[] bytes = uri != null ? readBytes(uri) : null;
-            String name = uri != null ? nameOf(uri) : null;
-            BP.UI.post(() -> cb.run(name, bytes));
-        }
+    // Reading the picked file can be slow (a photo from Drive is downloaded first), so it happens on a worker
+    // thread. `done` runs on the UI thread afterwards: the relay finishes only then, because Android ties the
+    // read permission for the picked file to the activity that received it.
+    static void deliver(int req, int result, Intent data, Runnable done) {
+        final Uri uri = result == Activity.RESULT_OK && data != null ? data.getData() : null;
+        final ImageCb icb = req == REQ_IMAGE ? imageCb : null;
+        final FileCb fcb = req == REQ_FILE ? fileCb : null;
+        if (req == REQ_IMAGE) imageCb = null;
+        if (req == REQ_FILE) fileCb = null;
+        if (icb == null && fcb == null) { done.run(); return; }
+        new Thread(() -> {
+            Runnable deliverIt;
+            if (icb != null) {
+                Bitmap bmp = uri != null ? loadBitmap(uri) : null;
+                deliverIt = () -> icb.run(bmp);
+            } else {
+                byte[] bytes = uri != null ? readBytes(uri) : null;
+                String name = uri != null ? nameOf(uri) : null;
+                deliverIt = () -> fcb.run(name, bytes);
+            }
+            BP.UI.post(() -> {
+                try { deliverIt.run(); } catch (Throwable ignored) {}
+                done.run();
+            });
+        }, "BowlingPlus-picker").start();
     }
 
     static Bitmap loadBitmap(Uri uri) {
@@ -121,9 +132,8 @@ public final class Pickers {
             try { startActivityForResult(target, req); } catch (Throwable t) { finish(); }
         }
         @Override protected void onActivityResult(int rc, int result, Intent data) {
-            try { Pickers.deliver(rc, result, data); } catch (Throwable ignored) {}
-            finish();
-            overridePendingTransition(0, 0);
+            Runnable close = () -> { finish(); overridePendingTransition(0, 0); };
+            try { Pickers.deliver(rc, result, data, close); } catch (Throwable t) { close.run(); }
         }
     }
 }

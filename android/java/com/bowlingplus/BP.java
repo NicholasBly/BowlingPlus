@@ -107,20 +107,30 @@ public final class BP {
 
     private static void hookLifecycle(Application a) {
         a.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-            public void onActivityResumed(Activity act) { if (!liveActivities().contains(act)) resumed.add(new WeakReference<>(act)); FbLogin.inspectIntent(act); onActivity(act); MenuButton.refresh(); }
+            // An exception thrown out of any of these callbacks crashes the game, so every one is guarded.
+            public void onActivityResumed(Activity act) {
+                try {
+                    if (!liveActivities().contains(act)) resumed.add(new WeakReference<>(act));
+                    FbLogin.inspectIntent(act);
+                    onActivity(act);
+                    MenuButton.refresh();
+                } catch (Throwable t) { Log.e(TAG, "onActivityResumed", t); }
+            }
             public void onActivityCreated(Activity act, android.os.Bundle b) { FbLogin.inspectIntent(act); }
             public void onActivityStarted(Activity act) {}
             public void onActivityPaused(Activity act) {}
             public void onActivityStopped(Activity act) {}
             public void onActivitySaveInstanceState(Activity act, android.os.Bundle b) {}
             public void onActivityDestroyed(Activity act) {
-                if (activity == act) activity = null;
-                for (int i = resumed.size() - 1; i >= 0; i--) { Activity r = resumed.get(i).get(); if (r == null || r == act) resumed.remove(i); }
+                try {
+                    if (activity == act) activity = null;
+                    for (int i = resumed.size() - 1; i >= 0; i--) { Activity r = resumed.get(i).get(); if (r == null || r == act) resumed.remove(i); }
+                } catch (Throwable t) { Log.e(TAG, "onActivityDestroyed", t); }
             }
         });
     }
 
-    static boolean started = false;
+    static volatile boolean started = false;   // boot() (JNI_OnLoad's thread) and the lifecycle callback can both get here
     // every activity of the app that has been resumed and not destroyed (Privacy looks at all of them: the
     // privacy page is its own activity, MRGSWebViewActivity)
     static final List<WeakReference<Activity>> resumed = new ArrayList<>();
@@ -138,8 +148,10 @@ public final class BP {
     static void onActivity(final Activity act) {
         if (!isGameActivity(act)) return;   // the game's UnityPlayerActivity, not an ad/SDK one
         activity = act;
-        if (started) { UI.post(() -> { applyFps(); installTap(act); }); return; }
-        started = true;
+        synchronized (BP.class) {
+            if (started) { UI.post(() -> { applyFps(); installTap(act); }); return; }
+            started = true;
+        }
         UI.post(() -> {
             try {
                 JSONObject a = new JSONObject();

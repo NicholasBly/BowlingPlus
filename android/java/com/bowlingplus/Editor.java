@@ -38,7 +38,16 @@ final class Editor {
     Stepper dropStepper;
     LinearLayout fwdStack, revStack;
     List<TextView> fwdEnds = new ArrayList<>(), revEnds = new ArrayList<>();
-    android.os.Handler debounce = new android.os.Handler();
+    android.os.Handler debounce = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    // Everything that asks the game (oilCompute / oilBuiltins can each wait up to 4 s for Unity) runs on this
+    // one worker thread, never on the UI thread. One thread keeps the requests in order; the generation
+    // counters drop answers that a newer edit has already made stale.
+    static final java.util.concurrent.ExecutorService WORK = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "BowlingPlus-editor"); t.setDaemon(true); return t;
+    });
+    int previewGen, startGen;
+    List<JSONObject> builtinsCache;   // null until loaded
 
     static void edit(Activity a, JSONObject p, Done done) {
         Editor e = new Editor();
@@ -47,16 +56,26 @@ final class Editor {
         try { if (!e.pattern.has("id")) e.pattern.put("id", java.util.UUID.randomUUID().toString()); } catch (Throwable ignored) {}
         for (JSONArray s : toList(Oil.cleanSteps(p != null ? p.optJSONArray("fwd") : null))) e.fwd.add(s);
         for (JSONArray s : toList(Oil.cleanSteps(p != null ? p.optJSONArray("rev") : null))) e.rev.add(s);
-        if (p == null) e.startFrom(0, false);
         e.build();
+        e.loadBuiltins(null);
+        if (p == null) e.startFrom(0, true);   // fills in the steps when the game answers
     }
 
     static List<JSONArray> toList(JSONArray a) { List<JSONArray> o = new ArrayList<>(); for (int i = 0; i < a.length(); i++) o.add(a.optJSONArray(i)); return o; }
 
     void startFrom(int index, boolean announce) {
         put("base", index);
+        final String arg = Oil.computeArg(jWith("base", index)).toString();
+        final int gen = ++startGen;
+        if (stats != null) stats.setText("Loading the pattern\u2026");
+        WORK.execute(() -> {
+            String cr = N.call("oilCompute", arg);
+            BP.UI.post(() -> { if (gen == startGen) applyStart(cr, announce); });
+        });
+    }
+
+    void applyStart(String cr, boolean announce) {
         JSONObject r = null;
-        String cr = N.call("oilCompute", Oil.computeArg(jWith("base", index)).toString());
         try { if (cr != null && !cr.equals("null")) r = new JSONObject(cr); } catch (Throwable ignored) {}
         put("exact", r != null); put("precise", r != null);
         if (r != null && r.optInt("feet") > 0) put("feet", r.optInt("feet")); else pattern.remove("feet");
@@ -153,21 +172,35 @@ final class Editor {
 
     void refreshBaseMenu() {
         String from = pattern.optString("from", "");
-        if (from.isEmpty()) {
+        if (from.isEmpty() && builtinsCache != null) {
             int base = pattern.optInt("base");
-            for (JSONObject b : builtins()) if (b.optInt("index") == base) from = b.optString("name");
+            for (JSONObject b : builtinsCache) if (b.optInt("index") == base) from = b.optString("name");
         }
         baseButton.setText("Start from: " + (from.isEmpty() ? "a game pattern" : from) + "  \u25BE");
     }
 
-    List<JSONObject> builtins() {
-        List<JSONObject> out = new ArrayList<>();
-        String r = N.call("oilBuiltins");
-        try { if (r != null) { JSONArray a = new JSONArray(r); for (int i = 0; i < a.length(); i++) out.add(a.optJSONObject(i)); } } catch (Throwable ignored) {}
-        return out;
+    // Ask the game for its patterns on the worker thread; then run `then` on the UI thread.
+    void loadBuiltins(final Runnable then) {
+        WORK.execute(() -> {
+            String r = N.call("oilBuiltins");
+            List<JSONObject> out = new ArrayList<>();
+            try { if (r != null) { JSONArray a = new JSONArray(r); for (int i = 0; i < a.length(); i++) out.add(a.optJSONObject(i)); } } catch (Throwable ignored) {}
+            BP.UI.post(() -> {
+                if (r != null) builtinsCache = out;   // no answer (game busy): ask again next time
+                if (baseButton != null) refreshBaseMenu();
+                if (then != null) then.run();
+            });
+        });
     }
 
+    List<JSONObject> builtins() { return builtinsCache != null ? builtinsCache : new ArrayList<>(); }
+
     void pickStart() {
+        if (builtinsCache == null) { loadBuiltins(this::showStartMenu); return; }
+        showStartMenu();
+    }
+
+    void showStartMenu() {
         List<String> titles = new ArrayList<>();
         List<Runnable> acts = new ArrayList<>();
         for (JSONObject cc : Oil.collection()) { titles.add("\u2605 " + cc.optString("name") + " \u00B7 " + cc.optString("feet") + " ft"); acts.add(() -> startFromPattern(cc)); }
@@ -262,17 +295,33 @@ final class Editor {
     }
     JSONArray listTail(List<JSONArray> l) { try { return new JSONArray(l.get(l.size() - 1).toString()); } catch (Throwable t) { return new JSONArray(); } }
 
-    void schedulePreview() { debounce.removeCallbacksAndMessages(null); debounce.postDelayed(this::updatePreview, 150); }
+    // Every edit comes through here. It also cancels a "Start from" answer still on its way, so a late answer
+    // can never wipe out steps you've already changed.
+    void schedulePreview() { startGen++; debounce.removeCallbacksAndMessages(null); debounce.postDelayed(this::updatePreview, 150); }
 
     void updatePreview() {
-        JSONObject arg = computeArgNow();
-        String cr = N.call("oilCompute", arg.toString());
+        final String arg = computeArgNow().toString();
+        final int w = preview.getWidth() > 10 ? preview.getWidth() : UiKit.dp(c, 340), h = preview.getHeight() > 10 ? preview.getHeight() : UiKit.dp(c, 96);
+        final int gen = ++previewGen;
+        WORK.execute(() -> {
+            if (gen != previewGen) return;   // a newer edit is already queued
+            String cr = N.call("oilCompute", arg);
+            JSONObject r = null;
+            android.graphics.Bitmap bmp = null;
+            try {
+                if (cr != null && !cr.equals("null")) { r = new JSONObject(cr); if (r.length() > 0) bmp = Oil.renderPreview(r, w, h); }
+            } catch (Throwable ignored) {}
+            final String fcr = cr; final JSONObject fr = r; final android.graphics.Bitmap fb = bmp;
+            BP.UI.post(() -> { if (gen == previewGen) applyPreview(fcr, fr, fb); });
+        });
+    }
+
+    void applyPreview(String cr, JSONObject r, android.graphics.Bitmap bmp) {
         if (cr == null || cr.equals("null")) { stats.setText("Preview shows up once the game has loaded a lane."); return; }
+        if (r == null) { stats.setText("Preview error."); return; }
         try {
-            JSONObject r = new JSONObject(cr);
             if (r.length() == 0) { stats.setText("The game couldn't build this pattern. Try fewer or smaller steps."); return; }
-            int w = preview.getWidth() > 10 ? preview.getWidth() : UiKit.dp(c, 340), h = preview.getHeight() > 10 ? preview.getHeight() : UiKit.dp(c, 96);
-            preview.setImageBitmap(Oil.renderPreview(r, w, h));
+            if (bmp != null) preview.setImageBitmap(bmp);
             float far = 0;
             JSONArray fe = r.optJSONArray("fwd"), re = r.optJSONArray("rev");
             for (int i = 0; i < fwdEnds.size() && fe != null && i < fe.length(); i++) { float ft = (float) fe.optJSONArray(i).optDouble(4); far = Math.max(far, ft); fwdEnds.get(i).setText("to " + String.format("%.1f", ft) + " ft"); }
@@ -295,8 +344,8 @@ final class Editor {
         return a;
     }
 
-    void cancel() { FrameLayout root = UiKit.content(act); if (root != null) root.removeView(holder); }
-    void cancelCleanup() { debounce.removeCallbacksAndMessages(null); }   // tapped outside: stop the preview timer
+    void cancel() { cancelCleanup(); FrameLayout root = UiKit.content(act); if (root != null) root.removeView(holder); }
+    void cancelCleanup() { debounce.removeCallbacksAndMessages(null); previewGen++; startGen++; }   // tapped outside: stop the timer, drop pending answers
 
     void save() {
         String name = nameField.getText().toString().trim();

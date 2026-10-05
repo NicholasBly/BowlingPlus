@@ -6,7 +6,7 @@
 #include <math.h>
 #include <mutex>
 
-BFConfig gBF = { true, true, 1.0f, false, BF_ALL_PINS, false, false, false, false, true, true, true, false, false, false, -1.0f, false, 1.0f, false };
+BFConfig gBF = { true, true, 1.0f, false, BF_ALL_PINS, false, false, false, false, true, true, true, false, false, false, -1.0f, false, 1.0f, false, false, false, true };
 BFStatus gBFStatus = { false, false, -1, -1 };
 bool gBFSafeMode = false;
 
@@ -55,6 +55,7 @@ Json BFConfigJson(void) {
     d.set("oilInvis", Json::Bool_(gBF.oilInvisible)); d.set("oilThick2", Json::Bool_(gBF.oilThickness));
     d.set("oilHue", gBF.oilHue); d.set("pinImage", Json::Bool_(gBF.pinImage));
     d.set("logHosts", Json::Bool_(gBF.logHosts));
+    d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
     return d;
 }
 
@@ -89,6 +90,8 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "oilHue") gBF.oilHue = (float)v;
     else if (k == "pinImage") gBF.pinImage = on;
     else if (k == "logHosts") gBF.logHosts = on;
+    else if (k == "menuButton") gBF.menuButton = on;
+    else if (k == "fbWebLogin") gBF.fbWebLogin = on;
     else return false;
     Clamp();
     return true;

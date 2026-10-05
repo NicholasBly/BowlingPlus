@@ -1,7 +1,7 @@
 // Port of src/Log.mm.
 //  - events: BowlingPlus's own messages, game-state changes, network checks (ring buffer, as on iOS)
-//  - console: on Android the game's output (Unity Debug.Log, Photon, SDKs) goes to logcat, so "Copy log"
-//    reads this app's own logcat lines (BP.java) instead of capturing stdout/stderr like iOS.
+//  - console: on Android the game's output (Unity Debug.Log, Photon, SDKs) goes to logcat and is not part of
+//    "Copy log" (iOS captured stdout/stderr); use `adb logcat` for it.
 //  - the connection test: DNS + raw TCP here (POSIX, same as iOS), the HTTP checks in Java.
 #include "BFShared.h"
 #include <arpa/inet.h>

@@ -33,6 +33,10 @@ typedef struct {
     float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
     bool     logHosts;     // log every server hostname the game looks up (diagnostics; off by default)
+    // Android only (the Java side reads these; native just stores them so they survive a restart and the
+    // menu's refresh, which reloads every setting from here)
+    bool     menuButton;   // the draggable on-screen menu button (off by default)
+    bool     fbWebLogin;   // Facebook login through the browser instead of the Facebook app (on by default)
 } BFConfig;
 
 // Live game status for the menu

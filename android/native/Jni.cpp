@@ -23,6 +23,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include "BFShared.h"
 #include "KegelParse.h"
 #include "PinWrap.h"
@@ -267,6 +268,18 @@ static Json KegelFromText(const Str &textIn) {   // OilUI.mm KegelFromText, with
     return p;
 }
 
+// Settings changes arrive in bursts (a slider sends one per step while you drag it). Apply each at once,
+// but write config.json once, 300 ms after the burst, instead of rewriting the file on every step.
+static std::atomic<bool> sSaveQueued{ false };
+static void SaveConfigSoon() {
+    if (sSaveQueued.exchange(true)) return;   // a save is already coming and will pick this change up
+    std::thread([] {
+        usleep(300 * 1000);
+        sSaveQueued = false;                  // cleared first: a change from here on queues another save
+        BFSaveConfig();
+    }).detach();
+}
+
 static bool GameCmd(const Str &cmd, const Str &arg, Str &out) {
     if (cmd == "state") { out = StateJson().Dump(); return true; }
     if (cmd == "debug") { out = BFDebugInfo(); return true; }
@@ -319,7 +332,7 @@ static jstring JNICALL N_call(JNIEnv *env, jclass, jstring jcmd, jstring jarg) {
     if (cmd == "config") return NewJStr(env, BFConfigJson().Dump());
     if (cmd == "set") {          // "key=value"
         size_t eq = arg.find('=');
-        if (eq != Str::npos && BFConfigSet(arg.substr(0, eq), atof(arg.c_str() + eq + 1))) BFSaveConfig();
+        if (eq != Str::npos && BFConfigSet(arg.substr(0, eq), atof(arg.c_str() + eq + 1))) SaveConfigSoon();
         return nullptr;
     }
     if (cmd == "maxHz") { sMaxHz = atoi(arg.c_str()); return nullptr; }
@@ -347,7 +360,12 @@ static jstring JNICALL N_call(JNIEnv *env, jclass, jstring jcmd, jstring jarg) {
     // ---- everything else touches the game: Unity's thread
     if (!sStarted) return nullptr;
     bool known = true;
-    int timeout = cmd == "pinTap" ? 0 : (cmd == "debug" || cmd == "oilCompute" || cmd == "oilBuiltins" || cmd == "builtinSpec") ? 4000 : 1500;
+    // Commands that only change something and return nothing are fire-and-forget: the UI thread never waits
+    // for Unity (it used to wait up to 1.5 s per call, e.g. on every step of the oil-color slider). The
+    // queue is first-in first-out, so they still run in the order they were sent.
+    bool noReply = cmd == "pinTap" || cmd == "spare" || cmd == "spareNow" || cmd == "spareDismissed" || cmd == "arsenal" ||
+                   cmd == "skipTutorial" || cmd == "applyHue" || cmd == "setCustom";
+    int timeout = noReply ? 0 : (cmd == "debug" || cmd == "oilCompute" || cmd == "oilBuiltins" || cmd == "builtinSpec") ? 4000 : 1500;
     if (timeout == 0) {
         RunOnGame([cmd, arg] { Str o; GameCmd(cmd, arg, o); }, 0);
         return nullptr;
@@ -447,12 +465,18 @@ static void StartJavaSide(JNIEnv *env) {
         return;
     }
     sBP = (jclass)env->NewGlobalRef(bp);
-    sUi = env->GetStaticMethodID(bp, "ui", "(Ljava/lang/String;Ljava/lang/String;)V");
-    sEncodePng = env->GetStaticMethodID(bp, "encodePng", "([BII)[B");
-    sAssetList = env->GetStaticMethodID(bp, "assetList", "()Ljava/lang/String;");
-    sHttpTest = env->GetStaticMethodID(bp, "httpTest", "(Ljava/lang/String;)V");
-    sPoke = env->GetStaticMethodID(bp, "poke", "()V");
-    if (env->ExceptionCheck()) { env->ExceptionClear(); LOGE("a BP bridge method is missing"); }
+    // A failed lookup leaves a NoSuchMethodError pending, and any further JNI call with an exception pending is
+    // illegal (CheckJNI aborts the app), so check after every lookup.
+    auto bridge = [&](const char *name, const char *sig) -> jmethodID {
+        jmethodID m = env->GetStaticMethodID(bp, name, sig);
+        if (env->ExceptionCheck() || !m) { env->ExceptionClear(); LOGE("BP.%s%s is missing", name, sig); return nullptr; }
+        return m;
+    };
+    sUi = bridge("ui", "(Ljava/lang/String;Ljava/lang/String;)V");
+    sEncodePng = bridge("encodePng", "([BII)[B");
+    sAssetList = bridge("assetList", "()Ljava/lang/String;");
+    sHttpTest = bridge("httpTest", "(Ljava/lang/String;)V");
+    sPoke = bridge("poke", "()V");
     jmethodID boot = env->GetStaticMethodID(bp, "boot", "()V");
     if (env->ExceptionCheck() || !boot) { env->ExceptionClear(); LOGE("BP.boot missing"); return; }
     env->CallStaticVoidMethod(bp, boot);

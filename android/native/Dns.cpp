@@ -6,6 +6,7 @@
 #include "BFShared.h"
 #include <dlfcn.h>
 #include <elf.h>
+#include <stdio.h>
 #include <link.h>
 #include <netdb.h>
 #include <pthread.h>
@@ -64,6 +65,25 @@ static int BF_getaddrinfo(const char *node, const char *service, const struct ad
     return sRealGetaddrinfo(node, service, hints, res);
 }
 
+// The protection the page holding `addr` has right now (from /proc/self/maps), so it can be put back exactly
+// as it was. -1 if it can't be read.
+static int CurrentProt(uintptr_t addr) {
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (!f) return -1;
+    char line[512];
+    int prot = -1;
+    while (fgets(line, sizeof(line), f)) {
+        unsigned long lo = 0, hi = 0;
+        char perms[5] = { 0 };
+        if (sscanf(line, "%lx-%lx %4s", &lo, &hi, perms) != 3) continue;
+        if (addr < lo || addr >= hi) continue;
+        prot = (perms[0] == 'r' ? PROT_READ : 0) | (perms[1] == 'w' ? PROT_WRITE : 0) | (perms[2] == 'x' ? PROT_EXEC : 0);
+        break;
+    }
+    fclose(f);
+    return prot;
+}
+
 // Point every import slot for `symbol` in this loaded library at `replacement`.
 static int Rebind(const struct dl_phdr_info *info, const char *symbol, void *replacement) {
     ElfW(Addr) base = info->dlpi_addr;
@@ -99,10 +119,11 @@ static int Rebind(const struct dl_phdr_info *info, const char *symbol, void *rep
             if (strcmp(strtab + symtab[si].st_name, symbol) != 0) continue;
             void **slot = (void **)(base + r.r_offset);
             uintptr_t pg = (uintptr_t)slot & ~(uintptr_t)(page - 1);
-            if (mprotect((void *)pg, (size_t)page, PROT_READ | PROT_WRITE) != 0) continue;   // RELRO: read-only after load
-            *slot = replacement;
-            __builtin___clear_cache((char *)slot, (char *)(slot + 1));
-            mprotect((void *)pg, (size_t)page, PROT_READ);
+            int was = CurrentProt((uintptr_t)slot);   // RELRO pages are read-only after load; others stay writable
+            if (was < 0) was = PROT_READ;
+            if (!(was & PROT_WRITE) && mprotect((void *)pg, (size_t)page, was | PROT_WRITE) != 0) continue;
+            __atomic_store_n(slot, replacement, __ATOMIC_RELEASE);   // other threads may be calling through it
+            if (!(was & PROT_WRITE)) mprotect((void *)pg, (size_t)page, was);   // exactly as it was
             count++;
         }
     }

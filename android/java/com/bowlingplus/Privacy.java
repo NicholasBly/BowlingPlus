@@ -1,6 +1,8 @@
 package com.bowlingplus;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -11,6 +13,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 // The every-launch privacy page (Privacy.mm). The game's publisher SDK (MRGS) shows its agreement page in a
 // WebView (MRGSWebViewActivity / MRGSGDPRDialog), loading the same HTML as iOS ("By clicking Sign up",
@@ -24,7 +27,7 @@ public final class Privacy {
     static final Handler timer = new Handler(Looper.getMainLooper());
     static long startMs;
     static int accepted, hiddenCount;
-    static boolean watching;
+    static boolean watching, sawSignUp;
     static WebView watched;
     static final java.util.Map<WebView, Integer> state = new java.util.WeakHashMap<>();
     static final java.util.Map<WebView, Long> since = new java.util.WeakHashMap<>();
@@ -38,6 +41,11 @@ public final class Privacy {
             + "if(typeof clickButton!=='function')return 'nofn';"
             + "return 'signup';})()";
     static final String ACCEPT_JS = "(function(){if(typeof clickButton!=='function')return 'nofn';clickButton();return 'ok';})()";
+    // First time only: notice that YOU pressed Sign up. The page's button calls clickButton(), which submits
+    // its form; the wrapper marks the page title first (Java reads it every tick) and submits 300 ms later, so
+    // the mark is seen before the page goes away. Closing the page any other way is not taken as agreement.
+    static final String MARK_JS = "(function(){if(window.__bpMark)return 'ok';if(typeof clickButton!=='function')return 'nofn';"
+            + "var o=clickButton;window.__bpMark=1;window.clickButton=function(){try{document.title='bp:signed-up';}catch(e){}setTimeout(o,300);};return 'ok';})()";
 
     private Privacy() {}
 
@@ -57,14 +65,22 @@ public final class Privacy {
     static void doTick() {
         long now = System.currentTimeMillis();
         double age = (now - startMs) / 1000.0;
-        // you accepted it yourself: it went away while we watched
+        if (watching && watched != null) {
+            String t = null;
+            try { t = watched.getTitle(); } catch (Throwable ignored) {}
+            if (t != null && t.startsWith("bp:signed-up")) sawSignUp = true;
+        }
+        // it went away while we watched: remember it only if you pressed Sign up
         if (watching && (watched == null || watched.getWindowToken() == null || watched.getVisibility() != View.VISIBLE)) {
             watching = false;
-            if (!Config.b("privacyOK", false)) {
+            if (sawSignUp && !Config.b("privacyOK", false)) {
                 Config.set("privacyOK", true);
                 N.call("logEvent", "bf\tprivacy page: you accepted it - BowlingPlus will press it for you from now on");
                 pushStatus();
+            } else if (!sawSignUp) {
+                N.call("logEvent", "bf\tprivacy page: closed without Sign up - not remembered, it will show again");
             }
+            sawSignUp = false;
         }
         if (gBFSafe()) return;
         List<WebView> webs = new ArrayList<>();
@@ -76,7 +92,10 @@ public final class Privacy {
             Integer stObj = state.get(w);
             int st = stObj == null ? ST_WAIT : stObj;
             if (stObj == null) { state.put(w, ST_WAIT); since.put(w, now); }
-            boolean hide = Config.b("privacyOK", false) && age <= 300 && st != ST_OTHER;
+            // Hide right away only when it's MRGS's page; any other web view (an ad, Facebook's login dialog)
+            // stays visible until the probe has confirmed it's the Sign-up page.
+            boolean hide = Config.b("privacyOK", false) && age <= 300 && st != ST_OTHER
+                    && (st == ST_SIGNUP || st == ST_PRESSED || isMrgs(w));
             if (hide) {
                 conceal(w);
                 Long s = since.get(w);
@@ -127,6 +146,8 @@ public final class Privacy {
                     state.put(w, ST_SIGNUP);
                     watching = true;
                     watched = w;
+                    sawSignUp = false;
+                    w.evaluateJavascript(MARK_JS, null);
                 }
             } else if ("other".equals(r)) {
                 state.put(w, ST_OTHER);
@@ -135,11 +156,31 @@ public final class Privacy {
         });
     }
 
+    // MRGS's own activity (MRGSWebViewActivity) or an MRGS view somewhere above the web view.
+    static boolean isMrgs(WebView w) {
+        try {
+            for (Object o = w; o instanceof View; o = ((View) o).getParent())
+                if (o.getClass().getName().toLowerCase(Locale.US).contains("mrgs")) return true;
+            Context c = w.getContext();
+            for (int i = 0; i < 8 && c instanceof ContextWrapper; i++) {
+                if (c instanceof Activity) return c.getClass().getName().toLowerCase(Locale.US).contains("mrgs");
+                c = ((ContextWrapper) c).getBaseContext();
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
     static void conceal(WebView w) {
-        // hide the smallest ancestor that holds only the page (not the game's own view)
+        // Hide the top-most ancestor that holds only the page. Stop below the window's content frame
+        // (android.R.id.content also holds the game's own view when the page is shown over the game) and
+        // never climb into Unity's player view: going higher would make the whole game invisible.
         View v = w;
         View root = w.getRootView();
-        while (v.getParent() instanceof View && v.getParent() != root) v = (View) v.getParent();
+        while (v.getParent() instanceof View) {
+            View p = (View) v.getParent();
+            if (p == root || p.getId() == android.R.id.content || p.getClass().getName().startsWith("com.unity3d.")) break;
+            v = p;
+        }
         if (v != root && v.getAlpha() > 0.01f) { v.setAlpha(0f); hidden.put(w, v); }
         else if (w.getAlpha() > 0.01f) { w.setAlpha(0f); hidden.put(w, w); }
     }

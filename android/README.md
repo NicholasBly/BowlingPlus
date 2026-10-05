@@ -116,9 +116,12 @@ appears at the top.
 
 ## Known limits
 
-- **Facebook / Google sign-in.** These check the app's signing key against a list the game's developer
-  registered with Facebook / Google, and BowlingPlus can't be on it: any re-signed copy shows "invalid key
-  hash". Only the developer can change that. Use another way to log in (the game's own account, if it has one).
+- **Facebook / Google sign-in.** The Facebook app and Google check the app's signing key against a list the
+  game's developer registered, and a re-signed copy can't be on it ("invalid key hash"). BowlingPlus therefore
+  sends Facebook login through the browser instead (Account & login > Browser Facebook login, on by default).
+  Whether Facebook accepts that on a re-signed build is not confirmed yet: after a login attempt, Copy log shows
+  an `[fb]` line with what Facebook sent back (a token, or its error message). Google sign-in has no such
+  workaround.
 - The Play Store copy and BowlingPlus can't be installed side by side (same app id, different key).
 
 ## Building locally

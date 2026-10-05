@@ -44,6 +44,7 @@ final class Backup {
         File dataDir = c.getFilesDir().getParentFile();   // .../files -> the app's own data dir
         File cacheSub = new File(c.getCacheDir(), "BowlingPlus");
         cacheSub.mkdirs();
+        pruneOld(cacheSub);
         String stamp = new SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US).format(new Date());
         File zip = new File(cacheSub, "bowlingplus-backup-" + stamp + ".zip");
         long[] used = { 0 };
@@ -58,6 +59,15 @@ final class Backup {
             }
         }
         return zip;
+    }
+
+    // Each backup can be up to 40 MB and they used to pile up in the cache. Keep only the newest previous one
+    // (it may still be open in a share sheet); this run adds the new one.
+    private static void pruneOld(File dir) {
+        File[] old = dir.listFiles((d, n) -> n.startsWith("bowlingplus-backup-") && n.endsWith(".zip"));
+        if (old == null || old.length <= 1) return;
+        java.util.Arrays.sort(old, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        for (int i = 1; i < old.length; i++) old[i].delete();
     }
 
     private static void writeManifest(Context c, ZipOutputStream z) throws IOException {

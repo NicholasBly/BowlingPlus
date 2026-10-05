@@ -83,6 +83,10 @@ public final class Menu {
     // menu feel laggy: every redraw competed with a call that could block the whole UI thread. Now the native
     // call runs on its own thread and only the (cheap) "apply it to the views" step touches the UI thread.
     static final java.util.concurrent.atomic.AtomicBoolean stateFetchInFlight = new java.util.concurrent.atomic.AtomicBoolean(false);
+    // one long-lived worker for the menu's calls into the game (instead of a new thread every 500 ms)
+    static final java.util.concurrent.ExecutorService IO = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "BowlingPlus-menu"); t.setDaemon(true); return t;
+    });
 
     // ---- building ----
     static FrameLayout build(final Activity a) {
@@ -221,8 +225,9 @@ public final class Menu {
         Button debug = UiKit.button(c, "Copy debug info", false, false);
         Button log = UiKit.button(c, "Copy log", false, false);
         Button net = UiKit.button(c, "Run connection test", false, false);
-        debug.setOnClickListener(v -> copy(debug, "Copy debug info", N.call("debug")));
-        log.setOnClickListener(v -> copy(log, "Copy log", N.call("debug") + "\n" + N.call("log")));
+        // "debug" waits for Unity (up to 4 s): ask on a worker thread so the UI never freezes
+        debug.setOnClickListener(v -> copyAsync(debug, "Copy debug info", false));
+        log.setOnClickListener(v -> copyAsync(log, "Copy log", true));
         net.setOnClickListener(v -> { N.call("netTest"); net.setText("Testing (~20 s)..."); BP.UI.postDelayed(() -> net.setText("Run connection test"), 20000); });
         TextView dh = UiKit.label(c, "If something looks off, tap Copy debug info and paste it in a GitHub issue. The log records loading, the connection and network checks from the moment the game starts: run the connection test, wait ~20 s, then Copy log.", 12, UiKit.dim(0.6f), false);
         dh.setVisibility(Config.b("menuHelp", false) ? View.VISIBLE : View.GONE);
@@ -248,7 +253,7 @@ public final class Menu {
         // ---- Back up my data
         Button backup = UiKit.button(c, "\uD83D\uDCE6  Back up my data", true, false);
         backup.setOnClickListener(v -> Backup.run(act));
-        TextView backupHelp = UiKit.label(c, "Saves everything the game keeps on this phone - settings, local save data, and a cached Facebook session if you've logged in - to one file you can save to Drive, email to yourself, etc. A safety net if the game or its Facebook login ever stop working. Doesn't include anything that only lives on the game's servers.", 12, UiKit.dim(0.6f), false);
+        TextView backupHelp = UiKit.label(c, "Saves everything the game keeps on this phone - settings, local save data, and a cached Facebook session if you've logged in - to one file you can save to Drive, email to yourself, etc. A safety net if the game or its Facebook login ever stop working. Doesn't include anything that only lives on the game's servers. Keep the file private, like a password: the cached Facebook session in it can be used to get into your account.", 12, UiKit.dim(0.6f), false);
         stack.addView(group(c, "\uD83D\uDCBE", "Backup", "backup", false, new View[]{ cell(c, backup), cell(c, backupHelp) }));
 
         stack.addView(footer(c), mt(c, 12));
@@ -394,11 +399,12 @@ public final class Menu {
 
     static void tickRefresh() {
         if (!stateFetchInFlight.compareAndSet(false, true)) return;   // one in flight is enough; this tick's data will arrive moments later
-        new Thread(() -> {
-            String s = N.call("state");
-            stateFetchInFlight.set(false);
-            if (s != null) BP.UI.post(() -> applyState(s));
-        }, "BowlingPlus-menu-state").start();
+        IO.execute(() -> {
+            String s = null;
+            try { s = N.call("state"); } finally { stateFetchInFlight.set(false); }
+            final String fs = s;
+            if (fs != null) BP.UI.post(() -> applyState(fs));
+        });
     }
 
     static void applyState(String s) {
@@ -474,6 +480,16 @@ public final class Menu {
 
     static void onPinPicked(String msg) { if (pinImageLabel != null) pinImageLabel.setText(msg); tickRefresh(); }
 
+    static void copyAsync(final Button b, final String reset, final boolean withLog) {
+        b.setText("Collecting\u2026");
+        IO.execute(() -> {
+            String text = N.call("debug");
+            if (withLog) text = text + "\n" + N.call("log");
+            final String t = text;
+            BP.UI.post(() -> { try { copy(b, reset, t); } catch (Throwable ignored) {} });
+        });
+    }
+
     static void copy(Button b, String reset, String text) {
         android.content.ClipboardManager cm = (android.content.ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
         cm.setPrimaryClip(android.content.ClipData.newPlainText("BowlingPlus", text == null ? "" : text));
@@ -487,11 +503,13 @@ public final class Menu {
         updateButton.setTextColor(UiKit.dim(0.55f));
         new Thread(() -> {
             String latest = null, page = "https://github.com/NicholasBly/BowlingPlus/releases/latest";
+            int status = 0;
             try {
                 java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://api.github.com/repos/NicholasBly/BowlingPlus/releases/latest").openConnection();
                 c.setRequestProperty("Accept", "application/vnd.github+json");
                 c.setRequestProperty("User-Agent", "BowlingPlus/" + BF.VERSION);
                 c.setConnectTimeout(15000); c.setReadTimeout(15000);
+                status = c.getResponseCode();   // 404 = the repo has no published release yet (not a network problem)
                 java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream()));
                 StringBuilder sb = new StringBuilder(); String ln; while ((ln = r.readLine()) != null) sb.append(ln);
                 r.close();
@@ -500,8 +518,10 @@ public final class Menu {
                 if (j.has("html_url")) page = j.optString("html_url");
             } catch (Throwable ignored) {}
             final String fl = latest, fp = page;
+            final int fs = status;
             BP.UI.post(() -> {
-                if (fl == null || fl.isEmpty()) { updateButton.setText("Couldn't reach GitHub. Check your connection and try again."); updateButton.setTextColor(UiKit.dim(0.55f)); }
+                if (fs == 404) { updateButton.setText("No release has been published on GitHub yet."); updateButton.setTextColor(UiKit.dim(0.55f)); }
+                else if (fl == null || fl.isEmpty()) { updateButton.setText("Couldn't reach GitHub. Check your connection and try again."); updateButton.setTextColor(UiKit.dim(0.55f)); }
                 else if (BF.compareVersions(fl, BF.VERSION) > 0) { updateUrl = fp; updateButton.setText("BowlingPlus " + fl + " is out (you have " + BF.VERSION + "). Tap to download."); updateButton.setTextColor(UiKit.ACCENT); }
                 else { updateButton.setText("You're up to date (" + BF.VERSION + ")."); updateButton.setTextColor(UiKit.dim(0.55f)); }
             });

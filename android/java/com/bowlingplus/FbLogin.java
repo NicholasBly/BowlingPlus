@@ -1,5 +1,10 @@
 package com.bowlingplus;
 
+import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
+
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.util.Set;
 
@@ -19,6 +24,10 @@ import java.util.Set;
 //     because the game may set its own behaviour right before logging in.
 //   * watches the SDK's current access token and profile and writes any change to the event log (Copy log),
 //     so you can see whether a Facebook login actually succeeded and what it returned.
+//   * logs what comes back from the browser (inspectIntent): Facebook's page redirects to
+//     fbconnect://cct.<package>, which Android hands to com.facebook.CustomTabActivity. The redirect carries
+//     either a token (only its presence is logged, never the value) or Facebook's own error message, e.g.
+//     "Invalid key hash", which settles whether the browser flow works on a re-signed build.
 //
 // All of this is reflection against classes already in the APK, so it simply does nothing on a build where the
 // Facebook SDK is absent or renamed.
@@ -61,9 +70,48 @@ final class FbLogin {
 
     private static void tick() {
         if (!ready) return;
+        if (!Config.b("fbWebLogin", true)) { ready = false; N.logLine("fb", "browser login turned off (restart the game to use the Facebook app again)"); return; }
         try { setBehavior.invoke(getInstance.invoke(null), webOnly); } catch (Throwable ignored) {}
         try { watch(); } catch (Throwable ignored) {}
         BP.UI.postDelayed(FbLogin::tick, 600);
+    }
+
+    private static WeakReference<Intent> lastIntent = new WeakReference<>(null);
+
+    // Called by BP's lifecycle hook for every activity that is created or resumed. Only Facebook's own
+    // activities are looked at. Must never throw: an exception in a lifecycle callback crashes the game.
+    static void inspectIntent(Activity act) {
+        try {
+            if (act == null) return;
+            String cls = act.getClass().getName();
+            if (!cls.startsWith("com.facebook.")) return;
+            Intent in = act.getIntent();
+            if (in == null || in == lastIntent.get()) return;          // created + resumed: log it once
+            lastIntent = new WeakReference<>(in);
+            StringBuilder sb = new StringBuilder(cls.substring(cls.lastIndexOf('.') + 1));
+            String url = in.getData() != null ? in.getData().toString() : null;
+            if (url == null) {   // CustomTabMainActivity gets the redirect as an extra
+                try { url = in.getStringExtra("CustomTabMainActivity.extra_url"); } catch (Throwable ignored) {}
+            }
+            if (url == null) { N.logLine("fb", sb.append(" opened").toString()); return; }
+            Uri u = Uri.parse(url);
+            sb.append(" redirect ").append(u.getScheme()).append("://").append(u.getHost());
+            boolean token = false;
+            StringBuilder err = new StringBuilder();
+            for (String part : new String[]{ u.getEncodedQuery(), u.getEncodedFragment() }) {
+                if (part == null) continue;
+                for (String kv : part.split("&")) {
+                    int eq = kv.indexOf('=');
+                    String k = Uri.decode(eq < 0 ? kv : kv.substring(0, eq));
+                    String v = eq < 0 ? "" : Uri.decode(kv.substring(eq + 1).replace('+', ' '));
+                    if (k.equals("access_token") || k.equals("signed_request") || k.equals("code") || k.equals("id_token")) token = true;   // secrets: never logged
+                    else if (k.startsWith("error")) err.append(' ').append(k).append('=').append(v.length() > 300 ? v.substring(0, 300) : v);
+                }
+            }
+            if (token) sb.append(": login returned a token");
+            else if (err.length() == 0) sb.append(": no token and no error in the redirect");
+            N.logLine("fb", sb.append(err).toString());
+        } catch (Throwable ignored) {}
     }
 
     @SuppressWarnings("unchecked")

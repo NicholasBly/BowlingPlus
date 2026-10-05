@@ -112,11 +112,14 @@ final class Kegel {
 
     // API 35 PdfRenderer adds getPage().getTextContents(); reached by reflection so older builds compile.
     static String pdfTextViaRenderer(byte[] data) {
+        java.io.File tmp = null;
+        android.os.ParcelFileDescriptor pfd = null;
+        android.graphics.pdf.PdfRenderer r = null;
         try {
-            java.io.File tmp = java.io.File.createTempFile("kegel", ".pdf", BP.app.getCacheDir());
+            tmp = java.io.File.createTempFile("kegel", ".pdf", BP.app.getCacheDir());
             try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) { fos.write(data); }
-            android.os.ParcelFileDescriptor pfd = android.os.ParcelFileDescriptor.open(tmp, android.os.ParcelFileDescriptor.MODE_READ_ONLY);
-            android.graphics.pdf.PdfRenderer r = new android.graphics.pdf.PdfRenderer(pfd);
+            pfd = android.os.ParcelFileDescriptor.open(tmp, android.os.ParcelFileDescriptor.MODE_READ_ONLY);
+            r = new android.graphics.pdf.PdfRenderer(pfd);
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < r.getPageCount(); i++) {
                 android.graphics.pdf.PdfRenderer.Page page = r.openPage(i);
@@ -129,9 +132,14 @@ final class Kegel {
                     }
                 } catch (Throwable ignored) {} finally { page.close(); }
             }
-            r.close(); pfd.close(); tmp.delete();
             return sb.toString();
-        } catch (Throwable t) { return null; }
+        } catch (Throwable t) {
+            return null;
+        } finally {   // a broken PDF throws partway: still close everything and delete the copy
+            try { if (r != null) r.close(); } catch (Throwable ignored) {}
+            try { if (pfd != null) pfd.close(); } catch (Throwable ignored) {}
+            if (tmp != null) tmp.delete();
+        }
     }
 
     // Last resort: pull "(...)Tj" and "[...]TJ" text strings out of uncompressed PDF content streams.
