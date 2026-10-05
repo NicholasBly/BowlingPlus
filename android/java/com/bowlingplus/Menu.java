@@ -55,6 +55,7 @@ public final class Menu {
         if (root == null) return;
         overlay = build(a);
         root.addView(overlay);
+        MenuButton.refresh();                      // hide the floating button while the menu itself is open
         N.call("menuVisible", "1");
         BP.poke();                                 // so state() reflects the latest game data
         syncAll();
@@ -70,11 +71,18 @@ public final class Menu {
         overlay = null;
         refresh.removeCallbacksAndMessages(null);
         N.call("menuVisible", "0");
+        MenuButton.refresh();                       // bring the floating button back, if it's turned on
     }
 
     static Runnable refreshRunner = new Runnable() {
         public void run() { if (visible()) { BP.poke(); tickRefresh(); refresh.postDelayed(this, 500); } }
     };
+
+    // tickRefresh() used to call N.call("state") directly - a round-trip to the game's thread, up to 1.5 s -
+    // right on the Android main thread, every 500 ms while the menu is open. That's what made scrolling the
+    // menu feel laggy: every redraw competed with a call that could block the whole UI thread. Now the native
+    // call runs on its own thread and only the (cheap) "apply it to the views" step touches the UI thread.
+    static final java.util.concurrent.atomic.AtomicBoolean stateFetchInFlight = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // ---- building ----
     static FrameLayout build(final Activity a) {
@@ -225,6 +233,11 @@ public final class Menu {
         logRow.addView(log, UiKit.lpWeight(1)); logRow.addView(space(c, 8)); logRow.addView(net, UiKit.lpWeight(1));
         diag.addView(logRow, mt(c, 8)); diag.addView(dh, mt(c, 8));
         stack.addView(group(c, "\uD83E\uDE7A", "Help & diagnostics", "help", false, new View[]{ cell(c, diag) }));
+
+        // ---- Menu button (an alternative/addition to shaking)
+        LinearLayout btnStack = UiKit.row(c, false);
+        btnStack.addView(rowView(c, "On-screen menu button", "A small round button you can tap to open the menu, instead of shaking. Press and drag it to move it; it remembers where you put it. Shake and the three-finger tap keep working too.", toggle(c, "menuButton", () -> MenuButton.refresh())));
+        stack.addView(group(c, "\uD83D\uDD18", "Menu button", "menubtn", false, new View[]{ cell(c, btnStack) }));
 
         // ---- Facebook login + diagnostics
         LinearLayout fb = UiKit.row(c, false);
@@ -380,8 +393,16 @@ public final class Menu {
     static JSONObject lastState = new JSONObject();
 
     static void tickRefresh() {
-        String s = N.call("state");
-        try { if (s != null) { lastState = new JSONObject(s); Config.load(lastState.optJSONObject("cfg").toString()); } } catch (Throwable ignored) {}
+        if (!stateFetchInFlight.compareAndSet(false, true)) return;   // one in flight is enough; this tick's data will arrive moments later
+        new Thread(() -> {
+            String s = N.call("state");
+            stateFetchInFlight.set(false);
+            if (s != null) BP.UI.post(() -> applyState(s));
+        }, "BowlingPlus-menu-state").start();
+    }
+
+    static void applyState(String s) {
+        try { lastState = new JSONObject(s); Config.load(lastState.optJSONObject("cfg").toString()); } catch (Throwable ignored) {}
         if (!visible()) return;
         setText(statusLabel, lastState.optString("status"));
         setTextOrHide(ballLabel, lastState.optString("ball"));

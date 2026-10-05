@@ -40,6 +40,7 @@ void BFLoadConfig(void) {
     if (d[@"speed"]) gBF.speedMult   = [d[@"speed"] floatValue];
     if (d[@"spin"])  gBF.spinMult    = [d[@"spin"] floatValue];
     if (d[@"menuHelp"]) gBF.menuHelp = [d[@"menuHelp"] boolValue];
+    if (d[@"menuButton"]) gBF.menuButton = [d[@"menuButton"] boolValue];
     if (d[@"spare"]) gBF.spareMode   = [d[@"spare"] boolValue];
     if (d[@"mask"])  gBF.lastPinMask = (uint16_t)[d[@"mask"] unsignedIntValue];
     if (d[@"auto"])  gBF.spareAuto   = [d[@"auto"] boolValue];
@@ -64,7 +65,7 @@ void BFLoadConfig(void) {
 }
 
 void BFSaveConfig(void) {
-    NSDictionary *d = @{ @"tex": @(gBF.textureFix), @"pin": @(gBF.pinFix), @"speed": @(gBF.speedMult), @"spin": @(gBF.spinMult), @"menuHelp": @(gBF.menuHelp),
+    NSDictionary *d = @{ @"tex": @(gBF.textureFix), @"pin": @(gBF.pinFix), @"speed": @(gBF.speedMult), @"spin": @(gBF.spinMult), @"menuHelp": @(gBF.menuHelp), @"menuButton": @(gBF.menuButton),
                          @"spare": @(gBF.spareMode), @"mask": @(gBF.lastPinMask),
                          @"auto": @(gBF.spareAuto),
                          @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
@@ -110,6 +111,7 @@ static void BFEngineStart(void) {
     sLink.preferredFramesPerSecond = 60;   // our checks never need more than 60 per second
     [sLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     BFShakeStart();
+    BFMenuButtonStart();
     if (!gBFSafeMode) {
         BFPrivacyStart();
         BFPinTapInstall();

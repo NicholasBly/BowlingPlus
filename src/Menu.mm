@@ -50,7 +50,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UILabel *pinImageLabel;
 @property (nonatomic, copy) NSString *updateURL;
 @property (nonatomic, strong) UIButton *oilColorButton;
-@property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *unstickSwitch, *ipv4Switch;
+@property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *unstickSwitch, *ipv4Switch, *menuButtonSwitch;
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
 @property (nonatomic, strong) UISlider *speedSlider, *spinSlider;
 @property (nonatomic, strong) UILabel *spinLabel;
@@ -596,6 +596,12 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     diag.spacing = 8;
     [stack addArrangedSubview:[self group:@"Help & diagnostics" icon:@"\U0001FA7A" key:@"help" open:NO cells:@[[self cell:diag]]]];
 
+    // ---- Menu button (an alternative/addition to shaking)
+    self.menuButtonSwitch = [self switchOn:gBF.menuButton action:@selector(menuButtonChanged:)];
+    [stack addArrangedSubview:[self group:@"Menu button" icon:@"\U0001F518" key:@"menubtn" open:NO cells:@[
+        [self cell:[self row:@"On-screen menu button" help:@"A small round button you can tap to open the menu, instead of shaking. Press and drag it to move it; it remembers where you put it. Shake keeps working too." control:self.menuButtonSwitch]]
+    ]]];
+
     // ---- Back up my data
     UIButton *backup = [self button:@"\U0001F4E6  Back up my data" filled:YES small:NO action:@selector(backupTapped)];
     UILabel *bh = [self label:@"Saves everything the game keeps on this device - settings, save data, and cached Facebook login state - to one file you can keep in Files, AirDrop or email. A safety net if the game or its Facebook login ever stop working. Doesn't include anything that only lives on the game's servers."
@@ -642,6 +648,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.menuOverlay.frame = w.bounds;
     [w addSubview:self.menuOverlay];
     [w bringSubviewToFront:self.menuOverlay];
+    BFMenuButtonRefresh();   // hide the floating button while the menu itself is open
     [self syncControls];
     [self refresh];
     self.menuOverlay.alpha = 0;
@@ -660,6 +667,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [UIView animateWithDuration:0.15 animations:^{ o.alpha = 0; } completion:^(BOOL finished) {
         if (!self.menuShowing) [o removeFromSuperview];
     }];
+    BFMenuButtonRefresh();   // bring the floating button back, if it's turned on
 }
 
 - (void)overlayTapped:(UITapGestureRecognizer *)g {
@@ -686,6 +694,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 - (void)specChanged:(UISwitch *)s  { gBF.pinSpec = s.on; BFSaveConfig(); }
 - (void)unstickChanged:(UISwitch *)s { gBF.unstick = s.on; BFSaveConfig(); }
 - (void)ipv4Changed:(UISwitch *)s  { gBF.gameIPv4 = s.on; BFSaveConfig(); }
+- (void)menuButtonChanged:(UISwitch *)s { gBF.menuButton = s.on; BFSaveConfig(); BFMenuButtonRefresh(); }
 - (void)fpsChanged:(UISwitch *)s   { gBF.fps120 = s.on; BFSaveConfig(); [self refresh]; }
 - (void)spareChanged:(UISwitch *)s { gBF.spareMode = s.on; BFSaveConfig(); [self refresh]; }
 - (void)oilMirrorChanged:(UISwitch *)s { gBF.oilMirrorFix = s.on; BFSaveConfig(); }
@@ -834,6 +843,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.specSwitch.on = gBF.pinSpec;
     self.unstickSwitch.on = gBF.unstick;
     self.ipv4Switch.on = gBF.gameIPv4;
+    self.menuButtonSwitch.on = gBF.menuButton;
     self.fpsSwitch.on = gBF.fps120;
     self.oilMirrorSwitch.on = gBF.oilMirrorFix;
     self.oilBreakSwitch.on = gBF.oilBreakdown;

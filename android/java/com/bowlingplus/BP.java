@@ -107,8 +107,8 @@ public final class BP {
 
     private static void hookLifecycle(Application a) {
         a.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-            public void onActivityResumed(Activity act) { if (!liveActivities().contains(act)) resumed.add(new WeakReference<>(act)); onActivity(act); }
-            public void onActivityCreated(Activity act, android.os.Bundle b) {}
+            public void onActivityResumed(Activity act) { if (!liveActivities().contains(act)) resumed.add(new WeakReference<>(act)); FbLogin.inspectIntent(act); onActivity(act); MenuButton.refresh(); }
+            public void onActivityCreated(Activity act, android.os.Bundle b) { FbLogin.inspectIntent(act); }
             public void onActivityStarted(Activity act) {}
             public void onActivityPaused(Activity act) {}
             public void onActivityStopped(Activity act) {}
@@ -150,6 +150,7 @@ public final class BP {
                 Config.load(cfg);
                 Oil.start();                                  // the custom pattern you had on last time
                 OilTab.start();                               // the "Custom oil" tab on the practice pattern screen
+                MenuButton.start();                           // optional draggable on-screen button to open the menu
                 FbLogin.start();                              // force the browser login flow + watch for a Facebook login
                 Privacy.start();
                 UiKit.toast(act, "BowlingPlus is on: shake the phone (or tap with three fingers) for the menu");

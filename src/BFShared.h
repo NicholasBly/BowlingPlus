@@ -29,6 +29,7 @@ typedef struct {
     bool     pinImage;     // pins use the player's own image (looks only)
     float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
+    bool     menuButton;   // show a draggable on-screen button to open the menu, as well as shake
 } BFConfig;
 
 // Live game status for the menu
@@ -125,6 +126,10 @@ NSString *BFPinsText(uint16_t mask);   // e.g. "7-10"
 
 // Shake.mm
 void BFShakeStart(void);
+
+// MenuButton.mm
+void BFMenuButtonStart(void);
+void BFMenuButtonRefresh(void);   // call after gBF.menuButton changes, and whenever the menu opens/closes
 
 // BPTexture.mm
 NSData *BFMakeMatchUpBPTexturePNG(int size);

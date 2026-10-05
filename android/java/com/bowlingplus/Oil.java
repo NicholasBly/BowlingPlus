@@ -52,7 +52,11 @@ public final class Oil {
     static void savePatterns(JSONArray a) { prefs().edit().putString("oilPatterns", a.toString()).apply(); }
     static String activeId() { return prefs().getString("oilActive", ""); }
     static void setActiveId(String id) { prefs().edit().putString("oilActive", id == null ? "" : id).apply(); applyActive(); }
-    static void applyActive() { JSONObject p = patternById(activeId()); N.call("setCustom", p == null ? "" : p.toString()); BP.poke(); }
+    static void applyActive() {
+        JSONObject p = patternById(activeId());
+        String arg = p == null ? "" : p.toString();
+        new Thread(() -> { N.call("setCustom", arg); BP.poke(); }, "BowlingPlus-setCustom").start();
+    }
 
     static JSONObject patternById(String id) {
         if (id == null || id.isEmpty()) return null;
@@ -135,21 +139,27 @@ public final class Oil {
         if (root != null && overlayHolder != null) root.removeView(overlayHolder);
     }
 
+    // Every reload() bumps this; a preview that finishes loading for an older generation is discarded instead
+    // of being applied to a (possibly reused/recycled) ImageView.
+    static int reloadGen = 0;
+    static final java.util.concurrent.ExecutorService previewExec = java.util.concurrent.Executors.newSingleThreadExecutor();
+
     static void reload() {
         if (list == null) return;
+        int gen = ++reloadGen;
         list.removeAllViews();
-        list.addView(row(null));
+        list.addView(row(null, gen));
         list.addView(UiKit.label(act, "BOWLINGPLUS COLLECTION", 11, UiKit.dim(0.45f), true), mt(act, 4));
-        for (JSONObject p : collection()) list.addView(row(p));
+        for (JSONObject p : collection()) list.addView(row(p, gen));
         list.addView(UiKit.label(act, "MY PATTERNS", 11, UiKit.dim(0.45f), true), mt(act, 4));
         JSONArray mine = loadPatterns();
-        for (int i = 0; i < mine.length(); i++) list.addView(row(mine.optJSONObject(i)));
+        for (int i = 0; i < mine.length(); i++) list.addView(row(mine.optJSONObject(i), gen));
         if (mine.length() == 0) list.addView(UiKit.label(act, "None yet. Tap + New pattern, or import one with a QR code.", 12, UiKit.dim(0.45f), false));
         JSONObject actv = patternById(activeId());
         if (status != null) status.setText(actv != null ? "On the lane in practice: " + actv.optString("name") : "Using the game's patterns");
     }
 
-    static View row(final JSONObject p) {
+    static View row(final JSONObject p, final int gen) {
         Context c = act;
         boolean active = p != null ? p.optString("id").equals(activeId()) : (activeId().isEmpty() || patternById(activeId()) == null);
         LinearLayout box = UiKit.row(c, true);
@@ -158,14 +168,21 @@ public final class Oil {
         box.setPadding(UiKit.dp(c, 12), pad, UiKit.dp(c, 6), pad);
         box.addView(UiKit.label(c, active ? "\u25C9" : "\u25CB", 20, active ? UiKit.YELLOW : UiKit.dim(0.4f), true));
         if (p != null) {
+            int tw = UiKit.dp(c, 96), th = UiKit.dp(c, 30);
             ImageView thumb = new ImageView(c);
-            thumb.setLayoutParams(UiKit.lp(UiKit.dp(c, 96), UiKit.dp(c, 30)));
-            thumb.setBackgroundColor(Color.rgb(219, 179, 128));
-            Bitmap bmp = previewFor(p, UiKit.dp(c, 96), UiKit.dp(c, 30));
-            if (bmp != null) thumb.setImageBitmap(bmp);
-            LinearLayout.LayoutParams tlp = UiKit.lp(UiKit.dp(c, 96), UiKit.dp(c, 30));
+            thumb.setLayoutParams(UiKit.lp(tw, th));
+            thumb.setBackgroundColor(Color.rgb(219, 179, 128));   // shown until the preview below finishes loading
+            LinearLayout.LayoutParams tlp = UiKit.lp(tw, th);
             tlp.leftMargin = UiKit.dp(c, 10);
             box.addView(thumb, tlp);
+            // previewFor() round-trips to the game (N.call("oilCompute"), up to 4 s), and the library can
+            // show 50+ rows at once, so every preview loads on a background thread: building the list, and
+            // scrolling it, never waits on the game.
+            previewExec.execute(() -> {
+                Bitmap bmp = previewFor(p, tw, th);
+                if (bmp == null) return;
+                BP.UI.post(() -> { if (gen == reloadGen && thumb.getParent() != null) thumb.setImageBitmap(bmp); });
+            });
         }
         int loads = loadsOf(p);
         LinearLayout texts = UiKit.row(c, false);
@@ -408,12 +425,19 @@ public final class Oil {
     // ========================= Kegel file import =========================
     static void importKegel() {
         Pickers.pickFile(act, new String[]{ "*/*" }, (name, bytes) -> {
-            JSONObject p = kegelImport(bytes, name);
-            if (p == null) { UiKit.toast(act, "That file isn't a Kegel pattern (.pdf, .zip, .Pattern or .txt from the Kegel Pattern Library)"); return; }
-            upsert(p);
-            setActiveId(p.optString("id"));
-            UiKit.toast(act, "Imported \"" + p.optString("name") + "\" from Kegel");
-            reload();
+            UiKit.toast(act, "Reading " + name + "\u2026");
+            // Parsing a PDF (PdfRenderer, or several regex passes over its raw text for older Android) can take
+            // real time; do it off the main thread so the library stays scrollable while it works.
+            new Thread(() -> {
+                JSONObject p = kegelImport(bytes, name);
+                BP.UI.post(() -> {
+                    if (p == null) { UiKit.toast(act, "That file isn't a Kegel pattern (.pdf, .zip, .Pattern or .txt from the Kegel Pattern Library)"); return; }
+                    upsert(p);
+                    setActiveId(p.optString("id"));
+                    UiKit.toast(act, "Imported \"" + p.optString("name") + "\" from Kegel");
+                    reload();
+                });
+            }, "BowlingPlus-kegel-import").start();
         });
     }
 
@@ -464,7 +488,9 @@ public final class Oil {
             ft = Math.round(Math.min(Math.max(ft, 0), 70) * 100) / 100f;
             int ul = s.length() > 5 ? clamp(s.optInt(5, 50), 5, 150) : 50;
             JSONArray step = new JSONArray();
-            step.put(Math.min(a, b)); step.put(Math.max(a, b)); step.put(clamp(s.optInt(2, 2), 0, 99)); step.put(clamp(s.optInt(3, 14), 6, 30)); step.put(Double.valueOf(ft));   // put(double) throws JSONException; put(Object) does not step.put(ul);
+            step.put(Math.min(a, b)); step.put(Math.max(a, b)); step.put(clamp(s.optInt(2, 2), 0, 99)); step.put(clamp(s.optInt(3, 14), 6, 30));
+            step.put(Double.valueOf(ft));   // put(double) throws JSONException; put(Object) does not
+            step.put(ul);
             out.put(step);
         }
         return out;
