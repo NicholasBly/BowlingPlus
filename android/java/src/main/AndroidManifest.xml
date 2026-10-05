@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal manifest: this module exists only to produce a dex. The real components are injected into the
+     game's manifest by tools/manifest_patch.py. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:hasCode="true"/>
+</manifest>
