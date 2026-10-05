@@ -57,14 +57,13 @@ jobs:
 
       # 1) Java side -> classes.dex
       - name: Build the Java side (dex)
-        working-directory: android/java
         run: |
-          # a Gradle wrapper isn't committed; use the runner's Gradle
-          gradle --no-daemon assembleRelease
-          # the unsigned APK holds the dex we want
-          APK=$(find build/outputs/apk/release -name "*.apk" | head -n1)
-          unzip -o "$APK" "classes*.dex" -d "$GITHUB_WORKSPACE/dexout"
-          ls -la "$GITHUB_WORKSPACE/dexout"
+          AJAR="$ANDROID_SDK_ROOT/platforms/android-35/android.jar"
+          curl -sSL -o /tmp/zxing.jar https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
+          mkdir -p /tmp/cls "$GITHUB_WORKSPACE/dexout"
+          javac --release 11 -cp "$AJAR:/tmp/zxing.jar" -d /tmp/cls $(find android/java -name '*.java')
+          "$BUILD_TOOLS/d8" --release --min-api 23 --lib "$AJAR" --classpath /tmp/zxing.jar \
+            --output "$GITHUB_WORKSPACE/dexout" $(find /tmp/cls -name '*.class')
 
       - name: Merge multidex if needed, then embed the dex
         run: |
