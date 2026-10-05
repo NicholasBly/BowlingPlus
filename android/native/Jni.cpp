@@ -370,6 +370,10 @@ static void JNICALL N_drain(JNIEnv *, jclass) {  // just the menu's queued actio
     DrainJobs();
 }
 
+static void JNICALL N_logLine(JNIEnv *env, jclass, jstring jsource, jstring jmsg) {
+    BFLogEvent(JStr(env, jsource), JStr(env, jmsg));
+}
+
 static jbyteArray JNICALL N_bytes(JNIEnv *env, jclass, jstring jname) {   // the embedded PNGs (PinGuide.h, Logo.h)
     Str n = JStr(env, jname);
     const unsigned char *p = nullptr;
@@ -432,6 +436,7 @@ static void StartJavaSide(JNIEnv *env) {
         { (char *)"call", (char *)"(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", (void *)N_call },
         { (char *)"tick", (char *)"()V", (void *)N_tick },
         { (char *)"drain", (char *)"()V", (void *)N_drain },
+        { (char *)"logLine", (char *)"(Ljava/lang/String;Ljava/lang/String;)V", (void *)N_logLine },
         { (char *)"bytes", (char *)"(Ljava/lang/String;)[B", (void *)N_bytes },
         { (char *)"pinWrap", (char *)"([BII[BI)[B", (void *)N_pinWrap },
         { (char *)"pinFill", (char *)"([BIZ)V", (void *)N_pinFill },

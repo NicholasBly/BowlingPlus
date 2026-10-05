@@ -22,6 +22,7 @@ static getaddrinfo_t sRealGetaddrinfo;
 static std::atomic<int> sRebound{ 0 };
 static std::mutex sHostsLock;
 static std::set<Str> sLoggedHosts;
+static std::set<Str> sAllHosts;
 
 static bool IsGameHost(const char *node) {
     size_t n = strlen(node);
@@ -43,6 +44,11 @@ static void LogOnce(const char *node, const Str &what) {
 }
 
 static int BF_getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    if (gBF.logHosts && node) {                       // diagnostics: which servers the game contacts, each host once
+        bool first;
+        { std::lock_guard<std::mutex> g(sHostsLock); first = sAllHosts.insert(node).second; }
+        if (first) BFLogEvent("host", node);
+    }
     if (gBF.gameIPv4 && !gBFSafeMode && node && IsGameHost(node) && (!hints || hints->ai_family == AF_UNSPEC)) {
         struct addrinfo h;
         memset(&h, 0, sizeof(h));

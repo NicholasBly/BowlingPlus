@@ -150,6 +150,7 @@ public final class BP {
                 Config.load(cfg);
                 Oil.start();                                  // the custom pattern you had on last time
                 OilTab.start();                               // the "Custom oil" tab on the practice pattern screen
+                FbLogin.start();                              // force the browser login flow + watch for a Facebook login
                 Privacy.start();
                 UiKit.toast(act, "BowlingPlus is on: shake the phone (or tap with three fingers) for the menu");
                 installTap(act);

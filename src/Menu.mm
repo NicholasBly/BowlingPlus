@@ -22,6 +22,8 @@ NSString *BFPinsText(uint16_t mask) {             // 0x240 -> "7-10"
     return pins.count ? [pins componentsJoinedByString:@"-"] : @"no pins";
 }
 
+static UIViewController *TopController(void);   // defined lower down; used by backupTapped
+
 static UIWindow *HostWindow(void) {
     UIWindow *fallback = nil;
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -594,6 +596,17 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     diag.spacing = 8;
     [stack addArrangedSubview:[self group:@"Help & diagnostics" icon:@"\U0001FA7A" key:@"help" open:NO cells:@[[self cell:diag]]]];
 
+    // ---- Back up my data
+    UIButton *backup = [self button:@"\U0001F4E6  Back up my data" filled:YES small:NO action:@selector(backupTapped)];
+    UILabel *bh = [self label:@"Saves everything the game keeps on this device - settings, save data, and cached Facebook login state - to one file you can keep in Files, AirDrop or email. A safety net if the game or its Facebook login ever stop working. Doesn't include anything that only lives on the game's servers."
+                         size:12 weight:UIFontWeightRegular color:Dim(0.6)];
+    bh.hidden = !gBF.menuHelp;
+    [self.helpLabels addObject:bh];
+    UIStackView *backupStack = [[UIStackView alloc] initWithArrangedSubviews:@[backup, bh]];
+    backupStack.axis = UILayoutConstraintAxisVertical;
+    backupStack.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Backup" icon:@"\U0001F4BE" key:@"backup" open:NO cells:@[[self cell:backupStack]]]];
+
     [stack addArrangedSubview:[self footer]];
 
     CGFloat width = MIN(380, host.bounds.size.width - 24);
@@ -724,6 +737,22 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self.debugButton setTitle:@"Copy debug info" forState:UIControlStateNormal];
     });
+}
+
+- (void)backupTapped {
+    NSString *path = BFWriteBackup();
+    if (!path) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Backup failed" message:@"Couldn't write the backup file." preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [TopController() presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    NSURL *url = [NSURL fileURLWithPath:path];
+    UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    UIViewController *top = TopController();
+    avc.popoverPresentationController.sourceView = top.view;    // iPad: anchor the share sheet
+    avc.popoverPresentationController.sourceRect = CGRectMake(top.view.bounds.size.width / 2, top.view.bounds.size.height / 2, 1, 1);
+    [top presentViewController:avc animated:YES completion:nil];
 }
 
 - (void)speedChanged:(UISlider *)s {           // 1.0x ... 5.0x in 0.1 steps

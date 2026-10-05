@@ -59,6 +59,7 @@ void BFSaveConfig(void);
 void BFEngineTick(void);
 void BFRequestSkipTutorial(void);   // runs the game's own TutorialManager.SkipTutorial() next frame
 NSString *BFDebugInfo(void);        // text for the "Copy debug info" button
+NSString *BFWriteBackup(void);      // Backup.mm: zip the app sandbox, returns the file path (or nil)
 NSString *BFFpsLine(void);          // status line under the 120 FPS switch
 
 // Log.mm (diagnostics log; "Copy log" in the menu)

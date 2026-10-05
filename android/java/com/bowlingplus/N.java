@@ -9,6 +9,8 @@ public final class N {
     // game state are run on Unity's thread inside the native side; UI-only ones return at once.
     public static native String call(String cmd, String arg);
 
+    public static native void logLine(String source, String msg);   // append to the event log (Copy log)
+
     public static native void tick();     // once per frame on Unity's thread (BP schedules this)
     public static native void drain();    // run just the menu's queued game actions, now
 

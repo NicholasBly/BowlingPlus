@@ -226,6 +226,18 @@ public final class Menu {
         diag.addView(logRow, mt(c, 8)); diag.addView(dh, mt(c, 8));
         stack.addView(group(c, "\uD83E\uDE7A", "Help & diagnostics", "help", false, new View[]{ cell(c, diag) }));
 
+        // ---- Facebook login + diagnostics
+        LinearLayout fb = UiKit.row(c, false);
+        fb.addView(rowView(c, "Browser Facebook login", "The normal login hands off to the Facebook app, which rejects a re-signed app (\"invalid key hash\"). This makes login open Facebook in a browser tab instead, which logs in by App ID, not the app's signature. Uses the game's own Facebook app, and you log in on Facebook's real page. On: the only login that can work on a patched build. Change needs a restart to take full effect.", toggle(c, "fbWebLogin", null)));
+        fb.addView(cell(c, rowView(c, "Log all server hosts", "Writes every server name the game looks up to the log (once each). After a login, Copy log shows whether your profile is fetched from Facebook or from the game's own servers. Leave off unless you're checking.", toggle(c, "logHosts", null))), mt(c, 8));
+        stack.addView(group(c, "\uD83D\uDD11", "Account & login", "login", false, new View[]{ cell(c, fb) }));
+
+        // ---- Back up my data
+        Button backup = UiKit.button(c, "\uD83D\uDCE6  Back up my data", true, false);
+        backup.setOnClickListener(v -> Backup.run(act));
+        TextView backupHelp = UiKit.label(c, "Saves everything the game keeps on this phone - settings, local save data, and a cached Facebook session if you've logged in - to one file you can save to Drive, email to yourself, etc. A safety net if the game or its Facebook login ever stop working. Doesn't include anything that only lives on the game's servers.", 12, UiKit.dim(0.6f), false);
+        stack.addView(group(c, "\uD83D\uDCBE", "Backup", "backup", false, new View[]{ cell(c, backup), cell(c, backupHelp) }));
+
         stack.addView(footer(c), mt(c, 12));
 
         ScrollView holder = UiKit.cardScroll(a, stack, Gravity.CENTER, 380);

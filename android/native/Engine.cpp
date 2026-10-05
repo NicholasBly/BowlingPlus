@@ -54,6 +54,7 @@ Json BFConfigJson(void) {
     d.set("oilMirror", Json::Bool_(gBF.oilMirrorFix)); d.set("oilBreak", Json::Bool_(gBF.oilBreakdown));
     d.set("oilInvis", Json::Bool_(gBF.oilInvisible)); d.set("oilThick2", Json::Bool_(gBF.oilThickness));
     d.set("oilHue", gBF.oilHue); d.set("pinImage", Json::Bool_(gBF.pinImage));
+    d.set("logHosts", Json::Bool_(gBF.logHosts));
     return d;
 }
 
@@ -87,6 +88,7 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "oilThick2") gBF.oilThickness = on;
     else if (k == "oilHue") gBF.oilHue = (float)v;
     else if (k == "pinImage") gBF.pinImage = on;
+    else if (k == "logHosts") gBF.logHosts = on;
     else return false;
     Clamp();
     return true;

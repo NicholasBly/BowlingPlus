@@ -32,6 +32,7 @@ typedef struct {
     bool     pinImage;     // pins use the player's own image (looks only)
     float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
+    bool     logHosts;     // log every server hostname the game looks up (diagnostics; off by default)
 } BFConfig;
 
 // Live game status for the menu
