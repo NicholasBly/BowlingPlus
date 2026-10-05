@@ -149,7 +149,9 @@ public final class BP {
                 String cfg = N.call("start", a.toString());   // loads settings, starts the crash guard
                 Config.load(cfg);
                 Oil.start();                                  // the custom pattern you had on last time
+                OilTab.start();                               // the "Custom oil" tab on the practice pattern screen
                 Privacy.start();
+                UiKit.toast(act, "BowlingPlus is on: shake the phone (or tap with three fingers) for the menu");
                 installTap(act);
                 startTick();
                 applyFps();
@@ -224,6 +226,11 @@ public final class BP {
     }
 
     // ---- shake detector (Shake.mm) ----
+    // Android reports acceleration INCLUDING gravity (iOS' userAcceleration doesn't), so a slow low-pass filter
+    // estimates gravity and what's left is the shake. A shake = three quick direction reversals within 1.2 s,
+    // each stronger than SHAKE_G. (1.3 g was too stiff for a phone as heavy as a flagship: 0.9 g is still far
+    // above anything a bowling swipe does to a phone held in the hand.)
+    static final double SHAKE_G = 0.9, SHAKE_WINDOW = 1.2;
     static SensorManager sensors;
     static float gx, gy, gz;
     static boolean gInit;
@@ -234,32 +241,32 @@ public final class BP {
         if (sensors != null || app == null) return;
         sensors = (SensorManager) app.getSystemService(Context.SENSOR_SERVICE);
         Sensor accel = sensors == null ? null : sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-        if (accel == null) { Log.w(TAG, "no accelerometer"); return; }
-        sensors.registerListener(new SensorEventListener() {
+        if (accel == null) { Log.w(TAG, "no accelerometer: use a three-finger tap to open the menu"); return; }
+        boolean ok = sensors.registerListener(new SensorEventListener() {
             public void onSensorChanged(SensorEvent e) { onAccel(e.values[0], e.values[1], e.values[2], e.timestamp / 1e9); }
             public void onAccuracyChanged(Sensor s, int a) {}
         }, accel, SensorManager.SENSOR_DELAY_GAME);
+        Log.i(TAG, "shake detector " + (ok ? "listening" : "FAILED to register") + " (three-finger tap also opens the menu)");
     }
 
     static void onAccel(double ax0, double ay0, double az0, double t) {
-        // Android reports m/s^2 (including gravity ~9.8); iOS reported g. Convert so the 1.3 threshold matches.
-        double ax = ax0 / 9.81, ay = ay0 / 9.81, az = az0 / 9.81;
+        double ax = ax0 / 9.81, ay = ay0 / 9.81, az = az0 / 9.81;   // in g
         if (!gInit) { gx = (float) ax; gy = (float) ay; gz = (float) az; gInit = true; return; }
-        gx = gx * 0.9f + (float) ax * 0.1f;
-        gy = gy * 0.9f + (float) ay * 0.1f;
-        gz = gz * 0.9f + (float) az * 0.1f;
+        gx = gx * 0.96f + (float) ax * 0.04f;
+        gy = gy * 0.96f + (float) ay * 0.04f;
+        gz = gz * 0.96f + (float) az * 0.04f;
         double hx = ax - gx, hy = ay - gy, hz = az - gz;
-        if (Math.sqrt(hx * hx + hy * hy + hz * hz) < 1.3) return;
+        if (Math.sqrt(hx * hx + hy * hy + hz * hz) < SHAKE_G) return;
         double dx = Math.abs(hx), dy = Math.abs(hy), dz = Math.abs(hz);
         double dom = (dx >= dy && dx >= dz) ? hx : (dy >= dz ? hy : hz);
         int sign = dom > 0 ? 1 : -1;
         if (sign == lastSign) return;
         lastSign = sign;
         int k = 0;
-        for (int i = 0; i < peakCount; i++) if (t - peakTimes[i] < 1.0) peakTimes[k++] = peakTimes[i];
+        for (int i = 0; i < peakCount; i++) if (t - peakTimes[i] < SHAKE_WINDOW) peakTimes[k++] = peakTimes[i];
         peakCount = k;
         if (peakCount < 8) peakTimes[peakCount++] = t;
-        if (peakCount >= 3) { peakCount = 0; lastSign = 0; handleShake(); }
+        if (peakCount >= 3) { peakCount = 0; lastSign = 0; Log.i(TAG, "shake detected"); handleShake(); }
     }
 
     static void handleShake() {
@@ -289,6 +296,10 @@ public final class BP {
         final Window window;
         float downX, downY;
         long downAt;
+        boolean multi;                       // a second finger touched during this gesture: not a pin tap
+        boolean triOn;                       // three fingers are down together (the menu gesture)
+        long triAt;
+        float triX, triY;
         TapSpy(Window.Callback orig, Window window) { this.orig = orig; this.window = window; }
 
         @Override public Object invoke(Object proxy, Method m, Object[] args) throws Throwable {
@@ -299,12 +310,23 @@ public final class BP {
         }
 
         void watch(MotionEvent ev) {
-            int a = ev.getActionMasked();
-            if (a == MotionEvent.ACTION_DOWN) { downX = ev.getX(); downY = ev.getY(); downAt = ev.getEventTime(); return; }
-            if (a != MotionEvent.ACTION_UP || Menu.visible() || Menu.pickerVisible()) return;
+            int a = ev.getActionMasked(), n = ev.getPointerCount();
             View d = window.getDecorView();
             if (d == null || d.getWidth() <= 0 || d.getHeight() <= 0) return;
             float slop = 24 * d.getResources().getDisplayMetrics().density;
+
+            // three fingers tapped together: open / close the menu (the backup for the shake)
+            if (a == MotionEvent.ACTION_POINTER_DOWN && n == 3) { triOn = true; triAt = ev.getEventTime(); triX = ev.getX(0); triY = ev.getY(0); }
+            else if (triOn && a == MotionEvent.ACTION_MOVE) {
+                if (n < 3 || Math.abs(ev.getX(0) - triX) > slop * 2 || Math.abs(ev.getY(0) - triY) > slop * 2) triOn = false;   // a swipe, not a tap
+            } else if (triOn && (a == MotionEvent.ACTION_POINTER_UP || a == MotionEvent.ACTION_UP)) {
+                triOn = false;
+                if (ev.getEventTime() - triAt < 800) { Log.i(TAG, "three-finger tap"); handleShake(); }
+            } else if (a == MotionEvent.ACTION_CANCEL) triOn = false;
+
+            if (a == MotionEvent.ACTION_DOWN) { downX = ev.getX(); downY = ev.getY(); downAt = ev.getEventTime(); multi = false; return; }
+            if (a == MotionEvent.ACTION_POINTER_DOWN) { multi = true; return; }
+            if (a != MotionEvent.ACTION_UP || multi || Menu.visible() || Menu.pickerVisible()) return;
             if (Math.abs(ev.getX() - downX) > slop || Math.abs(ev.getY() - downY) > slop || ev.getEventTime() - downAt > 600) return;   // a tap, not a swipe
             float u = ev.getX() / d.getWidth();
             float v = 1f - ev.getY() / d.getHeight();   // v up, like iOS

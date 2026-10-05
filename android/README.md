@@ -71,18 +71,55 @@ Output: the artifact **BowlingPlus-android** with `BowlingPlus.apk`.
 
 ### Keeping one signing key (recommended)
 
-Each build is signed. Without your own key it uses a new throwaway key every time, and Android won't install
-an APK over one signed with a different key: you'd have to uninstall first, which **erases the game's data**
-on the phone. Make one key once:
+**What it is:** a small file that proves "this build comes from me". Android only lets an app update over an
+installed copy signed with the *same* key. Without your own key, every build gets a new random one, so you'd
+have to uninstall the game first, which **erases its data on the phone**. You make the key once, give it to
+GitHub once, and every build after that installs over the last one.
+
+**1. Make the key** (once). On a computer with Java (any JDK 17+, e.g. https://adoptium.net), in a folder
+*outside* the repo such as your Desktop:
 
 ```sh
-keytool -genkeypair -keystore bowlingplus.keystore -alias bowlingplus -keyalg RSA -keysize 2048 -validity 10000 -dname CN=BowlingPlus
-base64 -w0 bowlingplus.keystore      # macOS: base64 -i bowlingplus.keystore
+python3 path/to/BowlingPlus/android/tools/make_keystore.py      # Windows: py ...\make_keystore.py
 ```
 
-and add these repository secrets: `ANDROID_KEYSTORE_B64` (the base64 text), `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS` (`bowlingplus`), `ANDROID_KEY_PASSWORD` (the same password unless you chose another).
-Keep the keystore file somewhere safe and never commit it.
+It writes `bowlingplus.keystore` (the key: **back it up** somewhere safe, e.g. a cloud drive or password
+manager; if you lose it you can't update an installed copy) and `bowlingplus-secrets.txt`.
+
+*No Java on your computer?* Use GitHub Codespaces (free, runs in the browser): on the repo page press
+**Code -> Codespaces -> Create codespace on main**, wait for the terminal at the bottom, run
+`python3 android/tools/make_keystore.py`, then right-click `bowlingplus-secrets.txt` in the file list ->
+Download, and also download `bowlingplus.keystore` (your backup). Delete the codespace afterwards.
+
+**2. Give it to GitHub** (once). Open your repo -> **Settings -> Secrets and variables -> Actions -> New
+repository secret**. Open `bowlingplus-secrets.txt` in Notepad and add four secrets. For each, the **Name** is
+the line starting with `###` and the **Secret** is the line under it (copy the whole long line for the first):
+
+| Name | What |
+| --- | --- |
+| `ANDROID_KEYSTORE_B64` | the key file, as text |
+| `ANDROID_KEYSTORE_PASSWORD` | its password |
+| `ANDROID_KEY_ALIAS` | `bowlingplus` |
+| `ANDROID_KEY_PASSWORD` | the same password |
+
+**3. Build again.** The workflow log says "Signing with the repository's keystore" and the new APK is signed
+with your key. **The very first build with your key still can't install over a copy signed with a throwaway
+key**: uninstall once (the game's data goes with it), install, and from then on updates just install over it.
+
+Never commit `bowlingplus.keystore` or `bowlingplus-secrets.txt` (this repo is public).
+
+## Opening the menu
+
+Shake the phone (about as hard as you'd shake a bottle of sauce) **or tap with three fingers at once**. On
+launch a small message says "BowlingPlus is on". On the practice oil-pattern screen a **Custom oil** tab
+appears at the top.
+
+## Known limits
+
+- **Facebook / Google sign-in.** These check the app's signing key against a list the game's developer
+  registered with Facebook / Google, and BowlingPlus can't be on it: any re-signed copy shows "invalid key
+  hash". Only the developer can change that. Use another way to log in (the game's own account, if it has one).
+- The Play Store copy and BowlingPlus can't be installed side by side (same app id, different key).
 
 ## Building locally
 

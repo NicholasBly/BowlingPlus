@@ -270,6 +270,7 @@ static Json KegelFromText(const Str &textIn) {   // OilUI.mm KegelFromText, with
 static bool GameCmd(const Str &cmd, const Str &arg, Str &out) {
     if (cmd == "state") { out = StateJson().Dump(); return true; }
     if (cmd == "debug") { out = BFDebugInfo(); return true; }
+    if (cmd == "lobby") { out = BFPracticeLobbyOpen() ? "1" : "0"; return true; }   // the practice pattern screen is open
     if (cmd == "spare") { BFApplySpareSelection((uint16_t)atoi(arg.c_str())); return true; }
     if (cmd == "spareNow") { BFApplySpareSelectionNow((uint16_t)atoi(arg.c_str())); return true; }
     if (cmd == "spareDismissed") { BFSpareDismissed(); return true; }
