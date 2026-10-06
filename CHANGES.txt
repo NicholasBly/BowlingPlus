@@ -1,0 +1,7 @@
+BowlingPlus 1.6.1 - changed files only, against the 1.6.0 you uploaded. Copy each file over the same path in the repo root.
+Everything is explained in CHANGELOG.md (entry 1.6.1). Source-only: no APK / IPA / dylib in this package.
+
+Android (build + behavior):  android/java/com/bowlingplus/{BP,Backup,Editor,FbLogin,Kegel,Menu,MenuButton,Pickers,Privacy,UiKit,BF}.java
+                             android/native/{BFShared.h,Dns.cpp,Engine.cpp,Game.cpp,Jni.cpp,Log.cpp}
+Version 1.6.1:               src/BFShared.h, control   (iOS code is otherwise unchanged)
+Docs:                        CHANGELOG.md, README.md, VERIFIED_NOTES.md, android/README.md

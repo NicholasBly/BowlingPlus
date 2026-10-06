@@ -364,6 +364,7 @@ public final class Menu {
         LinearLayout col = UiKit.row(c, false);
         col.setGravity(Gravity.CENTER_HORIZONTAL);
         LinearLayout row1 = UiKit.row(c, true);
+        row1.setGravity(Gravity.CENTER);   // this row is full width; without this its items sat at the left
         row1.addView(UiKit.image(c, N.bytes("logo"), 25));
         Button gh = linkButton(c, "BowlingPlus", "https://github.com/NicholasBly/BowlingPlus");
         Button donate = linkButton(c, "\u2665 Donate", "https://github.com/sponsors/NicholasBly");
@@ -417,12 +418,14 @@ public final class Menu {
         setTextOrHide(oilLabel, lastState.optString("oil"));
         setText(pinImageLabel, lastState.optString("pinImage"));
         boolean safe = lastState.optBoolean("safe", false);
-        resumeButton.setVisibility(safe ? View.VISIBLE : View.GONE);
+        int safeVis = safe ? View.VISIBLE : View.GONE;
+        if (resumeButton.getVisibility() != safeVis) resumeButton.setVisibility(safeVis);
         boolean auto = Config.b("auto", false);
-        autoLabel.setText(!auto ? "" : Config.b("spare", false)
+        setText(autoLabel, !auto ? "" : Config.b("spare", false)
                 ? "Auto-racking " + pinsText(Config.i("mask", BF.ALL_PINS)) + " every frame"
                 : "Turn on Spare shooting mode to use Auto-rack");
-        autoLabel.setVisibility(auto ? View.VISIBLE : View.GONE);
+        int autoVis = auto ? View.VISIBLE : View.GONE;
+        if (autoLabel.getVisibility() != autoVis) autoLabel.setVisibility(autoVis);
     }
 
     static void syncAll() {
@@ -528,8 +531,19 @@ public final class Menu {
         }).start();
     }
 
-    static void setText(TextView t, String s) { if (t != null) t.setText(s == null ? "" : s); }
-    static void setTextOrHide(TextView t, String s) { if (t == null) return; t.setText(s == null ? "" : s); t.setVisibility(s == null || s.isEmpty() ? View.GONE : View.VISIBLE); }
+    // The menu refreshes twice a second; re-setting identical text still costs a layout pass of the whole menu,
+    // which is felt while scrolling. Only touch a label whose text actually changed.
+    static void setText(TextView t, String s) {
+        if (t == null) return;
+        String v = s == null ? "" : s;
+        if (!v.contentEquals(t.getText())) t.setText(v);
+    }
+    static void setTextOrHide(TextView t, String s) {
+        if (t == null) return;
+        setText(t, s);
+        int vis = s == null || s.isEmpty() ? View.GONE : View.VISIBLE;
+        if (t.getVisibility() != vis) t.setVisibility(vis);
+    }
 
     static boolean prefBool(String k, boolean def) { return act.getSharedPreferences("BowlingPlus", Context.MODE_PRIVATE).getBoolean(k, def); }
     static void setPref(String k, boolean v) { act.getSharedPreferences("BowlingPlus", Context.MODE_PRIVATE).edit().putBoolean(k, v).apply(); }

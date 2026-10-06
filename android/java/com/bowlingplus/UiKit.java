@@ -121,8 +121,31 @@ final class UiKit {
     // A dimmed full-screen overlay holding a centered card; tap outside to dismiss.
     interface OnDismiss { void run(); }
 
+    // How many BowlingPlus panels are on screen right now. Counted by the panel itself when it is attached to /
+    // removed from a window, so it is right however a panel gets closed. The native side caps the game's frame
+    // rate while this is above 0 (the lane behind a panel isn't being played), and the on-screen menu button
+    // steps out of the way.
+    private static int overlayCount;
+    static boolean overlayOpen() { return overlayCount > 0; }
+
+    private static void overlayChanged(int delta) {
+        boolean before = overlayCount > 0;
+        overlayCount = Math.max(0, overlayCount + delta);
+        if (before != (overlayCount > 0)) {
+            try { N.call("overlay", overlayCount > 0 ? "1" : "0"); } catch (Throwable ignored) {}
+        }
+        BP.UI.post(() -> { try { MenuButton.refresh(); } catch (Throwable ignored) {} });   // posted: we may be inside removeView
+    }
+
+    private static final class Overlay extends FrameLayout {
+        private boolean counted;
+        Overlay(Context c) { super(c); }
+        @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (!counted) { counted = true; overlayChanged(+1); } }
+        @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); if (counted) { counted = false; overlayChanged(-1); } }
+    }
+
     static FrameLayout overlay(Activity act, final OnDismiss onOutside) {
-        final FrameLayout ov = new FrameLayout(act);
+        final FrameLayout ov = new Overlay(act);
         ov.setBackgroundColor(Color.argb(115, 0, 0, 0));
         ov.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         ov.setClickable(true);
@@ -148,14 +171,17 @@ final class UiKit {
 
     static ScrollView cardScroll(Activity act, LinearLayout content, int gravity, int maxWidthDp) {
         Context c = act;
+        // callers give only a vertical position (TOP / CENTER / BOTTOM); with no horizontal part Android puts the
+        // card against the left edge, so every card is centered across the screen unless asked otherwise
+        if ((gravity & Gravity.HORIZONTAL_GRAVITY_MASK) == 0) gravity |= Gravity.CENTER_HORIZONTAL;
         LinearLayout card = new LinearLayout(c);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(roundStroke(CARD_BG, 20, dim(0.08f), 1, c));
         card.setClickable(true);   // taps on the card don't dismiss
-        ScrollView scroll = new ScrollView(c);
-        scroll.setFillViewport(false);
-        scroll.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        card.addView(scroll);
+        // The card used to hold a ScrollView of its own inside the height-capped ScrollView below. The inner one
+        // never scrolled (it was given unlimited height) but still sat in the middle of every touch and layout
+        // pass. The outer one does all the scrolling, so the content goes straight into the card.
+        card.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         int pad = dp(c, 18);
         content.setPadding(pad, pad, pad, pad);
         int w = Math.min(dp(c, maxWidthDp), act.getResources().getDisplayMetrics().widthPixels - dp(c, 24));

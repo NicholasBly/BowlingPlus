@@ -154,13 +154,14 @@ static void DrainJobs() {
 // ---------------------------------------------------------------------------
 // what Game.cpp / Log.cpp / BPTexture.cpp ask of the platform
 // ---------------------------------------------------------------------------
-static std::atomic<bool> sMenuVisible{ false }, sPickerVisible{ false }, sPickerOneShot{ false }, sPrivacyVisible{ false };
+static std::atomic<bool> sOverlayVisible{ false }, sMenuVisible{ false }, sPickerVisible{ false }, sPickerOneShot{ false }, sPrivacyVisible{ false };
 static std::atomic<int> sPrivacyAccepted{ 0 };
 static std::mutex sStrLock;
 static Str sPrivacyDebug = "privacy: (not started)", sDeviceLine = "Android", sAssetListCache;
 static int sMaxHz = 0;
 
 bool BFMenuVisible(void) { return sMenuVisible; }
+bool BFOverlayVisible(void) { return sOverlayVisible; }
 bool BFMenuPickerVisible(void) { return sPickerVisible; }
 bool BFMenuPickerOneShot(void) { return sPickerVisible && sPickerOneShot; }
 void BFMenuShowPinPicker(uint16_t mask) {
@@ -345,6 +346,7 @@ static jstring JNICALL N_call(JNIEnv *env, jclass, jstring jcmd, jstring jarg) {
     }
     if (cmd == "netTest") { BFNetTest(); return nullptr; }
     if (cmd == "menuVisible") { sMenuVisible = arg == "1"; return nullptr; }
+    if (cmd == "overlay") { sOverlayVisible = arg == "1"; return nullptr; }
     if (cmd == "pickerHidden") { sPickerVisible = false; return nullptr; }
     if (cmd == "privacy") {      // {visible, accepted, debug}
         Json a = Json::Parse(arg);

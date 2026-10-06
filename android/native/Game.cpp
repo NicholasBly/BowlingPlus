@@ -1706,7 +1706,36 @@ static void SetTargetFps(int v) {
     Invoke(N.App_setFps, nullptr, a);
 }
 
+// While a BowlingPlus panel (the menu, the oil library, the editor...) is open, the lane behind it is dimmed
+// and not being played, but the game would keep drawing it at 60 or 120 FPS. That load shares the phone's GPU
+// with the panel's own scrolling, which then stutters. So while a panel is open the game is capped to the
+// 30 FPS it already uses for its own menus, and put back the moment the panel closes.
+static int sOverlayRestoreFps = -1;     // the rate to go back to; -1 = not capped right now
+static bool sOverlayWas = false;
+
+static void OverlayFpsTick() {
+    if (!sSettled || !N.App_setFps || !N.App_getFps) return;
+    bool ov = BFOverlayVisible();
+    bool change = ov != sOverlayWas;
+    if (!change && !(ov && sFrame % 30 == 0)) return;   // only act on a change, or re-check once in a while
+    sOverlayWas = ov;
+    int cur = InvokeInt(N.App_getFps, nullptr, nullptr, -1);
+    if (ov) {
+        if (cur > 30) {
+            if (sOverlayRestoreFps < 0) sOverlayRestoreFps = cur;
+            SetTargetFps(30);
+            if (change) BFLog("panel open: game capped to 30 FPS (was %d)", cur);
+        }
+    } else if (sOverlayRestoreFps > 0) {
+        int back = (gBF.fps120 && sFpsApplied) ? 120 : sOverlayRestoreFps;
+        SetTargetFps(back);
+        BFLog("panel closed: game back to %d FPS", back);
+        sOverlayRestoreFps = -1;
+    }
+}
+
 static void FpsTick() {
+    OverlayFpsTick();
     if (!sSettled || sFrame % 30 != 0 || !N.Constants || !N.App_setFps) return;
     if (!sGameFpsF) sGameFpsF = StaticField(N.Constants, "GAME_FRAME_RATE");
     if (!sMenuFpsF) sMenuFpsF = StaticField(N.Constants, "MENU_FRAME_RATE");
@@ -1721,13 +1750,14 @@ static void FpsTick() {
             sFpsApplied = true;
             BFLog("120 FPS: frame rate table menu %d / game %d -> 120", sOrigMenuFps, sOrigGameFps);
         }
-        if (InvokeInt(N.App_getFps, nullptr, nullptr, 120) != 120) SetTargetFps(120);
+        if (sOverlayRestoreFps < 0 && InvokeInt(N.App_getFps, nullptr, nullptr, 120) != 120) SetTargetFps(120);   // (not while a panel has it capped)
     } else if (sFpsApplied) {
         int game = sOrigGameFps > 0 ? sOrigGameFps : 60, menu = sOrigMenuFps > 0 ? sOrigMenuFps : 30;
         StaticWrite(sGameFpsF, &game);
         StaticWrite(sMenuFpsF, &menu);
         SetTargetFps(game);   // the game sets its own value again at the next screen change
         sFpsApplied = false;
+        if (sOverlayRestoreFps >= 0) sOverlayRestoreFps = game;   // a panel has it capped: closing it restores the normal rate, not 120
         BFLog("120 FPS: off, frame rate table back to %d / %d", menu, game);
     }
 }
@@ -3199,8 +3229,8 @@ Str BFDebugInfo(void) {
     }
     s += Fmt("arsenal: query=%s shown=%d total=%d\n", sQuery.empty() ? Str("-") : sQuery, sShown, sTotal);
     int tgt = live && N.App_getFps ? InvokeInt(N.App_getFps, nullptr, nullptr, -1) : -1;
-    s += Fmt("fps: on=%d applied=%d target=%d table(orig)=%d/%d screenMax=%d | %s\n",
-        gBF.fps120, sFpsApplied, tgt, sOrigMenuFps, sOrigGameFps, BFScreenMaxHz(), BFPrivacyDebug());
+    s += Fmt("fps: on=%d applied=%d target=%d table(orig)=%d/%d screenMax=%d panelCap=%d | %s\n",
+        gBF.fps120, sFpsApplied, tgt, sOrigMenuFps, sOrigGameFps, BFScreenMaxHz(), sOverlayRestoreFps, BFPrivacyDebug());
     {
         ListView ol;
         int nOils = OilList(ol) ? ol.size : -1;

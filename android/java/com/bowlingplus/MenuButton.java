@@ -30,7 +30,8 @@ final class MenuButton {
     // changes, when the menu opens or closes, on rotation (BP's touch/lifecycle hooks call this; it's cheap).
     static void refresh() {
         Activity act = BP.activity;
-        boolean want = Config.b("menuButton", false) && act != null && !Menu.visible() && !Menu.pickerVisible();
+        // out of the way of every panel (menu, pin picker, oil library, pattern editor, color picker)
+        boolean want = Config.b("menuButton", false) && act != null && !Menu.visible() && !Menu.pickerVisible() && !UiKit.overlayOpen();
         FrameLayout root = UiKit.content(act);
         if (!want || root == null) { remove(); return; }
         if (btn != null && builtFor != act) remove();   // a different activity now: rebuild in it

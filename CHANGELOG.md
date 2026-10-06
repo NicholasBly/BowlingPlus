@@ -2,6 +2,32 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.1] - 2026-10-05
+
+Android fixes. iOS has no code changes in this version; its number just moves in step so both builds report the same one.
+
+### Fixed
+- **The Android build failed to compile.** `BP.java` called `FbLogin.inspectIntent`, which didn't exist. It does now: it logs what Facebook's browser login sends back (that a token arrived, or Facebook's own error text such as "Invalid key hash"; the token itself is never logged), once per redirect, and can't throw out of a lifecycle callback.
+- **The menu scrolled at a crawl.** While any BowlingPlus panel is open the lane behind it isn't being played, but the game kept drawing it at 60 or 120 FPS, which took the GPU the panel's scrolling needs. The game is now capped to its own 30 FPS menu rate while a panel is open and put back to what it was (or 120 if 120 FPS mode is on) the moment the last one closes. Also: the menu had two scroll containers inside each other (the inner one never scrolled but sat in every touch), and its twice-a-second refresh re-set labels whose text hadn't changed, each of which can re-measure the whole menu. Both are gone. "Copy debug info" has a new `panelCap=` value on the `fps:` line (the rate the game goes back to, or -1 when not capped).
+- **The Custom oil library and the pin picker were pushed against the left edge.** Cards that gave only a vertical position got no horizontal one; every card is now centered.
+- **The footer's first line (logo, BowlingPlus, Donate) sat at the left** while "Check for updates" and the version were centered. All centered now.
+- **The on-screen menu button drew on top of panels** (it covered the "Custom oil" title). It now steps aside while any panel is open.
+- **"On-screen menu button" and "Browser Facebook login" didn't stick.** The native side didn't know either setting, so they weren't saved and the menu's refresh reset them (the button switched itself back off). Both are saved now.
+- **Screen freezes.** The UI no longer waits on the game for: every step of the oil-color slider and the pin/spare/arsenal/skip commands, the pattern editor's preview, "Start from" list and first load, Copy debug info / Copy log, and reading a picked photo or file. A late "Start from" answer can't overwrite steps you've already edited.
+- **Settings file rewritten on every slider step.** It is written once, 300 ms after you stop.
+- **Privacy page.** It could hide the whole game when shown over it (the hide climbed past the screen's content frame); it now stops there and never touches Unity's own view, and only MRGS's own page is hidden on sight (other web views stay visible until confirmed). First time, it is remembered only if you pressed Sign up; closing the page any other way is logged and it shows again.
+- **Memory protection after the DNS patch** is put back exactly as it was instead of always read-only.
+- **Crash guards:** every activity lifecycle callback is wrapped; the start-up code can't run twice; each JNI method lookup checks for an exception before the next call.
+- **Kegel PDF import** deleted its temporary copy only when it worked; it now always does. **Backup** keeps only the newest earlier zip instead of piling up 40 MB files.
+- **"Check for updates"** said it couldn't reach GitHub when the repo simply has no release yet; it now says so.
+
+### Changed
+- The Backup card now warns that the file contains a logged-in Facebook session and should be kept private.
+- The Android README's Facebook section matches the code: the browser login's result on a re-signed build is not confirmed yet, and Copy log now shows an `[fb]` line with what Facebook sent back.
+
+### Not tested on a device when this was written
+The 30 FPS cap while panels are open (its logic was run against a fake game in 7 scenarios, including turning 120 FPS on or off while a panel is open, but the speed-up itself is unmeasured), the centered cards and footer, the button hiding under panels, the Sign-up detection (it needs the WebView to report the page's title, and if it doesn't, the page just keeps showing as before), and signing in `patch_apk.py`.
+
 ## [1.6.0] - 2026-10-04
 
 ### Added

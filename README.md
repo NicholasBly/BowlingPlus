@@ -116,6 +116,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.6.1:** Android fixes: menu no longer scrolls at a crawl (the game drops to 30 FPS while a panel is open), the oil library and pin picker are centered, the footer is centered, the on-screen button stays out from under panels and now remembers its setting, plus fewer freezes and a fixed build error. iOS is unchanged.
 - **1.6.0:** redesigned shake menu (cards, descriptions on demand), privacy popup remembered after one accept, Kegel-accurate oil everywhere in Practice (also the game's own 48 patterns), tap the pin layouts to pick pins for one shot, an X on the pin picker, and the footer no longer cuts off "Check for updates".
 - **1.5.3:** custom oil now matches Kegel's charts: exact distances (no more overlapping rectangles), film on every board (no more bare strips), and no oil inflation.
 - **1.5.2:** Kegel-accurate oil carries reverse oil back to the foul line like a real machine (the front of the lane was too thin).
