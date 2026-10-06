@@ -6,6 +6,11 @@
 #import <UIKit/UIKit.h>
 #import "BFShared.h"
 
+// Defined further down; the button's touch handling below uses them, and Objective-C++ (like C++) needs a
+// function declared before its first use.
+static CGPoint BFMenuButtonClampedCenter(CGPoint p, UIView *host, CGSize size);
+static void BFMenuButtonSavePosition(CGPoint center, CGSize hostSize);
+
 @interface BFMenuButtonView : UIView
 @property (nonatomic) CGPoint dragStart;     // the button's center when a touch began
 @property (nonatomic) CGPoint touchStart;    // that touch's location, in the window
@@ -84,25 +89,43 @@ static void BFMenuButtonLoadPosition(void) {
     sPosY = [d objectForKey:kDefY] ? [d doubleForKey:kDefY] : 0.10;   // top-center by default
 }
 
-void BFMenuButtonStart(void) { BFMenuButtonRefresh(); }
+void BFMenuButtonStart(void) {
+    BFMenuButtonRefresh();
+    // Startup can run before the game's window is ready (or while the privacy page's window is in front), so
+    // look again each time the app comes to the front. Refresh is cheap and does nothing if all is in place.
+    static id sObserver;
+    if (!sObserver)
+        sObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
+                                                                      queue:[NSOperationQueue mainQueue]
+                                                                 usingBlock:^(NSNotification *note) { BFMenuButtonRefresh(); }];
+}
+
+// The game's own window (the app delegate's), the same one Privacy.mm treats as "the game". Not simply the key
+// window: at startup the key window can be the privacy SDK's own window, which BowlingPlus makes invisible
+// (alpha 0) and which goes away afterwards - a button put there would be invisible, then gone.
+static UIWindow *BFMenuButtonHost(void) {
+    id d = [UIApplication sharedApplication].delegate;
+    UIWindow *main = [d respondsToSelector:@selector(window)] ? [d window] : nil;
+    if (main && !main.hidden) return main;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) if (w.isKeyWindow) return w;
+    }
+    return nil;
+}
 
 // Call whenever it might need to appear/disappear/move: after the setting changes, when the menu opens or
 // closes, on rotation (BFMenuButtonRefresh is cheap, so callers don't need to be careful about calling it
 // often).
 void BFMenuButtonRefresh(void) {
-    UIWindow *host = nil;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *w in ((UIWindowScene *)scene).windows) if (w.isKeyWindow) { host = w; break; }
-        if (host) break;
-    }
+    UIWindow *host = BFMenuButtonHost();
     BOOL want = gBF.menuButton && host != nil && !BFMenuVisible() && !BFMenuPickerVisible();
     if (!want) { [sButton removeFromSuperview]; return; }
     if (sButton && sButton.superview != host) [sButton removeFromSuperview];
     if (!sButton) { BFMenuButtonLoadPosition(); sButton = [BFMenuButtonView new]; }
-    if (!sButton.superview) {
+    if (!sButton.superview) {   // only when (re)added: a panel opened on top of it (the oil library) stays on top
         [host addSubview:sButton];
         sButton.center = BFMenuButtonClampedCenter(CGPointMake(sPosX * host.bounds.size.width, sPosY * host.bounds.size.height), host, sButton.bounds.size);
+        [host bringSubviewToFront:sButton];
     }
-    [host bringSubviewToFront:sButton];
 }
