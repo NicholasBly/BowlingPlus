@@ -83,6 +83,7 @@ Use an IPA that already has the tweak inside (see "Make a patched IPA" below), t
 - **Arsenal search:** the game rebuilds the list with `ResetScroll()`, which re-counts the balls. v1.0 used `ReloadData()`, which only redraws what's on screen, so the scroll area kept its old size.
 - **Match Up BP:** its store entry points at `black_pearl2_dif_x512.jpg`, a file that isn't in any of the game's asset bundles, so it never loads (white on the rack, or the last ball's skin in your hand). The real Black Pearl art does ship, as the left half of `tex_blackpearl_flameturquoise.png` (the file the game had put on the Pearl), so the tweak points the BP there. A drawn look-alike is only a last resort if no working skin can be found.
 - **Speed:** the game launches the ball with one push, and the hook comes from friction with the oil. The tweak waits for the launch and multiplies the speed once.
+- **Pins keep their turn:** every time the game racks (after each throw, and on every ball pickup or switch) it gives each pin a random turn with `Random.Range(0, 16)`. That call reads the engine's random function from a pointer in the game's data; the tweak points it at its own function, which hands back the pin's kept turn for that one call site and passes every other call through. A standing pin keeps its turn; a pin that fell gets a new one. The pinsetter shows its own pin models while it lifts or sets pins, so those get the same turns too (each model is twisted about its own axis while it's hidden).
 - **Spare mode:** the game already re-racks from a 10-pin "standing" list for your second ball. The tweak edits that list at the start of a frame and re-racks.
 
 Everything is found by name while the game runs (no hard-coded memory addresses), so small game updates usually keep working.
@@ -118,6 +119,9 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.6.7:** the pinsetter now lifts and sets pins showing their own turns (in 1.6.6 every lifted pin showed the same face).
+- **1.6.6:** pins no longer turn when you pick up or switch balls: BowlingPlus now decides each pin's turn inside the game's own rack (a standing pin keeps its turn; pins that fell get new ones), instead of turning pins back afterwards.
+- **1.6.5:** a re-racked pin's turn is put back within a frame (it twitched for up to 50 ms on iOS); the experimental other-lane switch is gone again (the game doesn't set that lane up in Practice).
 - **1.6.4:** pins keep their turn when you pick up balls (1.6.2 and 1.6.3 watched the wrong set of pins), and a new experimental switch to bowl on the game's other lane in Practice.
 - **1.6.3:** pins really keep their turn for the whole frame now (1.6.2's version never kicked in), and BowlingPlus starts the moment the game's main menu is up.
 - **1.6.2:** pins keep the same turn for the whole frame (they no longer spin each time you pick up a ball), no more thin oil line behind the pins with the oil mirror fix, and the oil, colors and ball fixes are ready much sooner after the game starts.

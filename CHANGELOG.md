@@ -2,6 +2,56 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.7] - 2026-10-06
+
+### Fixed
+- **The pinsetter turned every pin to the same face when it lifted the standing pins for your second ball (seen on a device with 1.6.6; the pins were back to their own turns once racked).** The pinsetter doesn't carry the real pins: `PinSetterManager.Update` hides their visible models and shows its own pin models (`InventaryData.pinseterKegelRenderer`), which hang from the animated pinsetter joints with one fixed orientation, and it copies them onto the pin-deck models every frame. Read from the game's scene and its animation clips: at the pick-up and at the placing pose every one of those models stands upright, turned -3.544 degrees, and only the joints are animated. So BowlingPlus now gives each model an extra twist about its own long axis (turn + 3.544 degrees) while it's hidden, and the pinsetter shows each pin with the turn it really has.
+- **Setting a new rack showed the same mismatch the other way round:** the pinsetter lowered unturned pins and the real pins then appeared with new turns. Pins that fell now get their next turn decided in advance (a random turn of BowlingPlus's own; the game's random draw still happens and is set aside), so the pinsetter already carries each pin with the turn it will get.
+- **The pinsetter's reflection** (an upside-down copy of the machine, `PinSetterManager.mirrorOnPinsetter`) gets the matching twist (3.544 degrees - turn).
+
+### Changed
+- **Copy debug info, `pin turns:`** adds `pinsetter: found= mirrors= sets= busy= fails=` (`found=1 mirrors=1` once the models are reached; `busy` counts times a model was being shown and was left alone).
+- **`tools/dev/pinsim`** now also simulates the pinsetter with the real model rotations and joint poses from the game's scene and clips, and checks what you'd see: every lifted or lowered pin (and its reflection) faces exactly like the real pin standing there afterwards (worst seen: 0.001 degrees; 176 degrees with the fix switched off). 33 checks.
+
+### Not tested on a device when this was written
+All of it. Checked without a device: the model rotations, joint poses and twist constants come from the game's scene and clips (UnityPy, with Il2CppDumper's DummyDlls for the stripped type trees); the simulation passes all 33 checks and fails 7 with the pinsetter fix switched off; iOS and Android build.
+
+## [1.6.6] - 2026-10-06
+
+### Fixed
+- **Pins turned to a new angle every time you picked up a ball (or switched balls) without throwing.** Read straight from the game's code this time (iOS and Android, 1.907): the pins on the lane are `InventaryData.kegels`, and `RunPsycsTest.UpdatePinPositions` gives every one of them a new random turn, `Random.Range(0, 16)` x 22.5 degrees about the vertical axis, each time it racks. It racks after every throw and on every ball pickup or switch (`ChangeBall`), with the same pins standing. 1.6.2 to 1.6.5 all let that happen and then tried to turn the pins back afterwards, so the new turn could always show for at least the frame it was racked in, and 1.6.2 to 1.6.5 also measured the turn about the wrong axis (the game turns pins about world Z, its up axis).
+  - **How it's fixed now:** the game's `Random.Range(int, int)` doesn't call the engine directly. It reads the engine's random function from a pointer in the game's data and jumps to it with the caller's return address intact. BowlingPlus points that pointer at its own function, which always draws the game's random number as usual and, only when the call comes from that one spot in `UpdatePinPositions`, hands back the pin's kept turn instead. It happens inside the rack, before the game sets the rotation, so a kept turn is never drawn differently, not even for one frame. No game code is changed (a data pointer is all a non-jailbroken iPhone allows), and the pointer and call site are found by reading the game's code at startup, not from hard-coded addresses.
+  - **When a pin gets a new turn:** a pin keeps its turn as long as it stands. It gets a new random turn (the game's own draw) when it comes back after being knocked over or after being off the lane. So pickups, ball switches, the rack for your second ball and spare-mode racks never turn a standing pin; strikes and the pins you knocked down come back with fresh turns. Practice only (its replays included); online and in the tutorial the game's own turns are used, and remembered so nothing jumps when you come back to Practice.
+
+### Removed
+- **iOS: the second, full-rate timer (1.6.5)** that existed only to put pin turns back quickly. Nothing needs to react within a frame any more. (It also used `@available`, which the Linux iOS toolchain can't link.)
+- **The old pin-turn watcher** (polling every pin's rotation every frame on both platforms).
+
+### Changed
+- **Copy debug info, `pin turns:`** now shows the new mechanism: `hook=in place sites=1` (found and installed; anything else says why not), `keep=1` in Practice, the kegel count, and counters: `racks`, `kept` (standing pins that kept their turn), `new` (fresh turns), `knocked` (pins that got a fresh turn because they had fallen), `offLane`, `other` (Random.Range(0, 16) calls from anywhere else, left alone), and `maxStandLean` (how far a kept pin leaned when racked).
+- **`tools/dev/pinsim`** rewritten for the new mechanism (25 checks, against a fake lane that racks exactly like the decoded `UpdatePinPositions`); **`tools/dev/pinhook/`** runs the shipped decoders against the real game binaries and runs the game's own `Random.Range` machine code in an ARM64 emulator; **`tools/dev/android_offline_build.sh`** builds the APK without Google's or Maven's servers (toolchain pieces from GitHub and Ubuntu).
+
+### Found (no change in behavior)
+- **The other lane is switched off in the game's own code.** `RoadChanger.shiftToLaneNumber(int i)` never reads `i` (checked in both binaries): it always moves to lane `laneNum > 1 ? laneNum : 1`, which is lane 1 here, and does nothing if you're already there. So 1.6.4's "Bowl on the other lane" calls did nothing at all; the "moved back" count was BowlingPlus misreading a no-op. Making the other lane playable would mean doing that function's work from BowlingPlus (and redoing it each time the game calls it). Details in `VERIFIED_NOTES.md`.
+
+### Not tested on a device when this was written
+All of it. Checked without a device: the game's own `Random.Range` code from both binaries, run in an ARM64 emulator, reaches BowlingPlus's function with the `UpdatePinPositions` return address and the right arguments; the shipped decoders, run against both real game binaries, find the right pointer and exactly one call site; the shared pin code passes all 25 checks of the lane simulation (and 15 of them fail with the fix switched off); iOS builds with Theos (Linux toolchain, iOS 16.5 SDK) and Android builds with an NDK r29 sysroot and clang 18; in both compiled builds the function saves its return address before anything else.
+
+## [1.6.5] - 2026-10-06
+
+### Fixed
+- **Pins still visibly turned when you picked up a ball.** 1.6.4 found the right pins and put their turns back (Copy debug info: `kept=66`), but on iOS it only looked 20 times a second (every 3rd tick of BowlingPlus's 60-per-second timer), so a re-racked pin showed its new turn for up to 50 ms, 6 frames at 120 FPS: a visible twitch. It now runs on its own timer at the screen's full rate (a second display link on iOS; on Android it already ran with every frame), so a new turn can show for at most the one frame it was racked in. It also follows the kegels' models (`kegels_renderers_h` / `_l`) in case those ever don't move with the pins, and skips the PinHolder pins when the game says it uses the kegels (`UsePinHolder=0`).
+  - Why not stop the turn from happening at all: the pinsetter takes it from Unity's random numbers, and this game has no way left to fix them (`Random.InitState` and `Random.state` are stripped from both the game code and the engine).
+
+### Removed
+- **"Bowl on the other lane (experimental)"** (added in 1.6.4). The game moved you straight back every time (5 of 5 tries) and, as a screenshot showed, the other lane has no pins, oil or lights in Practice: the game doesn't set it up there. Making it playable needs the game's own code read (what turns that lane on, and what moves you back), which needs a disassembler. The code is kept, switched off; a saved "on" from 1.6.4 does nothing.
+
+### Changed
+- **Copy debug info, `pin turns:`** now shows `checks/s` (how often the pin check runs: should be your screen's rate), `usePinHolder`, and the kegel models (`models=`).
+
+### Not tested on a device when this was written
+The pin change. It was run against the simulated lane (all 12 checks pass, at 120 checks a second); Android compiles and links.
+
 ## [1.6.4] - 2026-10-06
 
 ### Fixed
