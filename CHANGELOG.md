@@ -2,6 +2,20 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.3] - 2026-10-06
+
+### Fixed
+- **Pins still turned every time you picked up a ball** (1.6.2's fix never kicked in: Copy debug info showed `kept=0 knocked=0` after 4 throws). Two reasons, both reproduced in a simulation that then gave the same numbers:
+  - **It only accepted a pin leaning less than 1 degree from its saved pose.** A pin at rest on the deck leans a little, and a fresh rack stands it exactly upright, so the difference was over 1 degree and nothing was put back. Now up to 6 degrees counts as standing (15+ is knocked), and only the turn is undone: the pin keeps whatever lean it has, so this can't move it in any other way.
+  - **Saved turns were thrown away about once a second.** They were kept by pin-holder slot, and the holders were looked up again every 120 frames (1 s at 120 FPS) in whatever order Unity returned them, which also hid every pin that fell during a throw. They're now kept per pin.
+- **Practice could still be reached before the oil, colors and ball fixes.** 1.6.2 started 1.5 s after the game's main menu came up; now it starts the moment it's up (the main menu is when loading is finished, and it's the first screen Practice can be reached from). The plain 4 s wait is only used if the main menu can't be seen.
+
+### Changed
+- **Copy debug info:** a `pin turns:` line (pin holders, pins read, read failures, turns put back, new frames, the biggest lean seen during a throw, and how often a pin's physics body or its visible model turned between checks), so if pins ever turn again it shows where. The `lanes:` line now reads static fields from the right place (1.6.2 showed `currentLane=475208576`, which was the object's header), lists `shiftBy`, and checks that `shiftToLaneNumber` takes a whole number.
+
+### Not tested on a device when this was written
+All of it. The pin-turn code (identical on iOS and Android) was run against a simulated lane with settling pins and pin holders returned in a different order every time; the old code gave your device's numbers there, the new code passes all 9 checks. Android compiles and links.
+
 ## [1.6.2] - 2026-10-06
 
 ### Fixed

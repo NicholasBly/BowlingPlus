@@ -118,6 +118,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.6.3:** pins really keep their turn for the whole frame now (1.6.2's version never kicked in), and BowlingPlus starts the moment the game's main menu is up.
 - **1.6.2:** pins keep the same turn for the whole frame (they no longer spin each time you pick up a ball), no more thin oil line behind the pins with the oil mirror fix, and the oil, colors and ball fixes are ready much sooner after the game starts.
 - **1.6.1:** Android fixes: menu no longer scrolls at a crawl (the game drops to 30 FPS while a panel is open), the oil library and pin picker are centered, the footer is centered, the on-screen button stays out from under panels and now remembers its setting, plus fewer freezes and a fixed build error. iOS: fixes the build (broken since the on-screen menu button and backup were added), so both appear on iPhone for the first time, and the button no longer gets lost in the privacy page's invisible window.
 - **1.6.0:** redesigned shake menu (cards, descriptions on demand), privacy popup remembered after one accept, Kegel-accurate oil everywhere in Practice (also the game's own 48 patterns), tap the pin layouts to pick pins for one shot, an X on the pin picker, and the footer no longer cuts off "Check for updates".

@@ -469,10 +469,12 @@ static void UpdateState() {
     }
     if (!rpt) { NotReady(); return; }
     double up = BFNow() - sRPTSince;
-    // Let the game finish loading before touching anything. It used to always wait 4 s after the lane
-    // appeared, which on a fast start let you reach Practice before the oil, colors and ball fixes were
-    // on. Now: 1.5 s once the game's main menu is up (startup done), otherwise the old 4 s.
-    if (!sSettled && !(up >= 4.0 || (up >= 1.5 && AtMainMenu()))) { NotReady(); return; }
+    // Let the game finish loading before touching anything. The game's main menu being up IS "loading
+    // finished" (scene, data and login are done; it's also the first screen Practice can be reached from),
+    // so BowlingPlus starts right then. Before 1.6.2 it always waited 4 s after the lane appeared, and 1.6.2
+    // waited 1.5 s more after the main menu: both let a quick tap into Practice beat the oil, colors and
+    // ball fixes. If the main menu can't be seen, the plain 4 s wait still applies.
+    if (!sSettled && !(up >= 4.0 || AtMainMenu())) { NotReady(); return; }
     if (!N.gp_gameMode || !N.gp_location) {
         N.gp_gameMode = StaticField(N.GameParams, "gameMode");
         N.gp_location = StaticField(N.GameParams, "_playerLocation");
@@ -570,15 +572,10 @@ static void PinFixTick() {
 //  - Only pins that differ from their saved pose purely by a turn about world up are touched (standing in
 //    their spot), never during a throw or replay. Which body axis is "up" doesn't matter: the test is on
 //    the difference between the two poses. Pins are round, so the turn doesn't change how they play.
+//  - 1.6.3: poses are remembered per pin OBJECT. 1.6.2 kept them by pin-holder slot, and the holders were
+//    looked up again every 120 frames (1 s at 120 FPS) in whatever order Unity returned them, which threw
+//    the saved poses away before they could be used (device: kept=0 knocked=0 after 4 throws).
 struct Quat { float x, y, z, w; };
-static const int kTurnPins = 16;
-static Quat sTurnSaved[4][kTurnPins];
-static bool sTurnHave[4][kTurnPins];
-static void *sTurnHolderSeen[4];
-static int sTurnBall = 0;                 // throws so far in this frame
-static bool sTurnKnocked = false;         // a pin tipped over during this frame
-static bool sTurnThrew = false;           // a throw happened since the last rack was dealt with
-static int sTurnKept = 0, sTurnFrames = 0;
 
 static Quat QMul(const Quat &a, const Quat &b) {
     return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -596,58 +593,134 @@ static void PoseDiff(const Quat &from, const Quat &to, float &tiltDeg, float &tu
     tiltDeg = 2.0f * atan2f(xz, yw) * 57.29578f;
     turnDeg = yw > 1e-6f ? 2.0f * acosf(fminf(1.0f, fabsf(r.w) / yw)) * 57.29578f : 180.0f;
 }
-
-static void RefreshPinHolders() {
-    if (sFrame % 120 != 0 && sHolders[0].get()) return;
-    Il2CppArray *all = FindAll(N.tPinHolder);
-    for (int i = 0; i < 4; i++) {
-        void *h = (size_t)i < Len(all) ? Elem(all, i) : nullptr;
-        sHolders[i].set(Alive(h) ? h : nullptr);
-    }
+// Standing in its spot but turned. A pin at rest on the deck leans a little (and a fresh rack stands it
+// exactly upright), so up to 6 degrees of lean still counts as standing; 15+ is knocked. (1.6.2 allowed only
+// 1 degree, which a settled pin can easily exceed, and then never put anything back.)
+static const float kStandTilt = 6.0f, kKnockTilt = 15.0f, kMinTurn = 2.0f;
+static bool OnlyTurned(const Quat &from, const Quat &to) {
+    float tilt, turn; PoseDiff(from, to, tilt, turn);
+    return tilt < kStandTilt && turn > kMinTurn;
 }
 
-static bool PinPose(void *pin, void **trOut, Quat &q) {
-    void *phys = pin ? At<void *>(pin, N.pin_physic) : nullptr;
-    void *tr = Alive(phys) ? (void *)Invoke(N.Comp_getTransform, phys, nullptr) : nullptr;
-    if (!Alive(tr)) return false;
+// Take away only the turn about world up between `saved` and `cur`, keeping whatever lean the pin has now,
+// so putting a turn back never moves the pin in any other way.
+static Quat UndoTurn(const Quat &saved, const Quat &cur) {
+    Quat inv = { -saved.x, -saved.y, -saved.z, saved.w };
+    Quat r = QMul(cur, inv);                        // cur = r * saved
+    float n = sqrtf(r.y * r.y + r.w * r.w);
+    if (n < 1e-6f) return cur;
+    Quat twist = { 0, r.y / n, 0, r.w / n };        // the part of r about world up
+    Quat twistInv = { 0, -twist.y, 0, twist.w };
+    Quat swing = QMul(r, twistInv);                 // r = swing * twist
+    return QMul(swing, saved);
+}
+
+struct TurnSlot {
+    void *pin;                 // the game's Pin object (identity only, never dereferenced from here)
+    Quat body; bool have;      // its physics body's pose when this frame was racked
+    Quat lastBody, lastVis; bool haveLast, haveLastVis;   // last check (diagnostics)
+    int seen;                  // sFrame it was last seen
+};
+static const int kTurnSlots = 96;
+static TurnSlot sTurn[kTurnSlots];
+static Ref sTurnHolders[8];
+static int sTurnHolderCount = 0;
+static int sTurnBall = 0;                 // throws so far in this frame
+static bool sTurnKnocked = false;         // a pin tipped over during this frame
+static bool sTurnThrew = false;           // a throw happened since the last rack was dealt with
+// diagnostics (Copy debug info)
+static int sTurnKept = 0, sTurnFrames = 0, sTurnReadFails = 0, sTurnPins = 0, sTurnBodyTicks = 0, sTurnVisTicks = 0;
+static float sTurnMaxTilt = 0;
+
+static TurnSlot *TurnSlotFor(void *pin) {
+    TurnSlot *empty = nullptr, *oldest = &sTurn[0];
+    for (TurnSlot &t : sTurn) {
+        if (t.pin == pin) return &t;
+        if (!t.pin && !empty) empty = &t;
+        if (t.seen < oldest->seen) oldest = &t;
+    }
+    TurnSlot *t = empty ? empty : oldest;
+    memset(t, 0, sizeof(*t));
+    t->pin = pin;
+    return t;
+}
+
+// The Transform of a GameObject, a Transform or any Component.
+static void *TransformOfAny(void *o) {
+    if (!Alive(o)) return nullptr;
+    const char *cn = ClassName(ClassOf(o));
+    if (cn && !strcmp(cn, "Transform")) return o;
+    void *tr = nullptr;
+    if (cn && !strcmp(cn, "GameObject")) tr = N.GO_getTransform ? (void *)Invoke(N.GO_getTransform, o, nullptr) : nullptr;
+    else tr = (void *)Invoke(N.Comp_getTransform, o, nullptr);
+    return Alive(tr) ? tr : nullptr;
+}
+
+static bool ReadRot(void *tr, Quat &q) {
+    if (!tr) return false;
     bool ok = false;
     Il2CppObject *b = Invoke(N.Tr_getRot, tr, nullptr, &ok);
     if (!ok || !b) return false;
     q = *(Quat *)Unbox(b);
-    *trOut = tr;
     return true;
 }
 
 static void PinTurnTick() {
-    if (!gBFStatus.offline || !N.PinHolder || N.ph_pins < 0 || N.pin_physic < 0 || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
-        memset(sTurnHave, 0, sizeof(sTurnHave)); sTurnBall = 0; sTurnKnocked = sTurnThrew = false;
+    if (!gBFStatus.offline || !N.PinHolder || !N.tPinHolder || N.ph_pins < 0 || N.pin_physic < 0 || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
+        memset(sTurn, 0, sizeof(sTurn)); sTurnBall = 0; sTurnKnocked = sTurnThrew = false;
         return;
     }
     bool throwing = sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK || sLoc == LOC_REPLAYER;
     if (sLoc == LOC_THROWING && sPrevLoc != LOC_THROWING) { sTurnBall++; sTurnThrew = true; }
     if (sFrame % 3 != 0) return;
-    RefreshPinHolders();
+    if (sFrame % 60 == 0 || !sTurnHolderCount) {   // which pin holders exist; their order doesn't matter any more
+        Il2CppArray *all = FindAll(N.tPinHolder);
+        int c = 0;
+        for (size_t i = 0; i < Len(all) && c < 8; i++) { void *h = Elem(all, i); if (Alive(h)) sTurnHolders[c++].set(h); }
+        sTurnHolderCount = c;
+    }
 
-    // read every pin once
-    struct Seen { void *tr; Quat q; bool ok; } seen[4][kTurnPins];
-    int count[4] = { 0 };
-    int moved = 0;                            // standing pins whose turn changed (a rack happened)
-    for (int i = 0; i < 4; i++) {
-        void *holder = sHolders[i].get();
-        if (holder != sTurnHolderSeen[i]) { memset(sTurnHave[i], 0, sizeof(sTurnHave[i])); sTurnHolderSeen[i] = holder; }
+    struct Seen { TurnSlot *slot; void *tr; Quat q; };
+    static Seen seen[kTurnSlots];
+    int n = 0, moved = 0;
+    bool bodyTurned = false, visTurned = false;
+    for (int i = 0; i < sTurnHolderCount; i++) {
+        void *holder = sTurnHolders[i].get();
         ListView lv;
         if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
-        count[i] = lv.size < kTurnPins ? lv.size : kTurnPins;
-        for (int p = 0; p < count[i]; p++) {
-            Seen &e = seen[i][p];
-            e.ok = PinPose(lv.items[p], &e.tr, e.q);
-            if (!e.ok || !sTurnHave[i][p]) continue;
+        for (int p = 0; p < lv.size && n < kTurnSlots; p++) {
+            void *pin = lv.items[p];
+            if (!pin) continue;
+            void *phys = At<void *>(pin, N.pin_physic);
+            void *tr = Alive(phys) ? (void *)Invoke(N.Comp_getTransform, phys, nullptr) : nullptr;
+            Seen &e = seen[n];
+            if (!Alive(tr) || !ReadRot(tr, e.q)) { sTurnReadFails++; continue; }
+            e.tr = tr;
+            e.slot = TurnSlotFor(pin);
+            n++;
+            TurnSlot &t = *e.slot;
+            t.seen = sFrame;
+            // diagnostics: did the body, or the visible pin, turn since the last check (outside throws)?
+            Quat v;
+            bool visOk = N.pin_visual >= 0 && ReadRot(TransformOfAny(At<void *>(pin, N.pin_visual)), v);
+            if (!throwing) {
+                if (t.haveLast && OnlyTurned(t.lastBody, e.q)) bodyTurned = true;
+                if (visOk && t.haveLastVis && OnlyTurned(t.lastVis, v)) visTurned = true;
+            }
+            t.lastBody = e.q; t.haveLast = true;
+            if (visOk) { t.lastVis = v; t.haveLastVis = true; }
+            if (!t.have) continue;
             float tilt, turn;
-            PoseDiff(sTurnSaved[i][p], e.q, tilt, turn);
-            if (throwing && tilt > 15.0f) sTurnKnocked = true;
-            if (!throwing && tilt < 1.0f && turn > 1.0f) moved++;
+            PoseDiff(t.body, e.q, tilt, turn);
+            if (throwing) {
+                if (tilt > sTurnMaxTilt) sTurnMaxTilt = tilt;
+                if (tilt > kKnockTilt) sTurnKnocked = true;
+            } else if (tilt < kStandTilt && turn > kMinTurn) moved++;
         }
     }
+    sTurnPins = n;
+    if (bodyTurned) sTurnBodyTicks++;
+    if (visTurned) sTurnVisTicks++;
     if (throwing) return;
 
     bool capture = false;
@@ -656,28 +729,30 @@ static void PinTurnTick() {
         void *rpt = sRPT.get();
         if (rpt && N.rpt_kegsUp >= 0) {
             Il2CppArray *kegs = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
-            size_t n = Len(kegs);
-            if (n >= 10 && n <= 32) { full = true; bool *k = (bool *)Data(kegs); for (int j = 0; j < 10; j++) if (!k[j]) full = false; }
+            size_t k = Len(kegs);
+            if (k >= 10 && k <= 32) { full = true; bool *up = (bool *)Data(kegs); for (int j = 0; j < 10; j++) if (!up[j]) full = false; }
         }
         capture = full && (sTurnBall >= 2 || sTurnKnocked);
         if (capture) { sTurnBall = 0; sTurnKnocked = false; sTurnFrames++; }
         sTurnThrew = false;
     }
-    for (int i = 0; i < 4; i++) {
-        for (int p = 0; p < count[i]; p++) {
-            Seen &e = seen[i][p];
-            if (!e.ok) continue;
-            if (capture || !sTurnHave[i][p]) { sTurnSaved[i][p] = e.q; sTurnHave[i][p] = true; continue; }
-            float tilt, turn;
-            PoseDiff(sTurnSaved[i][p], e.q, tilt, turn);
-            if (tilt < 1.0f && turn > 1.0f) {     // standing in its spot, just turned: put the frame's turn back
-                Quat q = sTurnSaved[i][p];
-                void *a[] = { &q };
-                Invoke(N.Tr_setRot, e.tr, a);
-                sTurnKept++;
-            }
+    for (int j = 0; j < n; j++) {
+        Seen &e = seen[j];
+        TurnSlot &t = *e.slot;
+        if (capture || !t.have) { t.body = e.q; t.have = true; continue; }
+        if (OnlyTurned(t.body, e.q)) {            // standing in its spot, just turned: put the frame's turn back
+            Quat q = UndoTurn(t.body, e.q);
+            void *a[] = { &q };
+            Invoke(N.Tr_setRot, e.tr, a);
+            t.lastBody = q;                       // (our own correction isn't a game turn)
+            sTurnKept++;
         }
     }
+}
+
+static void TurnDebug(char *buf, size_t size) {
+    snprintf(buf, size, "pin turns: holders=%d pins=%d readFails=%d | kept=%d newFrames=%d ball=%d knocked=%d maxTilt=%.0f | turned between checks: body=%d visible=%d",
+             sTurnHolderCount, sTurnPins, sTurnReadFails, sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sTurnMaxTilt, sTurnBodyTicks, sTurnVisTicks);
 }
 
 // ---- your own pin image (looks only) ----
@@ -3401,10 +3476,23 @@ static void FieldText(void *obj, Il2CppClass *k, const char *name, char *out, si
     if (off < 0) { snprintf(out, n, " %s=missing", name); return; }
     char tn[96];
     FieldTypeName(k, name, tn, sizeof(tn));
+    // An instance field never sits below 0x10 (the object header), so a smaller offset is a static field's
+    // offset in the class's static data (1.6.2 read currentLane from the object header: 475208576).
+    alignas(8) unsigned char sbuf[16] = { 0 };
+    bool isStatic = off < 0x10;
+    if (isStatic) { FieldInfo *f = StaticField(k, name); if (!f) { snprintf(out, n, " %s=?", name); return; } StaticRead(f, sbuf); obj = sbuf; off = 0; }
+    const char *tag = isStatic ? "(static)" : "";
     if (!obj) { snprintf(out, n, " %s:%s", name, tn[0] ? tn : "?"); return; }
-    if (!strcmp(tn, "System.Int32")) snprintf(out, n, " %s=%d", name, At<int>(obj, off));
-    else if (!strcmp(tn, "System.Single")) snprintf(out, n, " %s=%.3f", name, At<float>(obj, off));
-    else if (!strcmp(tn, "System.Boolean")) snprintf(out, n, " %s=%d", name, At<bool>(obj, off) ? 1 : 0);
+    if (!strcmp(tn, "System.Single[]")) {   // print the array's contents (lane offsets?)
+        Il2CppArray *arr = At<Il2CppArray *>(obj, off);
+        int len = arr ? (int)Len(arr) : -1, w = snprintf(out, n, " %s%s=[", name, tag);
+        for (int j = 0; arr && j < len && j < 6 && w > 0 && (size_t)w < n; j++) w += snprintf(out + w, n - w, j ? ",%.3f" : "%.3f", ((float *)Data(arr))[j]);
+        if (w > 0 && (size_t)w < n) snprintf(out + w, n - w, len > 6 ? ",...](%d)" : "]", len);
+        return;
+    }
+    if (!strcmp(tn, "System.Int32")) snprintf(out, n, " %s%s=%d", name, tag, At<int>(obj, off));
+    else if (!strcmp(tn, "System.Single")) snprintf(out, n, " %s%s=%.3f", name, tag, At<float>(obj, off));
+    else if (!strcmp(tn, "System.Boolean")) snprintf(out, n, " %s%s=%d", name, tag, At<bool>(obj, off) ? 1 : 0);
     else if (!strcmp(tn, "UnityEngine.Vector3")) { const float *v = &At<float>(obj, off); snprintf(out, n, " %s=(%.2f,%.2f,%.2f)", name, v[0], v[1], v[2]); }
     else snprintf(out, n, " %s:%s=%s", name, tn[0] ? tn : "?", At<void *>(obj, off) ? "set" : "null");
 }
@@ -3422,14 +3510,16 @@ static void LaneDebug(char *buf, size_t size) {
     snprintf(tmp, sizeof(tmp), "lanes: RoadChanger %s x%d", road ? "class ok" : "class missing", (int)Len(roads)); add(tmp);
     static const char *rf[] = { "currentLane", "laneNum", "oneLane", "shiftBy", "currentShift" };
     for (const char *f : rf) { FieldText(r, road, f, tmp, sizeof(tmp)); add(tmp); }
+    // the function the shoe drag ends in: does it take an int, as expected?
+    const MethodInfo *shift = road ? FindMethod(road, "shiftToLaneNumber", 1, "System.Int32") : nullptr;
+    snprintf(tmp, sizeof(tmp), " shiftToLaneNumber(int)=%s", shift ? "yes" : (road && FindMethod(road, "shiftToLaneNumber", 1) ? "other-type" : "no")); add(tmp);
     Il2CppArray *drags = drag ? FindAll(TypeOf(drag)) : nullptr;
     snprintf(tmp, sizeof(tmp), " | SwitchLaneDrag %s x%d active", drag ? "class ok" : "class missing", (int)Len(drags)); add(tmp);
     void *d = dm ? FirstAlive(FindAll(TypeOf(dm))) : nullptr;
     add(" | DragManager");
     FieldText(d, dm, "firstLaneLeft", tmp, sizeof(tmp)); add(tmp);
     FieldText(d, dm, "secondLaneRight", tmp, sizeof(tmp)); add(tmp);
-    snprintf(tmp, sizeof(tmp), " | pin turns kept=%d newFrames=%d ball=%d knocked=%d | oil far edge rows=%d scale=%.4f",
-             sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sSizeYRows, sSizeYScale); add(tmp);
+    snprintf(tmp, sizeof(tmp), " | oil far edge rows=%d scale=%.4f", sSizeYRows, sSizeYScale); add(tmp);
 }
 
 Str BFDebugInfo(void) {
@@ -3486,6 +3576,6 @@ Str BFDebugInfo(void) {
                     N.RB_getLinDamp ? InvokeFloat(N.RB_getLinDamp, rb, -1) : -1.f,
                     N.RB_getAngDamp ? InvokeFloat(N.RB_getAngDamp, rb, -1) : -1.f, lv.size);
     }
-    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; }
+    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; TurnDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; }
     return s;
 }

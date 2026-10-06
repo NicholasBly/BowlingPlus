@@ -1,11 +1,8 @@
-BowlingPlus 1.6.2 - changed files against your repo at commit 6f423a2 ("1.6.1"). Includes the 1.6.1 iOS build fix
-and the IPA workflow from last time, in case those aren't pushed yet. Copy each file over the same path in the repo
-root, then DELETE the root CHANGES.txt committed in 6f423a2.
+BowlingPlus 1.6.3 - changed files against your repo at commit 6f423a2 ("1.6.1"); includes 1.6.2 and last round's
+iOS build fix + IPA workflow, in case those aren't pushed. Copy each file over the same path in the repo root, then
+DELETE the root CHANGES.txt committed in 6f423a2.
 
-1.6.2 (both platforms, src/Game.mm + android/native/Game.cpp):
-  - pins keep their turn for the whole frame (no more spinning on every ball pickup)
-  - no oil line behind the pins with the oil mirror fix
-  - features ready 1.5 s after the game's main menu instead of a fixed 4 s
-  - Copy debug info: new "lanes:" line (the game's two-lane system, read-only) + pin-turn / oil-edge counters
-src/Il2Cpp.* + android/native/Il2Cpp.*   FieldTypeName helper (diagnostics)
-Version 1.6.2: src/BFShared.h, android/native/BFShared.h, BF.java, control.  Docs: CHANGELOG, README, VERIFIED_NOTES (untracked).
+1.6.3 (src/Game.mm + android/native/Game.cpp, same code on both):
+  - pins keep their turn for the frame (1.6.2's version never kicked in: lean tolerance + per-pin tracking)
+  - BowlingPlus starts the moment the game's main menu is up
+  - Copy debug info: "pin turns:" line; "lanes:" line reads static fields correctly + shiftBy contents
