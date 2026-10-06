@@ -18,6 +18,7 @@ typedef void FieldInfo;
 // so small game updates usually don't break the tweak.
 namespace IL {
     bool Ready();   // IL2CPP is up and Assembly-CSharp is loaded (checks at most once a second)
+    void *Api(const char *name);   // any exported il2cpp_* function by name (nullptr if missing)
 
     Il2CppClass *FindClass(const char *ns, const char *name);
     // First method called `name` with `argc` parameters (also searches parent classes).

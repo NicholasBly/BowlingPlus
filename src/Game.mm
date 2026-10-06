@@ -557,261 +557,376 @@ static void PinFixTick() {
     sPinFixOn = want;
 }
 
-// ---- pins keep their turn for the whole frame (Practice) ----
-// The pinsetter (PinHolder.SetupPins) gives every pin a random turn about its upright axis each time it
-// racks, and the game racks again for things that aren't a new frame: picking up or switching a ball, a
-// spare-mode pick. The game's own pins look the same from every side so nobody noticed, but with a picture
-// on the pins they visibly spin each time. BowlingPlus remembers every pin's pose when a frame is racked and
-// puts the turn back on any re-rack until the next frame.
-//  - A new frame: the rack after a throw is a full 10 and either this was the frame's 2nd+ ball or a pin
-//    went down (a strike). A full 10 after a 1st-ball miss is the same frame.
-//  - Only pins that differ from their saved pose purely by a turn about world up are touched (standing in
-//    their spot), never during a throw or replay. Which body axis is "up" doesn't matter: the test is on
-//    the difference between the two poses. Pins are round, so the turn doesn't change how they play.
-//  - 1.6.3: poses are remembered per pin OBJECT. 1.6.2 kept them by pin-holder slot, and the holders were
-//    looked up again every 120 frames (1 s at 120 FPS) in whatever order Unity returned them, which threw
-//    the saved poses away before they could be used (device: kept=0 knocked=0 after 4 throws).
+#define PIN_TURN_CLOCK CFAbsoluteTimeGetCurrent()
+#define PIN_TURN_LOG @"pin turns: %s"
+// ---- pins keep their turn (Practice) ----
+// What the game does (read from its code, 1.907, the same on iOS and Android):
+//  - The pins on the lane are InventaryData.kegels (UsePinHolder is off; PinHolder's pins never move).
+//  - RunPsycsTest.UpdatePinPositions racks them. It first copies _kegsUp into the static
+//    mdl_ShootCurrentData.CurrentData.Before, then for each kegel i, in order: moves it to its spot (or 200 m
+//    under the floor when _kegsUp[i] is false), sets transform.rotation = Euler(0, 0, Random.Range(0, 16) x 22.5)
+//    (a random turn about the vertical axis, world Z), resets and sleeps its Rigidbody, and puts its visible
+//    model on the spot.
+//  - It runs on every rack: after each throw (Reset, from endThrought) and on every ball pickup or switch
+//    (ChangeBall -> RecalculatePinsUpState -> UpdatePinPositions), with the same pins up. So each pickup gave
+//    every pin a new random turn.
+// The fix (1.6.6): Random.Range(int, int) doesn't call the engine directly. It loads the engine's function from a
+// pointer IL2CPP fills on first use (in the game's writable data), puts the caller's return address back and
+// jumps to it. BowlingPlus points that pointer at its own function (BFRandomRangeInt), which always draws the
+// game's own random number and, only for the call from UpdatePinPositions' Random.Range(0, 16), may hand back the
+// pin's kept turn instead. That happens inside the rack, before the game sets the rotation, so a kept turn is
+// never drawn any other way, not even for one frame. (1.6.2-1.6.5 put turns back after the game had already
+// turned the pins, so the new turn could always show for at least the frame it was racked in.) No game code is
+// changed: it's a data pointer, which is all a non-jailbroken iPhone allows.
+// The rule: a pin keeps its turn while it stands. It gets a new random turn when it comes back after being down:
+// knocked over (when the rack starts, before its rotation is set, its body leans more than 15 degrees) or off the
+// lane at the last rack. That new turn is decided in advance (sTurnPend, BowlingPlus's own random draw; the game's
+// draw still happens and is discarded), so the pinsetter can already carry the pin with it (see the pinsetter part
+// below). Outside Practice the game's own turn is used (and remembered, so nothing jumps when you come back).
+static double PinNow() { return PIN_TURN_CLOCK; }   // seconds (platform clock for the shared pin code)
+
 struct Quat { float x, y, z, w; };
+static Ref sInvData;                       // InventaryData (also used by the pin image code and Copy debug info)
 
-static Quat QMul(const Quat &a, const Quat &b) {
-    return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-             a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-             a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
-}
-// The rotation that takes `from` to `to` in world space (to = r * from). For a pin that only turned about
-// world up, r has no x/z part. Returns the tilt part (0 = only turned) and the turn angle, in degrees.
-static void PoseDiff(const Quat &from, const Quat &to, float &tiltDeg, float &turnDeg) {
-    Quat inv = { -from.x, -from.y, -from.z, from.w };
-    Quat r = QMul(to, inv);
-    float xz = sqrtf(r.x * r.x + r.z * r.z);
-    float yw = sqrtf(r.y * r.y + r.w * r.w);
-    tiltDeg = 2.0f * atan2f(xz, yw) * 57.29578f;
-    turnDeg = yw > 1e-6f ? 2.0f * acosf(fminf(1.0f, fabsf(r.w) / yw)) * 57.29578f : 180.0f;
-}
-// Standing in its spot but turned. A pin at rest on the deck leans a little (and a fresh rack stands it
-// exactly upright), so up to 6 degrees of lean still counts as standing; 15+ is knocked. (1.6.2 allowed only
-// 1 degree, which a settled pin can easily exceed, and then never put anything back.)
-static const float kStandTilt = 6.0f, kKnockTilt = 15.0f, kMinTurn = 2.0f;
-static bool OnlyTurned(const Quat &from, const Quat &to) {
-    float tilt, turn; PoseDiff(from, to, tilt, turn);
-    return tilt < kStandTilt && turn > kMinTurn;
-}
+typedef int32_t (*BFRandIntFn)(int32_t, int32_t);
+static BFRandIntFn *sRandSlot = nullptr;   // the game's pointer to the engine's Random.RandomRangeInt
+static BFRandIntFn sRandEngine = nullptr;  // the engine function it pointed to
+static uintptr_t sTurnSite[4];             // where UpdatePinPositions' Random.Range(0, 16) returns to
+static int sTurnSites = 0;
+static int sTurnHook = 0;                  // 0 not tried yet, 1 in place, -1 not possible (sTurnWhy)
+static const char *sTurnWhy = "not tried yet";
+static const int kTurnMax = 32;
+static int32_t sTurnValue[kTurnMax];       // each kegel's turn, in 22.5 degree steps (the game's own draw)
+static bool sTurnHave[kTurnMax], sTurnWasUp[kTurnMax], sTurnUpKnown[kTurnMax];
+static int32_t sTurnPend[kTurnMax];        // the turn kegel i gets the next time it comes back up (decided in advance)
+static bool sTurnPendHave[kTurnMax];
+static uint32_t sTurnRng = 0;
+static int sTurnNext = 0;                  // the kegel the next call is for (they come in order, one per kegel)
+static int sTurnCount = 10;                // kegels per rack (InventaryData.kegels length)
+static double sTurnLast = -1;
+static bool sTurnKeep = false;             // Practice: keep turns
+static FieldInfo *sShotData = nullptr;     // mdl_ShootCurrentData.CurrentData (looked up on first use, see TurnPinUp)
+static int sShotBefore = -2;               // mdl_ShootData.Before (bool[]): the pins up for this rack
+static int sKegelsOff = -2;                // InventaryData.kegels (GameObject[])
+// Copy debug info
+static int sTurnRacks = 0, sTurnKept = 0, sTurnNew = 0, sTurnKnocked = 0, sTurnOffLane = 0, sTurnOther = 0;
+static int sTurnUpUnknown = 0, sTurnTiltFails = 0;
+static float sTurnMaxStandTilt = 0;        // the most a kept (standing) pin leaned when racked
 
-// Take away only the turn about world up between `saved` and `cur`, keeping whatever lean the pin has now,
-// so putting a turn back never moves the pin in any other way.
-static Quat UndoTurn(const Quat &saved, const Quat &cur) {
-    Quat inv = { -saved.x, -saved.y, -saved.z, saved.w };
-    Quat r = QMul(cur, inv);                        // cur = r * saved
-    float n = sqrtf(r.y * r.y + r.w * r.w);
-    if (n < 1e-6f) return cur;
-    Quat twist = { 0, r.y / n, 0, r.w / n };        // the part of r about world up
-    Quat twistInv = { 0, -twist.y, 0, twist.w };
-    Quat swing = QMul(r, twistInv);                 // r = swing * twist
-    return QMul(swing, saved);
-}
-
-struct TurnSlot {
-    void *key;                 // the game object this is (a Pin, or an InventaryData.kegels entry); identity only
-    void *tr;                  // the Transform that turns (looked up once)
-    bool kegel;                // from InventaryData.kegels (else from a PinHolder)
-    Quat body; bool have;      // its pose when this frame was racked
-    Quat lastBody, lastVis; bool haveLast, haveLastVis;   // last check (diagnostics)
-    int seen;                  // sFrame it was last seen
-};
-static const int kTurnSlots = 96;
-static TurnSlot sTurn[kTurnSlots];
-static Ref sTurnHolders[8];
-static int sTurnHolderCount = 0;
-static int sTurnBall = 0;                 // real throws so far in this frame
-static bool sTurnKnocked = false;         // a pin tipped over during this frame
-static bool sTurnThrew = false;           // a real throw happened since the last rack was dealt with
-static bool sTurnInThrow = false;         // the ball has been launched and the shot isn't over yet
-// The game has two pin systems: PinHolder._pins and the older InventaryData.kegels, picked by
-// InventaryData.UsePinHolder. On this build the PinHolder pins never move (device, 1.6.3: no lean in any
-// shot, no turn on any pickup), so the pins on the lane are the kegels. Both are tracked: putting back the
-// turn of a pin that never turned does nothing.
-static Ref sInvData;
-static int sKegelsOff = -2, sKegelsKind = 0;   // offset of InventaryData.kegels; kind 1 = array, 2 = List<>
-static char sKegelsType[96];
-// diagnostics (Copy debug info)
-static int sTurnKept = 0, sTurnFrames = 0, sTurnReadFails = 0, sTurnPins = 0, sTurnKegels = 0;
-static int sTurnHolderTicks = 0, sTurnKegelTicks = 0, sTurnVisTicks = 0;
-static float sTurnMaxTilt = 0;
-
-static TurnSlot *TurnSlotFor(void *key) {
-    TurnSlot *empty = nullptr, *oldest = &sTurn[0];
-    for (TurnSlot &t : sTurn) {
-        if (t.key == key) return &t;
-        if (!t.key && !empty) empty = &t;
-        if (t.seen < oldest->seen) oldest = &t;
+// The kegels array (and its length) from the static InventaryData._instance: no object pointer kept around.
+static Il2CppArray *TurnKegels() {
+    void *inv = ReadStaticObj(N.invd_instance, N.InventaryData, "_instance");
+    if (!inv) return nullptr;
+    if (sKegelsOff == -2) {
+        char tn[64];
+        sKegelsOff = (FieldTypeName(N.InventaryData, "kegels", tn, sizeof(tn)) && !strcmp(tn, "UnityEngine.GameObject[]")) ? FieldOffset(N.InventaryData, "kegels") : -1;
     }
-    TurnSlot *t = empty ? empty : oldest;
-    memset(t, 0, sizeof(*t));
-    t->key = key;
-    return t;
+    return sKegelsOff >= 0x10 ? At<Il2CppArray *>(inv, sKegelsOff) : nullptr;
 }
 
-// The Transform of a GameObject, a Transform or any Component.
-static void *TransformOfAny(void *o) {
-    if (!Alive(o)) return nullptr;
-    const char *cn = ClassName(ClassOf(o));
-    if (cn && !strcmp(cn, "Transform")) return o;
-    void *tr = nullptr;
-    if (cn && !strcmp(cn, "GameObject")) tr = N.GO_getTransform ? (void *)Invoke(N.GO_getTransform, o, nullptr) : nullptr;
-    else tr = (void *)Invoke(N.Comp_getTransform, o, nullptr);
-    return Alive(tr) ? tr : nullptr;
+// Is kegel i up for this rack? 1 up, 0 down, -1 unknown. Read from the copy UpdatePinPositions has just made
+// (so the game has run that class's start-up code by now: looking it up here has no side effects).
+static int TurnPinUp(int i) {
+    if (sShotBefore == -2) {
+        sShotBefore = -1;
+        Il2CppClass *cur = FindClass("", "mdl_ShootCurrentData");
+        Il2CppClass *data = FindClass("", "mdl_ShootData");
+        char tn[64];
+        if (cur && data && FieldTypeName(data, "Before", tn, sizeof(tn)) && !strcmp(tn, "System.Boolean[]")) {
+            sShotData = StaticField(cur, "CurrentData");
+            if (sShotData) sShotBefore = FieldOffset(data, "Before");
+        }
+    }
+    if (!sShotData || sShotBefore < 0x10) return -1;
+    void *shot = nullptr;
+    StaticRead(sShotData, &shot);
+    Il2CppArray *a = shot ? At<Il2CppArray *>(shot, sShotBefore) : nullptr;
+    if (!a || (size_t)i >= Len(a)) return -1;
+    return ((bool *)Data(a))[i] ? 1 : 0;
 }
 
-// A kegel's physics body: the Rigidbody on the object or under it, else the object itself.
-static void *KegelTransform(void *o) {
-    if (!Alive(o)) return nullptr;
-    const char *cn = ClassName(ClassOf(o));
-    void *go = (cn && !strcmp(cn, "GameObject")) ? o : GameObjectOf(o);
-    void *rb = go ? GetComp(go, N.tRigidbody) : nullptr;
-    if (!rb && go) rb = GetCompInChildren(go, N.tRigidbody);
-    return rb ? TransformOfAny(rb) : TransformOfAny(o);
-}
-
-static bool ReadRot(void *tr, Quat &q) {
-    if (!tr) return false;
+// How far kegel i leans, in degrees (-1 if it can't be read). Called before the game sets its rotation, so this
+// is how it was left by the last throw. Standing, its axis (local Z) is world up: cos(lean) = 1 - 2(x^2 + y^2).
+static float TurnPinLean(int i) {
+    Il2CppArray *k = TurnKegels();
+    void *go = (k && (size_t)i < Len(k)) ? Elem(k, i) : nullptr;
+    if (!go || !N.GO_getTransform || !N.Tr_getRot) return -1;
     bool ok = false;
+    void *tr = Invoke(N.GO_getTransform, go, nullptr, &ok);
+    if (!ok || !tr) return -1;
     Il2CppObject *b = Invoke(N.Tr_getRot, tr, nullptr, &ok);
-    if (!ok || !b) return false;
-    q = *(Quat *)Unbox(b);
-    return true;
+    if (!ok || !b) return -1;
+    Quat q = *(Quat *)Unbox(b);
+    float c = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+    return acosf(fmaxf(-1.0f, fminf(1.0f, c))) * 57.29578f;
 }
 
-// A real throw: the ball is moving (picking up a ball also passes through the THROWING location).
-static bool BallLaunched() {
-    void *rb = BallBody();
-    if (!rb || !N.RB_getVel) return false;
-    bool ok = false;
-    Il2CppObject *b = Invoke(N.RB_getVel, rb, nullptr, &ok);
-    if (!ok || !b) return false;
-    Vec3 v = *(Vec3 *)Unbox(b);
-    return v.x * v.x + v.y * v.y + v.z * v.z > 1.0f;   // faster than 1 m/s
+static int32_t TurnRandom16() {                    // xorshift32, seeded from the clock
+    if (!sTurnRng) sTurnRng = (uint32_t)fmod(PinNow() * 1000.0, 4294967291.0) | 1u;
+    sTurnRng ^= sTurnRng << 13;
+    sTurnRng ^= sTurnRng >> 17;
+    sTurnRng ^= sTurnRng << 5;
+    return (int32_t)(sTurnRng % 16u);
 }
 
-static void PinTurnTick() {
-    if (!gBFStatus.offline || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
-        memset(sTurn, 0, sizeof(sTurn)); sTurnBall = 0; sTurnKnocked = sTurnThrew = sTurnInThrow = false;
-        return;
+static int32_t TurnPending(int i) {
+    if (!sTurnPendHave[i]) { sTurnPend[i] = TurnRandom16(); sTurnPendHave[i] = true; }
+    return sTurnPend[i];
+}
+
+// The turn kegel i will get at the next rack if it's up then: the same rule as TurnPick, decided now.
+static int32_t TurnPredict(int i) {
+    if (sTurnHave[i] && (sTurnWasUp[i] || !sTurnUpKnown[i]) && TurnPinLean(i) <= 15.0f) return sTurnValue[i];
+    return TurnPending(i);
+}
+
+// Kegel i's turn for this rack. r is the game's own random draw.
+static int32_t TurnPick(int32_t r) {
+    double now = PinNow();
+    if (now - sTurnLast > 0.25 || now < sTurnLast) {   // a new rack (the 10 calls come within a millisecond)
+        sTurnNext = 0;
+        Il2CppArray *k = sTurnKeep ? TurnKegels() : nullptr;
+        if (k && Len(k) >= 1 && Len(k) <= (size_t)kTurnMax) sTurnCount = (int)Len(k);
     }
-    bool inShotLoc = sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK || sLoc == LOC_REPLAYER;
-    if (!inShotLoc) sTurnInThrow = false;
-    if (sFrame % 3 != 0) return;
-    if (!sTurnInThrow && sLoc == LOC_THROWING && BallLaunched()) { sTurnInThrow = true; sTurnBall++; sTurnThrew = true; }
-    bool throwing = sTurnInThrow || sLoc == LOC_REPLAYER;
-
-    struct Seen { TurnSlot *slot; Quat q; };
-    static Seen seen[kTurnSlots];
-    int n = 0, moved = 0, pins = 0, kegels = 0;
-    bool holderTurned = false, kegelTurned = false, visTurned = false;
-    auto track = [&](void *key, bool kegel, void *visObj) {
-        if (!key || n >= kTurnSlots) return;
-        TurnSlot *t = TurnSlotFor(key);
-        if (!Alive(t->tr)) {
-            t->kegel = kegel;
-            if (kegel) t->tr = KegelTransform(key);
-            else { void *phys = At<void *>(key, N.pin_physic); t->tr = Alive(phys) ? TransformOfAny(phys) : nullptr; }
-        }
-        Seen &e = seen[n];
-        if (!t->tr || !ReadRot(t->tr, e.q)) { sTurnReadFails++; t->tr = nullptr; return; }
-        e.slot = t;
-        n++;
-        if (kegel) kegels++; else pins++;
-        t->seen = sFrame;
-        if (!throwing && t->haveLast && OnlyTurned(t->lastBody, e.q)) (kegel ? kegelTurned : holderTurned) = true;
-        t->lastBody = e.q; t->haveLast = true;
-        Quat v;
-        if (visObj && ReadRot(TransformOfAny(visObj), v)) {
-            if (!throwing && t->haveLastVis && OnlyTurned(t->lastVis, v)) visTurned = true;
-            t->lastVis = v; t->haveLastVis = true;
-        }
-        if (!t->have) return;
-        float tilt, turn;
-        PoseDiff(t->body, e.q, tilt, turn);
-        if (throwing) {
-            if (tilt > sTurnMaxTilt) sTurnMaxTilt = tilt;
-            if (tilt > kKnockTilt) sTurnKnocked = true;
-        } else if (tilt < kStandTilt && turn > kMinTurn) moved++;
-    };
-
-    // 1) PinHolder pins
-    if (N.PinHolder && N.tPinHolder && N.ph_pins >= 0 && N.pin_physic >= 0) {
-        if (sFrame % 60 == 0 || !sTurnHolderCount) {   // order doesn't matter: pins are matched by identity
-            Il2CppArray *all = FindAll(N.tPinHolder);
-            int c = 0;
-            for (size_t i = 0; i < Len(all) && c < 8; i++) { void *h = Elem(all, i); if (Alive(h)) sTurnHolders[c++].set(h); }
-            sTurnHolderCount = c;
-        }
-        for (int i = 0; i < sTurnHolderCount; i++) {
-            void *holder = sTurnHolders[i].get();
-            ListView lv;
-            if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
-            for (int p = 0; p < lv.size; p++) {
-                void *pin = lv.items[p];
-                if (pin) track(pin, false, N.pin_visual >= 0 ? At<void *>(pin, N.pin_visual) : nullptr);
+    sTurnLast = now;
+    int i = sTurnNext % sTurnCount;                    // (two racks in a row wrap around)
+    sTurnNext = i + 1;
+    if (i == 0) sTurnRacks++;
+    int up = TurnPinUp(i);
+    if (up < 0) sTurnUpUnknown++;
+    bool keep = false;
+    if (sTurnKeep && sTurnHave[i]) {
+        if (up == 0) { keep = true; sTurnOffLane++; }  // off the lane: its turn doesn't show, keep it as it is
+        else if (sTurnWasUp[i] || up < 0) {           // standing at the last rack: kept unless it was knocked over
+            float lean = TurnPinLean(i);
+            if (lean < 0) sTurnTiltFails++;
+            if (lean > 15.0f) sTurnKnocked++;
+            else {
+                keep = true;
+                sTurnKept++;
+                if (lean > sTurnMaxStandTilt) sTurnMaxStandTilt = lean;
             }
         }
     }
-    // 2) InventaryData.kegels
-    void *inv = sInvData.get();
-    if (!inv && N.tInvData && sFrame % 120 == 0) { inv = FirstAlive(FindAll(N.tInvData)); sInvData.set(inv); }
-    if (inv && sKegelsOff == -2) {
-        sKegelsOff = FieldOffset(N.InvData, "kegels");
-        FieldTypeName(N.InvData, "kegels", sKegelsType, sizeof(sKegelsType));
-        size_t l = strlen(sKegelsType);
-        sKegelsKind = (l > 2 && !strcmp(sKegelsType + l - 2, "[]")) ? 1 : !strncmp(sKegelsType, "System.Collections.Generic.List", 31) ? 2 : 0;
-    }
-    if (inv && sKegelsOff >= 0x10 && sKegelsKind) {
-        void *c = At<void *>(inv, sKegelsOff);
-        if (sKegelsKind == 1 && c) {
-            Il2CppArray *arr = (Il2CppArray *)c;
-            for (size_t j = 0; j < Len(arr) && j < 32; j++) track(((void **)Data(arr))[j], true, nullptr);
-        } else if (sKegelsKind == 2) {
-            ListView lv;
-            if (ReadList(c, lv)) for (int j = 0; j < lv.size && j < 32; j++) track(lv.items[j], true, nullptr);
+    if (keep) r = sTurnValue[i];
+    else {
+        if (sTurnKeep) {                               // the turn decided in advance, then the next one
+            r = TurnPending(i);
+            sTurnPend[i] = TurnRandom16();
+            sTurnNew++;
         }
+        sTurnValue[i] = r;
+        sTurnHave[i] = true;
     }
-    sTurnPins = pins; sTurnKegels = kegels;
-    if (holderTurned) sTurnHolderTicks++;
-    if (kegelTurned) sTurnKegelTicks++;
-    if (visTurned) sTurnVisTicks++;
-    if (throwing) return;
+    if (up >= 0) sTurnWasUp[i] = up == 1;
+    sTurnUpKnown[i] = up >= 0;
+    return r;
+}
 
-    bool capture = false;
-    if (moved > 0 && sTurnThrew) {            // the first rack after a real throw: new frame or not?
-        bool full = false;
-        void *rpt = sRPT.get();
-        if (rpt && N.rpt_kegsUp >= 0) {
-            Il2CppArray *kegs = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
-            size_t k = Len(kegs);
-            if (k >= 10 && k <= 32) { full = true; bool *up = (bool *)Data(kegs); for (int j = 0; j < 10; j++) if (!up[j]) full = false; }
-        }
-        capture = full && (sTurnBall >= 2 || sTurnKnocked);
-        if (capture) { sTurnBall = 0; sTurnKnocked = false; sTurnFrames++; }
-        sTurnThrew = false;
+// ---- the pinsetter's pins show the same turns (Practice) ----
+// What the game does (1.907, read from its code and scene): when the pinsetter lifts the standing pins for your
+// second ball, PinSetterManager.Update hides the real pins' visible models (kegels_renderers) and shows its own
+// pin models instead, InventaryData.pinseterKegelRenderer[pin number - 1], which hang from the animated pinsetter
+// joints with one fixed orientation; when it sets a new rack it shows them on the way down, and the real pins are
+// racked (UpdatePinPositions) when it's done. Every frame it also copies their world position and rotation onto
+// pindeckKegelRenderer. PinSetterManager.mirrorOnPinsetter[i] are their reflections, under a second, upside-down
+// copy of the machine. So every lifted or lowered pin showed the same face, whatever its turn.
+// The fix: each model's root (static local rotation; only the joints are animated) gets an extra twist about its
+// own long axis (root local Z) so it shows the turn its pin has, or will get at the next rack (TurnPredict). From
+// the clips, at the pick-up and the placing pose every model root stands upright turned -3.544 degrees, so the
+// twist is turn + 3.544; the upside-down reflections need 3.544 - turn. A model is only changed while it's hidden.
+static const float kSetterTwist = 3.544f;
+static Ref sSetterMgr;
+static int sSetterPinsOff = -2, sSetterMirrorOff = -2;
+static void *sSetterGo[kTurnMax], *sMirrorGo[kTurnMax];     // identity only (to notice a new scene), never read
+static Quat sSetterBase[kTurnMax], sMirrorBase[kTurnMax];    // each model root's own local rotation
+static int sSetterShown[kTurnMax], sMirrorShown[kTurnMax];   // the turn it shows (-1: the game's own, -2: not set yet)
+static int sSetterSets = 0, sSetterFails = 0, sSetterBusy = 0;
+static double sSetterLast = -1;
+
+static Quat QMul(Quat a, Quat b) {
+    Quat r;
+    r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+    r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+    r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+    r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+    return r;
+}
+
+static Quat QTurnZ(float deg) {
+    float h = deg * 0.008726646f;                      // half the angle, in radians
+    Quat q = { 0.0f, 0.0f, sinf(h), cosf(h) };
+    return q;
+}
+
+// Sets one model root to its own rotation turned `deg` about its long axis (or back to its own rotation).
+// Returns 1 done, 0 skipped (shown right now), -1 failed.
+static int SetterTwist(void *go, void **seen, Quat *base, float deg, bool restore) {
+    if (!go) return -1;
+    if (N.GO_activeH && InvokeBool(N.GO_activeH, go, nullptr, false)) return 0;
+    bool ok = false;
+    void *tr = Invoke(N.GO_getTransform, go, nullptr, &ok);
+    if (!ok || !tr) return -1;
+    if (*seen != go) {                                 // first time (or a new scene): remember its own rotation
+        Il2CppObject *b = Invoke(N.Tr_getLocalRot, tr, nullptr, &ok);
+        if (!ok || !b) return -1;
+        *base = *(Quat *)Unbox(b);
+        *seen = go;
     }
-    for (int j = 0; j < n; j++) {
-        Seen &e = seen[j];
-        TurnSlot &t = *e.slot;
-        if (capture || !t.have) { t.body = e.q; t.have = true; continue; }
-        if (OnlyTurned(t.body, e.q)) {            // standing in its spot, just turned: put the frame's turn back
-            Quat q = UndoTurn(t.body, e.q);
-            void *a[] = { &q };
-            Invoke(N.Tr_setRot, t.tr, a);
-            t.lastBody = q;                       // (our own correction isn't a game turn)
-            sTurnKept++;
+    Quat q = restore ? *base : QMul(*base, QTurnZ(deg));
+    void *a[] = { &q };
+    Invoke(N.Tr_setLocalRot, tr, a, &ok);
+    return ok ? 1 : -1;
+}
+
+static void PinsetterTurnTick() {
+    if (!N.GO_getTransform || !N.Tr_getLocalRot || !N.Tr_setLocalRot || sTurnHook != 1) return;
+    double now = PinNow();
+    if (now - sSetterLast < 0.1 && now >= sSetterLast) return;   // 10 times a second is plenty: it shows them seconds later
+    sSetterLast = now;
+    void *inv = ReadStaticObj(N.invd_instance, N.InventaryData, "_instance");
+    if (!inv) return;
+    if (sSetterPinsOff == -2) {
+        char tn[64];
+        sSetterPinsOff = (FieldTypeName(N.InventaryData, "pinseterKegelRenderer", tn, sizeof(tn)) && !strcmp(tn, "UnityEngine.GameObject[]")) ? FieldOffset(N.InventaryData, "pinseterKegelRenderer") : -1;
+        for (int i = 0; i < kTurnMax; i++) sSetterShown[i] = sMirrorShown[i] = -2;
+    }
+    Il2CppArray *pins = sSetterPinsOff >= 0x10 ? At<Il2CppArray *>(inv, sSetterPinsOff) : nullptr;
+    if (!pins) return;
+    void *mgr = sSetterMgr.get();
+    if (!mgr && sFrame % 120 == 0) {
+        Il2CppClass *k = FindClass("", "PinSetterManager");
+        if (k && sSetterMirrorOff == -2) {
+            char tn[64];
+            sSetterMirrorOff = (FieldTypeName(k, "mirrorOnPinsetter", tn, sizeof(tn)) && !strcmp(tn, "UnityEngine.GameObject[]")) ? FieldOffset(k, "mirrorOnPinsetter") : -1;
+        }
+        if (k) { mgr = FirstAlive(FindAll(TypeOf(k))); sSetterMgr.set(mgr); }
+    }
+    Il2CppArray *mir = (mgr && sSetterMirrorOff >= 0x10) ? At<Il2CppArray *>(mgr, sSetterMirrorOff) : nullptr;
+    int n = (int)Len(pins);
+    if (n > kTurnMax) n = kTurnMax;
+    for (int i = 0; i < n; i++) {
+        int want = sTurnKeep ? TurnPredict(i) : -1;    // -1: the game's own model, untouched
+        void *go = Elem(pins, i);
+        if (want != sSetterShown[i] || go != sSetterGo[i]) {
+            if (want < 0 && sSetterShown[i] == -2) sSetterShown[i] = -1;   // never touched: nothing to put back
+            else {
+                int r = SetterTwist(go, &sSetterGo[i], &sSetterBase[i], want * 22.5f + kSetterTwist, want < 0);
+                if (r > 0) { sSetterShown[i] = want; sSetterSets++; }
+                else if (r == 0) sSetterBusy++;
+                else sSetterFails++;
+            }
+        }
+        void *mgo = (mir && (size_t)i < Len(mir)) ? Elem(mir, i) : nullptr;
+        if (mgo && (want != sMirrorShown[i] || mgo != sMirrorGo[i])) {
+            if (want < 0 && sMirrorShown[i] == -2) sMirrorShown[i] = -1;
+            else if (SetterTwist(mgo, &sMirrorGo[i], &sMirrorBase[i], kSetterTwist - want * 22.5f, want < 0) > 0) sMirrorShown[i] = want;
         }
     }
 }
 
+// Stands in for the engine's Random.RandomRangeInt. The game's Random.Range(int, int) jumps here with its
+// caller's return address intact, so __builtin_return_address(0) is the call site in the game's code.
+__attribute__((noinline)) static int32_t BFRandomRangeInt(int32_t lo, int32_t hi) {
+    uintptr_t ra = (uintptr_t)__builtin_return_address(0);
+    int32_t r = sRandEngine(lo, hi);                   // always the game's own draw, so its random sequence is unchanged
+    if (lo == 0 && hi == 16) {
+        for (int s = 0; s < sTurnSites; s++)
+            if (ra == sTurnSite[s]) return TurnPick(r);
+        sTurnOther++;
+    }
+    return r;
+}
+
+// The data pointer a Random.Range(int, int) / RandomRangeInt body loads the engine's function from:
+//   adrp xN, page ... ldr x2, [xN, #off] ... br x2   (a tail call: the caller's return address is kept)
+// Returns nullptr for anything else, including a body that returns instead of jumping.
+static void *RandSlotIn(const uint32_t *code) {
+    uintptr_t page[32];
+    bool have[32];
+    memset(have, 0, sizeof(have));
+    void *slot = nullptr;
+    for (int k = 0; k < 24; k++) {
+        uint32_t w = code[k];
+        uintptr_t pc = (uintptr_t)(code + k);
+        if ((w & 0x9F000000u) == 0x90000000u) {                    // ADRP
+            int64_t imm = (int64_t)((((w >> 5) & 0x7FFFFu) << 2) | ((w >> 29) & 3u));
+            if (imm & (1 << 20)) imm -= (1 << 21);
+            page[w & 31] = (uintptr_t)((int64_t)(pc & ~(uintptr_t)0xFFF) + imm * 4096);
+            have[w & 31] = true;
+        } else if ((w & 0xFFC0001Fu) == 0xF9400002u) {             // LDR X2, [Xn, #imm]
+            int rn = (int)((w >> 5) & 31);
+            slot = have[rn] ? (void *)(page[rn] + ((w >> 10) & 0xFFFu) * 8) : nullptr;
+        } else if (w == 0xD61F0040u) {                             // BR X2
+            return slot;
+        } else if (w == 0xD65F03C0u) {                             // RET
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
+// Return addresses of the Random.Range(0, 16) calls in UpdatePinPositions (the first 4 KB of it): a BL whose
+// target loads the engine function from `slot`, with MOV W1, #16 among the 4 instructions before it.
+static int FindTurnSites(const uint32_t *code, void *slot, uintptr_t *out, int max) {
+    int n = 0;
+    for (int k = 4; k < 1024 && n < max; k++) {
+        uint32_t w = code[k];
+        if ((w & 0xFC000000u) != 0x94000000u) continue;            // BL
+        bool sixteen = false;
+        for (int j = 1; j <= 4; j++) if (code[k - j] == 0x52800201u) sixteen = true;   // MOV W1, #16
+        if (!sixteen) continue;
+        int64_t imm = (int64_t)(w & 0x3FFFFFFu);
+        if (imm & (1 << 25)) imm -= (1 << 26);
+        const uint32_t *target = (const uint32_t *)((int64_t)(uintptr_t)(code + k) + imm * 4);
+        if (RandSlotIn(target) == slot) out[n++] = (uintptr_t)(code + k + 1);
+    }
+    return n;
+}
+
+static void TurnHookInstall() {
+    sTurnHook = -1;
+    Il2CppClass *rnd = FindClass("UnityEngine", "Random");
+    const MethodInfo *m = rnd ? FindMethod(rnd, "RandomRangeInt", 2) : nullptr;
+    if (!m && rnd) m = FindMethod(rnd, "Range", 2, "System.Int32", "System.Int32");
+    // MethodInfo starts with its code pointer (methodPointer)
+    const uint32_t *rcode = m ? *(const uint32_t *const *)m : nullptr;
+    const uint32_t *ucode = N.RPT_UpdatePinPositions ? *(const uint32_t *const *)N.RPT_UpdatePinPositions : nullptr;
+    if (!rcode || !ucode) { sTurnWhy = "Random.Range or UpdatePinPositions not found"; return; }
+    BFRandIntFn *slot = (BFRandIntFn *)RandSlotIn(rcode);
+    if (!slot) { sTurnWhy = "Random.Range has an unexpected shape"; return; }
+    sTurnSites = FindTurnSites(ucode, (void *)slot, sTurnSite, 4);
+    if (!sTurnSites) { sTurnWhy = "no Random.Range(0, 16) in UpdatePinPositions"; return; }
+    BFRandIntFn engine = *slot;                        // filled the first time the game drew a random number
+    if (!engine) {
+        typedef void *(*ResolveFn)(const char *);
+        ResolveFn resolve = (ResolveFn)Api("il2cpp_resolve_icall");
+        if (resolve) engine = (BFRandIntFn)resolve("UnityEngine.Random::RandomRangeInt(System.Int32,System.Int32)");
+    }
+    if (!engine || engine == BFRandomRangeInt) { sTurnWhy = "the engine's random function wasn't found"; return; }
+    sRandEngine = engine;
+    sRandSlot = slot;
+    __atomic_store_n(slot, (BFRandIntFn)BFRandomRangeInt, __ATOMIC_RELEASE);
+    sTurnHook = 1;
+    sTurnWhy = "in place";
+}
+
+static void PinTurnTick() {
+    if (!sTurnHook && sSettled && N.RPT_UpdatePinPositions) {
+        TurnHookInstall();
+        char msg[160];
+        snprintf(msg, sizeof(msg), "%s (%d call site%s)", sTurnWhy, sTurnSites, sTurnSites == 1 ? "" : "s");
+        BFLog(PIN_TURN_LOG, (const char *)msg);
+    }
+    sTurnKeep = sTurnHook == 1 && sSettled && sMode == MODE_FUN;   // Practice, its replays included
+    if (sSettled) PinsetterTurnTick();
+}
+
 static void TurnDebug(char *buf, size_t size) {
-    snprintf(buf, size, "pin turns: holders=%d holderPins=%d kegels=%d (%s) readFails=%d | kept=%d newFrames=%d throws=%d knocked=%d maxTilt=%.0f | turned between checks: holderPins=%d kegels=%d visible=%d",
-             sTurnHolderCount, sTurnPins, sTurnKegels, sKegelsType[0] ? sKegelsType : (sKegelsOff == -1 ? "missing" : "?"), sTurnReadFails,
-             sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sTurnMaxTilt, sTurnHolderTicks, sTurnKegelTicks, sTurnVisTicks);
+    snprintf(buf, size, "pin turns: hook=%s sites=%d keep=%d kegels=%d | racks=%d kept=%d new=%d knocked=%d offLane=%d | other=%d upUnknown=%d leanFails=%d maxStandLean=%.1f | pinsetter: found=%d mirrors=%d sets=%d busy=%d fails=%d",
+             sTurnWhy, sTurnSites, sTurnKeep ? 1 : 0, sTurnCount, sTurnRacks, sTurnKept, sTurnNew, sTurnKnocked, sTurnOffLane,
+             sTurnOther, sTurnUpUnknown, sTurnTiltFails, sTurnMaxStandTilt, sSetterPinsOff >= 0x10 ? 1 : 0,
+             sSetterMirrorOff >= 0x10 && sSetterMgr.get() ? 1 : 0, sSetterSets, sSetterBusy, sSetterFails);
 }
 
 // ---- your own pin image (looks only) ----
@@ -3187,7 +3302,15 @@ static int LaneNow() {
     return v;
 }
 
+// 1.6.5: switched off. On a device (1.6.4) the game moved you straight back every time (5 of 5) and the
+// other lane has no pins, oil or lights in Practice: it isn't set up there. Making it playable needs the
+// game's code read (what RoadChanger.toActivate0/1, getCurrentLaneGame and SwitchLaneDrag.OnEndDrag do),
+// which needs a disassembler. The code stays for that; the menu switch is gone, and a saved "on" from
+// 1.6.4 does nothing.
+static const bool kLaneSwitchEnabled = false;
+
 static void LaneTick() {
+    if (!kLaneSwitchEnabled) return;
     if (sFrame % 30 != 0 || !sSettled) return;
     if (!sRoadLooked) {
         sRoadLooked = true;

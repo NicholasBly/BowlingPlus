@@ -42,7 +42,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIView *card;
 @property (nonatomic, strong) NSLayoutConstraint *cardCenterY;
 @property (nonatomic, strong) UILabel *statusLabel, *ballLabel, *speedLabel, *arsenalLabel;
-@property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch, *laneSwitch;
+@property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch;
 @property (nonatomic, strong) UILabel *autoLabel, *fpsLabel, *oilLabel;
 @property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch;
 @property (nonatomic, strong) UIButton *updateButton, *helpButton;
@@ -507,7 +507,6 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 
     self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];
     self.autoSwitch = [self switchOn:gBF.spareAuto action:@selector(autoChanged:)];
-    self.laneSwitch = [self switchOn:gBF.laneOther action:@selector(laneChanged:)];
     self.autoLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIView *spareCell = [self cell:[self row:@"Spare shooting mode" help:@"Pick which pins stand at the start of every frame. Tip: you don't need this on to pick pins for one shot. Tap the pin layout (top right while you hold the ball, or the little screen under the ball return in the overhead view) and the pin picker opens just for that shot. Scores in this mode are just for fun."
                                      control:self.spareSwitch]];
@@ -515,8 +514,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     autoStack.axis = UILayoutConstraintAxisVertical;
     autoStack.spacing = 6;
     [stack addArrangedSubview:[self group:@"Practice fun" icon:@"\U0001F3AF" key:@"fun" open:YES
-                                    cells:@[speedCell, spinCell, spareCell, [self cell:autoStack],
-                                            [self cell:[self row:@"Bowl on the other lane (experimental)" help:@"Practice only. Moves you to the game's other lane while you're at the ball rack, like dragging your shoes over (which the game snaps back). If the game keeps moving you back, BowlingPlus stops trying and Copy debug info says so. Turn it off to go back. Not checked yet: how the other lane plays (its oil and pins)." control:self.laneSwitch]]]]];
+                                    cells:@[speedCell, spinCell, spareCell, [self cell:autoStack]]]];
 
     // ---- Oil
     self.oilColorButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -699,7 +697,6 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 - (void)menuButtonChanged:(UISwitch *)s { gBF.menuButton = s.on; BFSaveConfig(); BFMenuButtonRefresh(); }
 - (void)fpsChanged:(UISwitch *)s   { gBF.fps120 = s.on; BFSaveConfig(); [self refresh]; }
 - (void)spareChanged:(UISwitch *)s { gBF.spareMode = s.on; BFSaveConfig(); [self refresh]; }
-- (void)laneChanged:(UISwitch *)s { gBF.laneOther = s.on; BFSaveConfig(); }
 - (void)oilMirrorChanged:(UISwitch *)s { gBF.oilMirrorFix = s.on; BFSaveConfig(); }
 - (void)oilBreakChanged:(UISwitch *)s  { gBF.oilBreakdown = s.on; BFSaveConfig(); }
 - (void)oilThickChanged:(UISwitch *)s  { gBF.oilThickness = s.on; BFSaveConfig(); }
@@ -829,7 +826,6 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilLabel.text = oil;
     self.oilLabel.hidden = oil.length == 0;
     self.autoSwitch.on = gBF.spareAuto;
-    self.laneSwitch.on = gBF.laneOther;
     self.autoLabel.text = !gBF.spareAuto ? @"" : gBF.spareMode
         ? [NSString stringWithFormat:@"Auto-racking %@ every frame", BFPinsText(gBF.lastPinMask)]
         : @"Turn on Spare shooting mode to use Auto-rack";
@@ -862,7 +858,6 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self.oilColorButton setTitleColor:[UIColor colorWithWhite:0.2 alpha:1] forState:UIControlStateNormal];
     self.spareSwitch.on = gBF.spareMode;
     self.autoSwitch.on = gBF.spareAuto;
-    self.laneSwitch.on = gBF.laneOther;
     self.speedSlider.value = fminf(fmaxf(gBF.speedMult, 1.0f), BF_MAX_SPEED);
     self.spinSlider.value = fminf(fmaxf(gBF.spinMult, 1.0f), BF_MAX_SPIN);
     [self updateSpeedLabel];

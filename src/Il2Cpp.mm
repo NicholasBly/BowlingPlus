@@ -71,6 +71,8 @@ static bool LoadApi() {
            il2cpp_gchandle_new_ && il2cpp_gchandle_free_ && il2cpp_gchandle_get_target_;
 }
 
+void *IL::Api(const char *name) { return dlsym(RTLD_DEFAULT, name); }
+
 bool IL::Ready() {
     if (sReady) return true;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();

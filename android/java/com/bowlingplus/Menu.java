@@ -164,8 +164,7 @@ public final class Menu {
         LinearLayout autoStack = UiKit.row(c, false);
         autoStack.addView(rowView(c, "Auto-rack", "Sets up the same pins every frame without asking. Tip: pick your pins once and tap Auto in the pin picker.", autoSwitch));
         autoStack.addView(autoLabel, mt(c, 6));
-        View laneCell = cell(c, rowView(c, "Bowl on the other lane (experimental)", "Practice only. Moves you to the game's other lane while you're at the ball rack, like dragging your shoes over (which the game snaps back). If the game keeps moving you back, BowlingPlus stops trying and Copy debug info says so. Turn it off to go back. Not checked yet: how the other lane plays (its oil and pins).", toggle(c, "laneOther", null)));
-        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, spareCell, cell(c, autoStack), laneCell }));
+        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, spareCell, cell(c, autoStack) }));
 
         // ---- Oil
         oilColorButton = UiKit.button(c, "", false, true);
