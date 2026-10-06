@@ -6,7 +6,7 @@
 #include "Platform.h"
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION "1.6.1"
+#define BF_VERSION "1.6.2"
 #define BF_PLATFORM_VERSION "android-1"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm

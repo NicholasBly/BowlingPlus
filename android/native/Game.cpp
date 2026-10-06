@@ -56,7 +56,7 @@ static struct {
     Il2CppClass *OilGen, *OilDescData, *Drawer, *PracticeMgr, *Replayer;
     Il2CppObject *tOilGen, *tOilDescData, *tReplayer;
     const MethodInfo *OG_reloadCurrent, *OG_reloadRedraw, *OG_showOnLane, *OG_isActive, *D_drawFromFile, *D_graphF, *D_graphR, *OG_texForId, *OG_reloadById, *OG_colorData, *OG_genRG16, *G_getKeys, *G_setKeys, *OG_updateColor;
-    const MethodInfo *R_getSharedMat, *M_hasProp, *M_getFloatI, *M_setFloatS, *M_getTexI, *Sh_propToId, *T_getWrap, *T_setWrap;
+    const MethodInfo *R_getSharedMat, *M_hasProp, *M_getFloatI, *M_setFloatS, *M_getTexI, *Sh_propToId, *T_getWrap, *T_setWrap, *T_getH;
     int og_lines, ri_oilTex;
     const MethodInfo *Proc_Hide;
     int proc_count;
@@ -192,6 +192,7 @@ static bool Resolve() {
     N.Sh_propToId      = Meth(shader, "PropertyToID", 1, "System.String");
     N.T_getWrap        = Meth(texture, "get_wrapMode", 0);
     N.T_setWrap        = Meth(texture, "set_wrapMode", 1);
+    N.T_getH           = Meth(texture, "get_height", 0);
     N.Proc_Hide  = Meth(N.Processing, "Hide", 0);
     N.proc_count = Off(N.Processing, "_spinerCount");
     N.App_reach  = Meth(N.Application, "get_internetReachability", 0);
@@ -445,6 +446,20 @@ static void NotReady() {
     gBFStatus.gameMode = gBFStatus.location = -1;
 }
 
+static Ref sCoreLoop;                   // MonoCoreLoop: the game's startup / menu state machine
+
+// The game's own main menu is up, so its startup (scene, data, login) is done. Exact name only: any other
+// state keeps the plain 4 s wait. (The game has many "...State" classes; this is the one seen on a device.)
+static bool AtMainMenu() {
+    if (!N.tMonoCoreLoop || N.mcl_sm < 0 || N.sm_state < 0) return false;
+    void *mcl = sCoreLoop.get();
+    if (!mcl && sFrame % 30 == 0) { mcl = FirstAlive(FindAll(N.tMonoCoreLoop)); sCoreLoop.set(mcl); }
+    void *sm = mcl ? At<void *>(mcl, N.mcl_sm) : nullptr;
+    void *state = sm ? At<void *>(sm, N.sm_state) : nullptr;
+    const char *name = state ? ClassName(ClassOf(state)) : nullptr;
+    return name && strcmp(name, "MainMenuState") == 0;
+}
+
 static void UpdateState() {
     void *rpt = sRPT.get();
     if (!rpt && sFrame % 30 == 0) {
@@ -454,7 +469,10 @@ static void UpdateState() {
     }
     if (!rpt) { NotReady(); return; }
     double up = BFNow() - sRPTSince;
-    if (up < 4.0) { NotReady(); return; }   // let the game finish loading before touching anything
+    // Let the game finish loading before touching anything. It used to always wait 4 s after the lane
+    // appeared, which on a fast start let you reach Practice before the oil, colors and ball fixes were
+    // on. Now: 1.5 s once the game's main menu is up (startup done), otherwise the old 4 s.
+    if (!sSettled && !(up >= 4.0 || (up >= 1.5 && AtMainMenu()))) { NotReady(); return; }
     if (!N.gp_gameMode || !N.gp_location) {
         N.gp_gameMode = StaticField(N.GameParams, "gameMode");
         N.gp_location = StaticField(N.GameParams, "_playerLocation");
@@ -465,6 +483,7 @@ static void UpdateState() {
     StaticRead(N.gp_location, &loc);
     sMode = mode;
     sLoc = loc;
+    if (!sSettled) BFLog("settled %.1f s after the lane appeared%s", up, up < 4.0 ? " (main menu up)" : "");
     sSettled = true;
     gBFStatus.gameMode = mode;
     gBFStatus.location = loc;
@@ -538,6 +557,127 @@ static void PinFixTick() {
         }
     }
     sPinFixOn = want;
+}
+
+// ---- pins keep their turn for the whole frame (Practice) ----
+// The pinsetter (PinHolder.SetupPins) gives every pin a random turn about its upright axis each time it
+// racks, and the game racks again for things that aren't a new frame: picking up or switching a ball, a
+// spare-mode pick. The game's own pins look the same from every side so nobody noticed, but with a picture
+// on the pins they visibly spin each time. BowlingPlus remembers every pin's pose when a frame is racked and
+// puts the turn back on any re-rack until the next frame.
+//  - A new frame: the rack after a throw is a full 10 and either this was the frame's 2nd+ ball or a pin
+//    went down (a strike). A full 10 after a 1st-ball miss is the same frame.
+//  - Only pins that differ from their saved pose purely by a turn about world up are touched (standing in
+//    their spot), never during a throw or replay. Which body axis is "up" doesn't matter: the test is on
+//    the difference between the two poses. Pins are round, so the turn doesn't change how they play.
+struct Quat { float x, y, z, w; };
+static const int kTurnPins = 16;
+static Quat sTurnSaved[4][kTurnPins];
+static bool sTurnHave[4][kTurnPins];
+static void *sTurnHolderSeen[4];
+static int sTurnBall = 0;                 // throws so far in this frame
+static bool sTurnKnocked = false;         // a pin tipped over during this frame
+static bool sTurnThrew = false;           // a throw happened since the last rack was dealt with
+static int sTurnKept = 0, sTurnFrames = 0;
+
+static Quat QMul(const Quat &a, const Quat &b) {
+    return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+             a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+             a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
+}
+// The rotation that takes `from` to `to` in world space (to = r * from). For a pin that only turned about
+// world up, r has no x/z part. Returns the tilt part (0 = only turned) and the turn angle, in degrees.
+static void PoseDiff(const Quat &from, const Quat &to, float &tiltDeg, float &turnDeg) {
+    Quat inv = { -from.x, -from.y, -from.z, from.w };
+    Quat r = QMul(to, inv);
+    float xz = sqrtf(r.x * r.x + r.z * r.z);
+    float yw = sqrtf(r.y * r.y + r.w * r.w);
+    tiltDeg = 2.0f * atan2f(xz, yw) * 57.29578f;
+    turnDeg = yw > 1e-6f ? 2.0f * acosf(fminf(1.0f, fabsf(r.w) / yw)) * 57.29578f : 180.0f;
+}
+
+static void RefreshPinHolders() {
+    if (sFrame % 120 != 0 && sHolders[0].get()) return;
+    Il2CppArray *all = FindAll(N.tPinHolder);
+    for (int i = 0; i < 4; i++) {
+        void *h = (size_t)i < Len(all) ? Elem(all, i) : nullptr;
+        sHolders[i].set(Alive(h) ? h : nullptr);
+    }
+}
+
+static bool PinPose(void *pin, void **trOut, Quat &q) {
+    void *phys = pin ? At<void *>(pin, N.pin_physic) : nullptr;
+    void *tr = Alive(phys) ? (void *)Invoke(N.Comp_getTransform, phys, nullptr) : nullptr;
+    if (!Alive(tr)) return false;
+    bool ok = false;
+    Il2CppObject *b = Invoke(N.Tr_getRot, tr, nullptr, &ok);
+    if (!ok || !b) return false;
+    q = *(Quat *)Unbox(b);
+    *trOut = tr;
+    return true;
+}
+
+static void PinTurnTick() {
+    if (!gBFStatus.offline || !N.PinHolder || N.ph_pins < 0 || N.pin_physic < 0 || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
+        memset(sTurnHave, 0, sizeof(sTurnHave)); sTurnBall = 0; sTurnKnocked = sTurnThrew = false;
+        return;
+    }
+    bool throwing = sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK || sLoc == LOC_REPLAYER;
+    if (sLoc == LOC_THROWING && sPrevLoc != LOC_THROWING) { sTurnBall++; sTurnThrew = true; }
+    if (sFrame % 3 != 0) return;
+    RefreshPinHolders();
+
+    // read every pin once
+    struct Seen { void *tr; Quat q; bool ok; } seen[4][kTurnPins];
+    int count[4] = { 0 };
+    int moved = 0;                            // standing pins whose turn changed (a rack happened)
+    for (int i = 0; i < 4; i++) {
+        void *holder = sHolders[i].get();
+        if (holder != sTurnHolderSeen[i]) { memset(sTurnHave[i], 0, sizeof(sTurnHave[i])); sTurnHolderSeen[i] = holder; }
+        ListView lv;
+        if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
+        count[i] = lv.size < kTurnPins ? lv.size : kTurnPins;
+        for (int p = 0; p < count[i]; p++) {
+            Seen &e = seen[i][p];
+            e.ok = PinPose(lv.items[p], &e.tr, e.q);
+            if (!e.ok || !sTurnHave[i][p]) continue;
+            float tilt, turn;
+            PoseDiff(sTurnSaved[i][p], e.q, tilt, turn);
+            if (throwing && tilt > 15.0f) sTurnKnocked = true;
+            if (!throwing && tilt < 1.0f && turn > 1.0f) moved++;
+        }
+    }
+    if (throwing) return;
+
+    bool capture = false;
+    if (moved > 0 && sTurnThrew) {            // the first rack after a throw: new frame or not?
+        bool full = false;
+        void *rpt = sRPT.get();
+        if (rpt && N.rpt_kegsUp >= 0) {
+            Il2CppArray *kegs = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
+            size_t n = Len(kegs);
+            if (n >= 10 && n <= 32) { full = true; bool *k = (bool *)Data(kegs); for (int j = 0; j < 10; j++) if (!k[j]) full = false; }
+        }
+        capture = full && (sTurnBall >= 2 || sTurnKnocked);
+        if (capture) { sTurnBall = 0; sTurnKnocked = false; sTurnFrames++; }
+        sTurnThrew = false;
+    }
+    for (int i = 0; i < 4; i++) {
+        for (int p = 0; p < count[i]; p++) {
+            Seen &e = seen[i][p];
+            if (!e.ok) continue;
+            if (capture || !sTurnHave[i][p]) { sTurnSaved[i][p] = e.q; sTurnHave[i][p] = true; continue; }
+            float tilt, turn;
+            PoseDiff(sTurnSaved[i][p], e.q, tilt, turn);
+            if (tilt < 1.0f && turn > 1.0f) {     // standing in its spot, just turned: put the frame's turn back
+                Quat q = sTurnSaved[i][p];
+                void *a[] = { &q };
+                Invoke(N.Tr_setRot, e.tr, a);
+                sTurnKept++;
+            }
+        }
+    }
 }
 
 // ---- your own pin image (looks only) ----
@@ -1461,7 +1601,7 @@ static void TutorialTick() {
 //  - privacy SDK silent for 20 s while no privacy page is on screen -> mark the wait done, which
 //    is what happens when the SDK can't reach its server.
 // ---------------------------------------------------------------------------
-static Ref sCoreLoop, sLoadingWnd;
+static Ref sLoadingWnd;   // (sCoreLoop is declared before UpdateState, which uses it)
 static double sGdprWaitSince = 0, sConnectingSince = 0;
 static int sUnstuckCount = 0;
 
@@ -2012,6 +2152,50 @@ static void ApplyHueTo(void *mat) {
     Invoke(N.M_setFloatS, mat, sa);
 }
 
+// The mirror fix needs the oil texture on Repeat, and this game only has Unity's one wrap setting for both
+// directions (set_wrapModeU / V are stripped). Along the lane that wraps the far edge onto the foul-line row:
+// the GPU blends the two over the last half row, which drew a thin line of heavy oil, in the oil color,
+// behind the pins. The shader's lane coordinate is y / _SizeY and the lane surface ends exactly at 1, so
+// _SizeY is made a hair longer: the far edge then stops inside the last row, short of the wrap. For a
+// 240-row map that's 0.25% (the drawing ends about an inch short at 40 ft). Looks only: the oil you bowl
+// on is the game's grid, which this doesn't touch. The game's own value is kept per material and put back
+// when the mirror fix is off.
+static struct { void *mat; float base; } sSizeY[16];
+static int sIdSizeY = 0, sSizeYRows = 0;
+static float sSizeYScale = 1.0f;
+
+static void LaneLengthFix(void *mat, void *tex) {
+    if (!sIdSizeY && N.Sh_propToId) { void *a[] = { NewString("_SizeY") }; sIdSizeY = InvokeInt(N.Sh_propToId, nullptr, a, 0); }
+    void *ha[] = { NewString("_SizeY") };
+    if (!sIdSizeY || !InvokeBool(N.M_hasProp, mat, ha, false)) return;
+    void *ga[] = { &sIdSizeY };
+    bool ok = false;
+    Il2CppObject *boxed = Invoke(N.M_getFloatI, mat, ga, &ok);
+    if (!ok || !boxed) return;
+    float v = *(float *)Unbox(boxed);
+    int slot = -1, empty = -1;
+    for (int j = 0; j < 16; j++) {
+        if (sSizeY[j].mat == mat) { slot = j; break; }
+        if (!sSizeY[j].mat && empty < 0) empty = j;
+    }
+    if (slot < 0) {                                // first time we see this material: its value is the game's
+        static int sNextSlot = 0;
+        if (v == 0) return;
+        slot = empty >= 0 ? empty : (sNextSlot++ % 16);   // full: reuse the oldest entry
+        sSizeY[slot].mat = mat; sSizeY[slot].base = v;
+    }
+    float base = sSizeY[slot].base;
+    int rows = (N.T_getH && Alive(tex)) ? InvokeInt(N.T_getH, tex, nullptr, 0) : 0;
+    if (rows < 16) rows = 240;                     // the game's maps are 240 rows (4 per foot over 60 ft)
+    float scale = gBF.oilMirrorFix ? rows / (rows - 0.6f) : 1.0f;   // last sample lands 0.1 row inside the edge
+    sSizeYRows = rows; sSizeYScale = scale;
+    float want = base * scale;
+    if (fabsf(v - want) > fabsf(base) * 1e-5f) {
+        void *sa[] = { NewString("_SizeY"), &want };
+        Invoke(N.M_setFloatS, mat, sa);
+    }
+}
+
 static void OilMirrorTick() {
     if (!sSettled || !N.R_getSharedMat || !N.M_hasProp || !N.M_getFloatI || !N.M_setFloatS) return;
     bool full = sFrame % 30 == 0;
@@ -2056,6 +2240,7 @@ static void OilMirrorTick() {
             void *ta[] = { &sIdOilMap };
             SetOilWrap(Invoke(N.M_getTexI, mat, ta));
         }
+        LaneLengthFix(mat, sLaneTex[i]);
         lanes++;
     }
     sMirrorLanes = lanes;
@@ -3139,6 +3324,7 @@ void BFEngineTick(void) {
             OilTick();
             FpsTick();
             PinFixTick();
+            PinTurnTick();
             PinImageTick();
             BallCCDTick();
             SpeedTick();
@@ -3205,6 +3391,47 @@ static Str PathInfo(int id) {                // "123 Text_X_Y.png" for the debug
     return Fmt("%d %s%s", id, StrLastPath(p), Shipped(id) == 0 ? " (NOT in app files)" : "");
 }
 
+// ---- the game's two-lane system (read-only, for Copy debug info) ----
+// The game still has it: RoadChanger (currentLane, laneNum, oneLane, shiftBy, shiftToLaneNumber(int)),
+// SwitchLaneDrag (the drag-your-shoes gesture), DragManager.firstLaneLeft / secondLaneRight and the
+// setting SettingType.CHANGE_LANE. Nothing here changes anything: it reports what the game has live, with
+// each field's real C# type, so switching lanes can be added on facts instead of guesses.
+static void FieldText(void *obj, Il2CppClass *k, const char *name, char *out, size_t n) {
+    int off = k ? FieldOffset(k, name) : -1;
+    if (off < 0) { snprintf(out, n, " %s=missing", name); return; }
+    char tn[96];
+    FieldTypeName(k, name, tn, sizeof(tn));
+    if (!obj) { snprintf(out, n, " %s:%s", name, tn[0] ? tn : "?"); return; }
+    if (!strcmp(tn, "System.Int32")) snprintf(out, n, " %s=%d", name, At<int>(obj, off));
+    else if (!strcmp(tn, "System.Single")) snprintf(out, n, " %s=%.3f", name, At<float>(obj, off));
+    else if (!strcmp(tn, "System.Boolean")) snprintf(out, n, " %s=%d", name, At<bool>(obj, off) ? 1 : 0);
+    else if (!strcmp(tn, "UnityEngine.Vector3")) { const float *v = &At<float>(obj, off); snprintf(out, n, " %s=(%.2f,%.2f,%.2f)", name, v[0], v[1], v[2]); }
+    else snprintf(out, n, " %s:%s=%s", name, tn[0] ? tn : "?", At<void *>(obj, off) ? "set" : "null");
+}
+
+static void LaneDebug(char *buf, size_t size) {
+    static Il2CppClass *road = nullptr, *drag = nullptr, *dm = nullptr;
+    static bool looked = false;
+    if (!looked) { looked = true; road = FindClass("", "RoadChanger"); drag = FindClass("", "SwitchLaneDrag"); dm = FindClass("", "DragManager"); }
+    size_t used = 0;
+    auto add = [&](const char *t) { size_t l = strlen(t); if (used + l + 1 < size) { memcpy(buf + used, t, l); used += l; buf[used] = 0; } };
+    buf[0] = 0;
+    char tmp[160];
+    Il2CppArray *roads = road ? FindAll(TypeOf(road)) : nullptr;
+    void *r = FirstAlive(roads);
+    snprintf(tmp, sizeof(tmp), "lanes: RoadChanger %s x%d", road ? "class ok" : "class missing", (int)Len(roads)); add(tmp);
+    static const char *rf[] = { "currentLane", "laneNum", "oneLane", "shiftBy", "currentShift" };
+    for (const char *f : rf) { FieldText(r, road, f, tmp, sizeof(tmp)); add(tmp); }
+    Il2CppArray *drags = drag ? FindAll(TypeOf(drag)) : nullptr;
+    snprintf(tmp, sizeof(tmp), " | SwitchLaneDrag %s x%d active", drag ? "class ok" : "class missing", (int)Len(drags)); add(tmp);
+    void *d = dm ? FirstAlive(FindAll(TypeOf(dm))) : nullptr;
+    add(" | DragManager");
+    FieldText(d, dm, "firstLaneLeft", tmp, sizeof(tmp)); add(tmp);
+    FieldText(d, dm, "secondLaneRight", tmp, sizeof(tmp)); add(tmp);
+    snprintf(tmp, sizeof(tmp), " | pin turns kept=%d newFrames=%d ball=%d knocked=%d | oil far edge rows=%d scale=%.4f",
+             sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sSizeYRows, sSizeYScale); add(tmp);
+}
+
 Str BFDebugInfo(void) {
     Str s;
     s += Fmt("BowlingPlus v%s (%s) | %s\n", BF_VERSION, BF_PLATFORM_VERSION, BFDeviceLine());
@@ -3259,5 +3486,6 @@ Str BFDebugInfo(void) {
                     N.RB_getLinDamp ? InvokeFloat(N.RB_getLinDamp, rb, -1) : -1.f,
                     N.RB_getAngDamp ? InvokeFloat(N.RB_getAngDamp, rb, -1) : -1.f, lv.size);
     }
+    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; }
     return s;
 }

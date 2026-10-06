@@ -1,7 +1,11 @@
-BowlingPlus 1.6.1 - changed files only, against the 1.6.0 you uploaded. Copy each file over the same path in the repo root.
-Everything is explained in CHANGELOG.md (entry 1.6.1). Source-only: no APK / IPA / dylib in this package.
+BowlingPlus 1.6.2 - changed files against your repo at commit 6f423a2 ("1.6.1"). Includes the 1.6.1 iOS build fix
+and the IPA workflow from last time, in case those aren't pushed yet. Copy each file over the same path in the repo
+root, then DELETE the root CHANGES.txt committed in 6f423a2.
 
-Android (build + behavior):  android/java/com/bowlingplus/{BP,Backup,Editor,FbLogin,Kegel,Menu,MenuButton,Pickers,Privacy,UiKit,BF}.java
-                             android/native/{BFShared.h,Dns.cpp,Engine.cpp,Game.cpp,Jni.cpp,Log.cpp}
-Version 1.6.1:               src/BFShared.h, control   (iOS code is otherwise unchanged)
-Docs:                        CHANGELOG.md, README.md, VERIFIED_NOTES.md, android/README.md
+1.6.2 (both platforms, src/Game.mm + android/native/Game.cpp):
+  - pins keep their turn for the whole frame (no more spinning on every ball pickup)
+  - no oil line behind the pins with the oil mirror fix
+  - features ready 1.5 s after the game's main menu instead of a fixed 4 s
+  - Copy debug info: new "lanes:" line (the game's two-lane system, read-only) + pin-turn / oil-edge counters
+src/Il2Cpp.* + android/native/Il2Cpp.*   FieldTypeName helper (diagnostics)
+Version 1.6.2: src/BFShared.h, android/native/BFShared.h, BF.java, control.  Docs: CHANGELOG, README, VERIFIED_NOTES (untracked).

@@ -27,6 +27,7 @@ namespace IL {
     const MethodInfo *FindMethod(Il2CppClass *k, const char *name, int argc,
                                  const char *p0 = nullptr, const char *p1 = nullptr);
     int FieldOffset(Il2CppClass *k, const char *name);          // -1 if missing
+    bool FieldTypeName(Il2CppClass *k, const char *name, char *out, size_t size);   // e.g. "System.Int32"
     FieldInfo *StaticField(Il2CppClass *k, const char *name);   // runs the class constructor first
     void StaticRead(FieldInfo *f, void *out);
     void StaticWrite(FieldInfo *f, void *value);

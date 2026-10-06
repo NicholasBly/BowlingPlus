@@ -54,6 +54,8 @@ After sideloading the app, you will need to trust the developer (me). Settings -
 3. Find **Inject dylibs/frameworks** and add `BowlingPlus.dylib`.
 4. Hit **Start** like normal.
 
+Note: this way the game keeps iOS's 60 Hz cap (its Info.plist says so, and injecting a dylib doesn't change that), so **120 FPS mode runs at 60**. For 120 FPS use Option A or C (the patched IPA). Copy debug info shows `plist120=0` when the cap is still in place.
+
 **Option C: Signulous (or any app that just signs IPAs)**
 Use an IPA that already has the tweak inside (see "Make a patched IPA" below), then install it like any other app.
 
@@ -93,7 +95,7 @@ Everything is found by name while the game runs (no hard-coded memory addresses)
 
 ## Make a patched IPA (for Signulous)
 
-You just need Python 3:
+The iOS workflow makes it for you if you give it a direct link to the decrypted game IPA: the repository secret `GAME_IPA_URL`, or the `ipa_url` box when you start the workflow by hand. The artifact then has `BowlingPlus-<version>.ipa` too, already checked for the 120 Hz setting. Or make it yourself; you just need Python 3:
 
 ```
 python3 tools/inject_ipa.py YourGame.ipa BowlingPlus.dylib BowlingPlus.ipa
@@ -116,7 +118,8 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
-- **1.6.1:** Android fixes: menu no longer scrolls at a crawl (the game drops to 30 FPS while a panel is open), the oil library and pin picker are centered, the footer is centered, the on-screen button stays out from under panels and now remembers its setting, plus fewer freezes and a fixed build error. iOS is unchanged.
+- **1.6.2:** pins keep the same turn for the whole frame (they no longer spin each time you pick up a ball), no more thin oil line behind the pins with the oil mirror fix, and the oil, colors and ball fixes are ready much sooner after the game starts.
+- **1.6.1:** Android fixes: menu no longer scrolls at a crawl (the game drops to 30 FPS while a panel is open), the oil library and pin picker are centered, the footer is centered, the on-screen button stays out from under panels and now remembers its setting, plus fewer freezes and a fixed build error. iOS: fixes the build (broken since the on-screen menu button and backup were added), so both appear on iPhone for the first time, and the button no longer gets lost in the privacy page's invisible window.
 - **1.6.0:** redesigned shake menu (cards, descriptions on demand), privacy popup remembered after one accept, Kegel-accurate oil everywhere in Practice (also the game's own 48 patterns), tap the pin layouts to pick pins for one shot, an X on the pin picker, and the footer no longer cuts off "Check for updates".
 - **1.5.3:** custom oil now matches Kegel's charts: exact distances (no more overlapping rectangles), film on every board (no more bare strips), and no oil inflation.
 - **1.5.2:** Kegel-accurate oil carries reverse oil back to the foul line like a real machine (the front of the lane was too thin).

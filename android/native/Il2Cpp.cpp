@@ -3,6 +3,7 @@
 #include "BFShared.h"
 #include <dlfcn.h>
 #include <link.h>
+#include <stdio.h>
 #include <string.h>
 #include <string>
 #include <unordered_map>
@@ -25,6 +26,7 @@ IL2CPP_API(const char *, il2cpp_method_get_name, (const MethodInfo *))
 IL2CPP_API(uint32_t, il2cpp_method_get_param_count, (const MethodInfo *))
 IL2CPP_API(const Il2CppType *, il2cpp_method_get_param, (const MethodInfo *, uint32_t))
 IL2CPP_API(char *, il2cpp_type_get_name, (const Il2CppType *))
+IL2CPP_API(const Il2CppType *, il2cpp_field_get_type, (FieldInfo *))
 IL2CPP_API(void, il2cpp_free, (void *))
 IL2CPP_API(Il2CppClass *, il2cpp_class_get_parent, (Il2CppClass *))
 IL2CPP_API(FieldInfo *, il2cpp_class_get_field_from_name, (Il2CppClass *, const char *))
@@ -73,7 +75,7 @@ static bool LoadApi() {
     LOAD(il2cpp_get_corlib); LOAD(il2cpp_domain_get); LOAD(il2cpp_domain_get_assemblies);
     LOAD(il2cpp_assembly_get_image); LOAD(il2cpp_image_get_name); LOAD(il2cpp_class_from_name);
     LOAD(il2cpp_class_get_methods); LOAD(il2cpp_method_get_name); LOAD(il2cpp_method_get_param_count);
-    LOAD(il2cpp_method_get_param); LOAD(il2cpp_type_get_name); LOAD(il2cpp_free);
+    LOAD(il2cpp_method_get_param); LOAD(il2cpp_type_get_name); LOAD(il2cpp_free); LOAD(il2cpp_field_get_type);   // optional
     LOAD(il2cpp_class_get_parent); LOAD(il2cpp_class_get_field_from_name); LOAD(il2cpp_field_get_offset);
     LOAD(il2cpp_field_static_get_value); LOAD(il2cpp_field_static_set_value); LOAD(il2cpp_class_get_name); LOAD(il2cpp_runtime_class_init); LOAD(il2cpp_class_get_type);
     LOAD(il2cpp_type_get_object); LOAD(il2cpp_object_get_class); LOAD(il2cpp_runtime_invoke);
@@ -164,6 +166,25 @@ int IL::FieldOffset(Il2CppClass *k, const char *name) {
         if (!il2cpp_class_get_parent_) break;
     }
     return -1;
+}
+
+// The C# type of an instance or static field, e.g. "System.Int32" (empty if unknown). Diagnostics only.
+bool IL::FieldTypeName(Il2CppClass *k, const char *name, char *out, size_t size) {
+    if (!out || !size) return false;
+    out[0] = 0;
+    if (!il2cpp_field_get_type_ || !il2cpp_type_get_name_) return false;
+    for (Il2CppClass *c = k; c; c = il2cpp_class_get_parent_ ? il2cpp_class_get_parent_(c) : nullptr) {
+        FieldInfo *f = il2cpp_class_get_field_from_name_(c, name);
+        if (f) {
+            char *tn = il2cpp_type_get_name_(il2cpp_field_get_type_(f));
+            if (!tn) return false;
+            snprintf(out, size, "%s", tn);
+            if (il2cpp_free_) il2cpp_free_(tn);
+            return true;
+        }
+        if (!il2cpp_class_get_parent_) break;
+    }
+    return false;
 }
 
 FieldInfo *IL::StaticField(Il2CppClass *k, const char *name) {

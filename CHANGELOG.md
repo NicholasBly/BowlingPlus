@@ -2,11 +2,28 @@
 
 Every change to BowlingFix, newest first.
 
-## [1.6.1] - 2026-10-05
-
-Android fixes. iOS has no code changes in this version; its number just moves in step so both builds report the same one.
+## [1.6.2] - 2026-10-06
 
 ### Fixed
+- **Pins turned to a new random angle every time you picked up a ball** (easy to see with your own pin image). The game's pinsetter gives each pin a random turn whenever it racks, and the game racks again for things that aren't a new frame: picking up or switching a ball, a spare-mode pick. BowlingPlus now remembers each pin's turn when a frame is racked and puts it back on every re-rack until the next frame. A new frame is a full rack after the frame's 2nd ball or after a pin went down (a strike); a full rack after a 1st-ball miss is the same frame, and pins left standing for the 2nd ball keep their turns too. Practice only; only standing pins in their spot are touched, never during a throw or replay. (Pins are round, so their turn doesn't change how they play.)
+- **A thin line of oil, in the oil color, at the very back of the lane behind the pins.** The oil mirror fix needs the oil picture to wrap across the lane, and this game only has Unity's one wrap setting for both directions (the across-only and along-only setters are stripped from it), so the far end of the lane also wrapped around to the heavy oil at the foul line for the last half row. The picture is now stretched a hair along the lane (0.25% for the game's 240-row maps, the drawing ending about an inch early at 40 ft) so the far end stops inside the last row. Looks only: the oil you bowl on is unchanged.
+- **Right after the game started you could reach Practice before the Match Up ball fix, the oil color and custom oil were on.** BowlingPlus waited a fixed 4 s after the lane appeared before doing anything. It now starts 1.5 s after the game's main menu is up (its startup is done then), and keeps the 4 s wait only if it can't see the main menu. Copy log shows when it settled.
+
+### Added
+- **Copy debug info: a `lanes:` line.** The game still has its two-lane system (bowling on the lane to your right by dragging your shoes): `RoadChanger` (current lane, number of lanes, a one-lane switch, how far the lanes are apart, and a "move to lane N" function), the shoe-drag gesture `SwitchLaneDrag`, and a `CHANGE_LANE` game setting. This line reports what the game has live, with each value's real type, so lane switching (and alternating lanes with their own oil) can be built on facts. It changes nothing. The same line also shows the pin-turn and oil-edge fixes at work.
+
+### Not tested on a device when this was written
+All of it. The pin-turn logic was run against a simulated lane in 9 scenarios (pickups, a gutter 1st ball, strikes, spares, pins left for the 2nd ball, online), the oil-edge margin was checked against how the GPU picks rows for 60 to 480-row maps, and the Android build compiles and links. iOS can't be compiled where this was written; it was checked for the declaration-order mistake that broke the 1.6.1 iOS build.
+
+## [1.6.1] - 2026-10-05
+
+Android fixes, and the iOS build fix.
+
+### Fixed (iOS)
+- **The iOS build failed** (`src/MenuButton.mm`: "use of undeclared identifier 'BFMenuButtonClampedCenter'" and "'BFMenuButtonSavePosition'"). The on-screen menu button's touch code called two helpers defined further down the file; Objective-C++ needs a function declared before its first use. They are declared at the top now. This had broken every iOS build since the button and Backup were added after 1.6.0, so **the iOS on-screen menu button and Back up my data appear for the first time in this version.**
+- **The iOS menu button could end up invisible.** It went into whichever window was "key" at startup, and every launch the game shows its privacy page, which BowlingPlus hides by making the SDK's own window invisible; a button put there was invisible too, and gone once that window closed (until a shake opened and closed the menu). It now lives in the game's own window (the same one the privacy code treats as the game), looks again whenever the app comes to the front, and only comes to the front when it is added, so a panel opened over it (the oil library) stays on top.
+
+### Fixed (Android)
 - **The Android build failed to compile.** `BP.java` called `FbLogin.inspectIntent`, which didn't exist. It does now: it logs what Facebook's browser login sends back (that a token arrived, or Facebook's own error text such as "Invalid key hash"; the token itself is never logged), once per redirect, and can't throw out of a lifecycle callback.
 - **The menu scrolled at a crawl.** While any BowlingPlus panel is open the lane behind it isn't being played, but the game kept drawing it at 60 or 120 FPS, which took the GPU the panel's scrolling needs. The game is now capped to its own 30 FPS menu rate while a panel is open and put back to what it was (or 120 if 120 FPS mode is on) the moment the last one closes. Also: the menu had two scroll containers inside each other (the inner one never scrolled but sat in every touch), and its twice-a-second refresh re-set labels whose text hadn't changed, each of which can re-measure the whole menu. Both are gone. "Copy debug info" has a new `panelCap=` value on the `fps:` line (the rate the game goes back to, or -1 when not capped).
 - **The Custom oil library and the pin picker were pushed against the left edge.** Cards that gave only a vertical position got no horizontal one; every card is now centered.
@@ -22,11 +39,12 @@ Android fixes. iOS has no code changes in this version; its number just moves in
 - **"Check for updates"** said it couldn't reach GitHub when the repo simply has no release yet; it now says so.
 
 ### Changed
+- **The iOS workflow can build the patched IPA** (`BowlingPlus-<version>.ipa`) when it has a link to the game IPA (secret `GAME_IPA_URL`, or the `ipa_url` box), using `tools/inject_ipa.py`, and checks the result has the 120 Hz setting. Only the patched IPA can run above 60 Hz: the game's Info.plist sets `CADisableMinimumFrameDurationOnPhone` to NO, and injecting the dylib with Sideloadly's own option (or installing the .deb) leaves it that way, so 120 FPS mode then runs at 60 (`plist120=0` in Copy debug info). The README's Sideloadly inject option now says so.
 - The Backup card now warns that the file contains a logged-in Facebook session and should be kept private.
 - The Android README's Facebook section matches the code: the browser login's result on a re-signed build is not confirmed yet, and Copy log now shows an `[fb]` line with what Facebook sent back.
 
 ### Not tested on a device when this was written
-The 30 FPS cap while panels are open (its logic was run against a fake game in 7 scenarios, including turning 120 FPS on or off while a panel is open, but the speed-up itself is unmeasured), the centered cards and footer, the button hiding under panels, the Sign-up detection (it needs the WebView to report the page's title, and if it doesn't, the page just keeps showing as before), and signing in `patch_apk.py`.
+iOS: the on-screen menu button and Back up my data have never run on an iPhone (they could not be built until now); the fixes above were checked by reading the code, not compiled here (no iOS SDK in the environment), so the CI build is the first compile. Android: the 30 FPS cap while panels are open (its logic was run against a fake game in 7 scenarios, including turning 120 FPS on or off while a panel is open, but the speed-up itself is unmeasured), the centered cards and footer, the button hiding under panels, the Sign-up detection (it needs the WebView to report the page's title, and if it doesn't, the page just keeps showing as before), and signing in `patch_apk.py`.
 
 ## [1.6.0] - 2026-10-04
 
