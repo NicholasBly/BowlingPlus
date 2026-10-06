@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.6.3"
+#define BF_VERSION @"1.6.4"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 
@@ -30,6 +30,7 @@ typedef struct {
     float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
     bool     menuButton;   // show a draggable on-screen button to open the menu, as well as shake
+    bool     laneOther;    // Practice: bowl on the game's other lane (experimental, off by default)
 } BFConfig;
 
 // Live game status for the menu

@@ -2,6 +2,21 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.4] - 2026-10-06
+
+### Fixed
+- **Pins still turned every time you picked up a ball.** 1.6.2 and 1.6.3 watched the wrong pins. The game has two pin systems, `PinHolder` and the older `InventaryData.kegels` (it picks one with `InventaryData.UsePinHolder`), and on this game the PinHolder pins are a set that never moves: Copy debug info showed them with no turn on any pickup. The pins on the lane are the kegels, and those are now watched too (watching both is harmless: a pin that never turned has nothing to put back). A simulation of exactly that (kegels on the lane, PinHolder pins still) reproduced the 1.6.3 debug line character for character; the new code passes all 12 checks there, including repeated pickups and pickups before a spare shot.
+- **Picking up a ball counted as a throw** (Copy debug info: `ball=3` with no throws), because the game passes through its "throwing" location when you pick one up. A throw now means the ball was actually launched (moving faster than 1 m/s), the same test the speed boost uses.
+
+### Added
+- **Bowl on the other lane (experimental)**, in Practice fun. The game still has two lanes: dragging your shoes at the ball rack moves you over, but it snaps back when you let go. With this on, BowlingPlus asks the game to move you (its own `RoadChanger.shiftToLaneNumber`) while you're at the ball rack; turn it off to go back. If the game keeps moving you back, BowlingPlus stops after 5 tries and Copy debug info says `GAVE UP`. How the other lane plays (its oil and pins) isn't checked yet: try it and send Copy debug info.
+
+### Changed
+- **Copy debug info:** `pin turns:` now lists both pin sets (`holderPins`, `kegels` and the kegels' type), real throws, and which set turned between checks. `lanes:` adds `UsePinHolder` and the other-lane state (`home`, `now`, `tries`, `reverts`).
+
+### Not tested on a device when this was written
+All of it. The pin-turn and lane code are identical on iOS and Android; both were run against simulated games (the lane one also with a game that keeps snapping back), and Android compiles and links.
+
 ## [1.6.3] - 2026-10-06
 
 ### Fixed

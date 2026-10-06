@@ -56,6 +56,7 @@ Json BFConfigJson(void) {
     d.set("oilHue", gBF.oilHue); d.set("pinImage", Json::Bool_(gBF.pinImage));
     d.set("logHosts", Json::Bool_(gBF.logHosts));
     d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
+    d.set("laneOther", Json::Bool_(gBF.laneOther));
     return d;
 }
 
@@ -92,6 +93,7 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "logHosts") gBF.logHosts = on;
     else if (k == "menuButton") gBF.menuButton = on;
     else if (k == "fbWebLogin") gBF.fbWebLogin = on;
+    else if (k == "laneOther") gBF.laneOther = on;
     else return false;
     Clamp();
     return true;

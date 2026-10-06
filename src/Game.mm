@@ -612,8 +612,10 @@ static Quat UndoTurn(const Quat &saved, const Quat &cur) {
 }
 
 struct TurnSlot {
-    void *pin;                 // the game's Pin object (identity only, never dereferenced from here)
-    Quat body; bool have;      // its physics body's pose when this frame was racked
+    void *key;                 // the game object this is (a Pin, or an InventaryData.kegels entry); identity only
+    void *tr;                  // the Transform that turns (looked up once)
+    bool kegel;                // from InventaryData.kegels (else from a PinHolder)
+    Quat body; bool have;      // its pose when this frame was racked
     Quat lastBody, lastVis; bool haveLast, haveLastVis;   // last check (diagnostics)
     int seen;                  // sFrame it was last seen
 };
@@ -621,23 +623,32 @@ static const int kTurnSlots = 96;
 static TurnSlot sTurn[kTurnSlots];
 static Ref sTurnHolders[8];
 static int sTurnHolderCount = 0;
-static int sTurnBall = 0;                 // throws so far in this frame
+static int sTurnBall = 0;                 // real throws so far in this frame
 static bool sTurnKnocked = false;         // a pin tipped over during this frame
-static bool sTurnThrew = false;           // a throw happened since the last rack was dealt with
+static bool sTurnThrew = false;           // a real throw happened since the last rack was dealt with
+static bool sTurnInThrow = false;         // the ball has been launched and the shot isn't over yet
+// The game has two pin systems: PinHolder._pins and the older InventaryData.kegels, picked by
+// InventaryData.UsePinHolder. On this build the PinHolder pins never move (device, 1.6.3: no lean in any
+// shot, no turn on any pickup), so the pins on the lane are the kegels. Both are tracked: putting back the
+// turn of a pin that never turned does nothing.
+static Ref sInvData;
+static int sKegelsOff = -2, sKegelsKind = 0;   // offset of InventaryData.kegels; kind 1 = array, 2 = List<>
+static char sKegelsType[96];
 // diagnostics (Copy debug info)
-static int sTurnKept = 0, sTurnFrames = 0, sTurnReadFails = 0, sTurnPins = 0, sTurnBodyTicks = 0, sTurnVisTicks = 0;
+static int sTurnKept = 0, sTurnFrames = 0, sTurnReadFails = 0, sTurnPins = 0, sTurnKegels = 0;
+static int sTurnHolderTicks = 0, sTurnKegelTicks = 0, sTurnVisTicks = 0;
 static float sTurnMaxTilt = 0;
 
-static TurnSlot *TurnSlotFor(void *pin) {
+static TurnSlot *TurnSlotFor(void *key) {
     TurnSlot *empty = nullptr, *oldest = &sTurn[0];
     for (TurnSlot &t : sTurn) {
-        if (t.pin == pin) return &t;
-        if (!t.pin && !empty) empty = &t;
+        if (t.key == key) return &t;
+        if (!t.key && !empty) empty = &t;
         if (t.seen < oldest->seen) oldest = &t;
     }
     TurnSlot *t = empty ? empty : oldest;
     memset(t, 0, sizeof(*t));
-    t->pin = pin;
+    t->key = key;
     return t;
 }
 
@@ -652,6 +663,16 @@ static void *TransformOfAny(void *o) {
     return Alive(tr) ? tr : nullptr;
 }
 
+// A kegel's physics body: the Rigidbody on the object or under it, else the object itself.
+static void *KegelTransform(void *o) {
+    if (!Alive(o)) return nullptr;
+    const char *cn = ClassName(ClassOf(o));
+    void *go = (cn && !strcmp(cn, "GameObject")) ? o : GameObjectOf(o);
+    void *rb = go ? GetComp(go, N.tRigidbody) : nullptr;
+    if (!rb && go) rb = GetCompInChildren(go, N.tRigidbody);
+    return rb ? TransformOfAny(rb) : TransformOfAny(o);
+}
+
 static bool ReadRot(void *tr, Quat &q) {
     if (!tr) return false;
     bool ok = false;
@@ -661,66 +682,107 @@ static bool ReadRot(void *tr, Quat &q) {
     return true;
 }
 
+// A real throw: the ball is moving (picking up a ball also passes through the THROWING location).
+static bool BallLaunched() {
+    void *rb = BallBody();
+    if (!rb || !N.RB_getVel) return false;
+    bool ok = false;
+    Il2CppObject *b = Invoke(N.RB_getVel, rb, nullptr, &ok);
+    if (!ok || !b) return false;
+    Vec3 v = *(Vec3 *)Unbox(b);
+    return v.x * v.x + v.y * v.y + v.z * v.z > 1.0f;   // faster than 1 m/s
+}
+
 static void PinTurnTick() {
-    if (!gBFStatus.offline || !N.PinHolder || !N.tPinHolder || N.ph_pins < 0 || N.pin_physic < 0 || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
-        memset(sTurn, 0, sizeof(sTurn)); sTurnBall = 0; sTurnKnocked = sTurnThrew = false;
+    if (!gBFStatus.offline || !N.Tr_getRot || !N.Tr_setRot || !N.Comp_getTransform) {
+        memset(sTurn, 0, sizeof(sTurn)); sTurnBall = 0; sTurnKnocked = sTurnThrew = sTurnInThrow = false;
         return;
     }
-    bool throwing = sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK || sLoc == LOC_REPLAYER;
-    if (sLoc == LOC_THROWING && sPrevLoc != LOC_THROWING) { sTurnBall++; sTurnThrew = true; }
+    bool inShotLoc = sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK || sLoc == LOC_REPLAYER;
+    if (!inShotLoc) sTurnInThrow = false;
     if (sFrame % 3 != 0) return;
-    if (sFrame % 60 == 0 || !sTurnHolderCount) {   // which pin holders exist; their order doesn't matter any more
-        Il2CppArray *all = FindAll(N.tPinHolder);
-        int c = 0;
-        for (size_t i = 0; i < Len(all) && c < 8; i++) { void *h = Elem(all, i); if (Alive(h)) sTurnHolders[c++].set(h); }
-        sTurnHolderCount = c;
-    }
+    if (!sTurnInThrow && sLoc == LOC_THROWING && BallLaunched()) { sTurnInThrow = true; sTurnBall++; sTurnThrew = true; }
+    bool throwing = sTurnInThrow || sLoc == LOC_REPLAYER;
 
-    struct Seen { TurnSlot *slot; void *tr; Quat q; };
+    struct Seen { TurnSlot *slot; Quat q; };
     static Seen seen[kTurnSlots];
-    int n = 0, moved = 0;
-    bool bodyTurned = false, visTurned = false;
-    for (int i = 0; i < sTurnHolderCount; i++) {
-        void *holder = sTurnHolders[i].get();
-        ListView lv;
-        if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
-        for (int p = 0; p < lv.size && n < kTurnSlots; p++) {
-            void *pin = lv.items[p];
-            if (!pin) continue;
-            void *phys = At<void *>(pin, N.pin_physic);
-            void *tr = Alive(phys) ? (void *)Invoke(N.Comp_getTransform, phys, nullptr) : nullptr;
-            Seen &e = seen[n];
-            if (!Alive(tr) || !ReadRot(tr, e.q)) { sTurnReadFails++; continue; }
-            e.tr = tr;
-            e.slot = TurnSlotFor(pin);
-            n++;
-            TurnSlot &t = *e.slot;
-            t.seen = sFrame;
-            // diagnostics: did the body, or the visible pin, turn since the last check (outside throws)?
-            Quat v;
-            bool visOk = N.pin_visual >= 0 && ReadRot(TransformOfAny(At<void *>(pin, N.pin_visual)), v);
-            if (!throwing) {
-                if (t.haveLast && OnlyTurned(t.lastBody, e.q)) bodyTurned = true;
-                if (visOk && t.haveLastVis && OnlyTurned(t.lastVis, v)) visTurned = true;
+    int n = 0, moved = 0, pins = 0, kegels = 0;
+    bool holderTurned = false, kegelTurned = false, visTurned = false;
+    auto track = [&](void *key, bool kegel, void *visObj) {
+        if (!key || n >= kTurnSlots) return;
+        TurnSlot *t = TurnSlotFor(key);
+        if (!Alive(t->tr)) {
+            t->kegel = kegel;
+            if (kegel) t->tr = KegelTransform(key);
+            else { void *phys = At<void *>(key, N.pin_physic); t->tr = Alive(phys) ? TransformOfAny(phys) : nullptr; }
+        }
+        Seen &e = seen[n];
+        if (!t->tr || !ReadRot(t->tr, e.q)) { sTurnReadFails++; t->tr = nullptr; return; }
+        e.slot = t;
+        n++;
+        if (kegel) kegels++; else pins++;
+        t->seen = sFrame;
+        if (!throwing && t->haveLast && OnlyTurned(t->lastBody, e.q)) (kegel ? kegelTurned : holderTurned) = true;
+        t->lastBody = e.q; t->haveLast = true;
+        Quat v;
+        if (visObj && ReadRot(TransformOfAny(visObj), v)) {
+            if (!throwing && t->haveLastVis && OnlyTurned(t->lastVis, v)) visTurned = true;
+            t->lastVis = v; t->haveLastVis = true;
+        }
+        if (!t->have) return;
+        float tilt, turn;
+        PoseDiff(t->body, e.q, tilt, turn);
+        if (throwing) {
+            if (tilt > sTurnMaxTilt) sTurnMaxTilt = tilt;
+            if (tilt > kKnockTilt) sTurnKnocked = true;
+        } else if (tilt < kStandTilt && turn > kMinTurn) moved++;
+    };
+
+    // 1) PinHolder pins
+    if (N.PinHolder && N.tPinHolder && N.ph_pins >= 0 && N.pin_physic >= 0) {
+        if (sFrame % 60 == 0 || !sTurnHolderCount) {   // order doesn't matter: pins are matched by identity
+            Il2CppArray *all = FindAll(N.tPinHolder);
+            int c = 0;
+            for (size_t i = 0; i < Len(all) && c < 8; i++) { void *h = Elem(all, i); if (Alive(h)) sTurnHolders[c++].set(h); }
+            sTurnHolderCount = c;
+        }
+        for (int i = 0; i < sTurnHolderCount; i++) {
+            void *holder = sTurnHolders[i].get();
+            ListView lv;
+            if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
+            for (int p = 0; p < lv.size; p++) {
+                void *pin = lv.items[p];
+                if (pin) track(pin, false, N.pin_visual >= 0 ? At<void *>(pin, N.pin_visual) : nullptr);
             }
-            t.lastBody = e.q; t.haveLast = true;
-            if (visOk) { t.lastVis = v; t.haveLastVis = true; }
-            if (!t.have) continue;
-            float tilt, turn;
-            PoseDiff(t.body, e.q, tilt, turn);
-            if (throwing) {
-                if (tilt > sTurnMaxTilt) sTurnMaxTilt = tilt;
-                if (tilt > kKnockTilt) sTurnKnocked = true;
-            } else if (tilt < kStandTilt && turn > kMinTurn) moved++;
         }
     }
-    sTurnPins = n;
-    if (bodyTurned) sTurnBodyTicks++;
+    // 2) InventaryData.kegels
+    void *inv = sInvData.get();
+    if (!inv && N.tInvData && sFrame % 120 == 0) { inv = FirstAlive(FindAll(N.tInvData)); sInvData.set(inv); }
+    if (inv && sKegelsOff == -2) {
+        sKegelsOff = FieldOffset(N.InvData, "kegels");
+        FieldTypeName(N.InvData, "kegels", sKegelsType, sizeof(sKegelsType));
+        size_t l = strlen(sKegelsType);
+        sKegelsKind = (l > 2 && !strcmp(sKegelsType + l - 2, "[]")) ? 1 : !strncmp(sKegelsType, "System.Collections.Generic.List", 31) ? 2 : 0;
+    }
+    if (inv && sKegelsOff >= 0x10 && sKegelsKind) {
+        void *c = At<void *>(inv, sKegelsOff);
+        if (sKegelsKind == 1 && c) {
+            Il2CppArray *arr = (Il2CppArray *)c;
+            for (size_t j = 0; j < Len(arr) && j < 32; j++) track(((void **)Data(arr))[j], true, nullptr);
+        } else if (sKegelsKind == 2) {
+            ListView lv;
+            if (ReadList(c, lv)) for (int j = 0; j < lv.size && j < 32; j++) track(lv.items[j], true, nullptr);
+        }
+    }
+    sTurnPins = pins; sTurnKegels = kegels;
+    if (holderTurned) sTurnHolderTicks++;
+    if (kegelTurned) sTurnKegelTicks++;
     if (visTurned) sTurnVisTicks++;
     if (throwing) return;
 
     bool capture = false;
-    if (moved > 0 && sTurnThrew) {            // the first rack after a throw: new frame or not?
+    if (moved > 0 && sTurnThrew) {            // the first rack after a real throw: new frame or not?
         bool full = false;
         void *rpt = sRPT.get();
         if (rpt && N.rpt_kegsUp >= 0) {
@@ -739,7 +801,7 @@ static void PinTurnTick() {
         if (OnlyTurned(t.body, e.q)) {            // standing in its spot, just turned: put the frame's turn back
             Quat q = UndoTurn(t.body, e.q);
             void *a[] = { &q };
-            Invoke(N.Tr_setRot, e.tr, a);
+            Invoke(N.Tr_setRot, t.tr, a);
             t.lastBody = q;                       // (our own correction isn't a game turn)
             sTurnKept++;
         }
@@ -747,8 +809,9 @@ static void PinTurnTick() {
 }
 
 static void TurnDebug(char *buf, size_t size) {
-    snprintf(buf, size, "pin turns: holders=%d pins=%d readFails=%d | kept=%d newFrames=%d ball=%d knocked=%d maxTilt=%.0f | turned between checks: body=%d visible=%d",
-             sTurnHolderCount, sTurnPins, sTurnReadFails, sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sTurnMaxTilt, sTurnBodyTicks, sTurnVisTicks);
+    snprintf(buf, size, "pin turns: holders=%d holderPins=%d kegels=%d (%s) readFails=%d | kept=%d newFrames=%d throws=%d knocked=%d maxTilt=%.0f | turned between checks: holderPins=%d kegels=%d visible=%d",
+             sTurnHolderCount, sTurnPins, sTurnKegels, sKegelsType[0] ? sKegelsType : (sKegelsOff == -1 ? "missing" : "?"), sTurnReadFails,
+             sTurnKept, sTurnFrames, sTurnBall, sTurnKnocked ? 1 : 0, sTurnMaxTilt, sTurnHolderTicks, sTurnKegelTicks, sTurnVisTicks);
 }
 
 // ---- your own pin image (looks only) ----
@@ -772,7 +835,7 @@ static uintptr_t sPinImgTex = 0;
 static NSDate *sPinImgStamp;
 static int sPinImgSize = 0, sPinImgFails = 0, sPinImgMats = 0;
 static const int kPinMatMax = 16;
-static Ref sInvData;
+// (sInvData is declared with the pin-turn code above)
 static ObjRef sPinMat[kPinMatMax];                // materials we changed
 static uintptr_t sPinMatOrig[kPinMatMax];         // what each one showed before (strong handles)
 static int sPinMatCount = 0;
@@ -3101,6 +3164,68 @@ void BFOilApplyHue(void) {                         // called by the color picker
     if (gBF.oilHue >= 0) sHueShown = gBF.oilHue;
 }
 
+#define LANE_LOG_GAVEUP @"other lane: the game keeps moving you back, stopped trying (turn the switch off and on to retry)"
+#define LANE_LOG_MOVE @"other lane: asked the game to move from lane %d to %d (now %d)"
+// ---- bowl on the other lane (experimental, Practice) ----
+// The game has two lanes: RoadChanger.shiftBy = { 0, -1.837 } and the static RoadChanger.currentLane says
+// which one you're on (device, 1.6.3: lane 1). Dragging your shoes at the ball rack moves you over, but the
+// game snaps back when you let go. This asks the game's own RoadChanger.shiftToLaneNumber(int) for the
+// other lane while you're at the ball rack. "Home" is the lane the game picks by itself; turning the
+// setting off goes back there. If the game keeps moving you back, it stops after 5 tries and says so.
+static Il2CppClass *sRoadClass = nullptr;
+static const MethodInfo *sRoadShift = nullptr;
+static FieldInfo *sRoadCur = nullptr;
+static bool sRoadLooked = false, sLaneWas = false, sLaneGaveUp = false;
+static bool sLaneMoved = false;   // BowlingPlus put you on the lane you're on now
+static Ref sRoad;
+static int sLaneHome = -1, sLaneTarget = -1, sLaneTries = 0, sLaneReverts = 0, sLaneLastTry = -100000;
+
+static int LaneNow() {
+    if (!sRoadCur) return -1;
+    int v = -1;
+    StaticRead(sRoadCur, &v);
+    return v;
+}
+
+static void LaneTick() {
+    if (sFrame % 30 != 0 || !sSettled) return;
+    if (!sRoadLooked) {
+        sRoadLooked = true;
+        sRoadClass = FindClass("", "RoadChanger");
+        if (sRoadClass) {
+            sRoadShift = FindMethod(sRoadClass, "shiftToLaneNumber", 1, "System.Int32");
+            char tn[64];
+            if (FieldTypeName(sRoadClass, "currentLane", tn, sizeof(tn)) && !strcmp(tn, "System.Int32") && FieldOffset(sRoadClass, "currentLane") < 0x10)
+                sRoadCur = StaticField(sRoadClass, "currentLane");
+        }
+    }
+    if (!sRoadClass || !sRoadShift || !sRoadCur) return;
+    bool want = gBF.laneOther && InPractice();
+    if (want != sLaneWas) { sLaneWas = want; sLaneTries = sLaneReverts = 0; sLaneGaveUp = false; sLaneTarget = -1; }
+    int cur = LaneNow();
+    if (cur < 0 || cur > 1) return;
+    if (!sLaneMoved) sLaneHome = cur;      // until BowlingPlus moves you, your lane is the game's own choice
+    if (!InPractice()) return;
+    int target = gBF.laneOther ? 1 - sLaneHome : sLaneHome;
+    if (cur == target) { if (!gBF.laneOther) sLaneMoved = false; return; }   // back home: the game's again
+    if (sLaneGaveUp) return;
+    if (sLaneTarget == target && sFrame - sLaneLastTry < 240) return;       // give the last move time
+    if (sLaneTarget == target && sLaneTries > 0) sLaneReverts++;            // we moved, and it's back
+    if (sLaneReverts >= 5) {
+        if (!sLaneGaveUp) { sLaneGaveUp = true; BFLog(LANE_LOG_GAVEUP); }
+        return;
+    }
+    if (sLoc != LOC_BALL_RETURNER && sLoc != LOC_UPPER_SCREEN) return;      // only between shots, at the rack
+    void *road = sRoad.get();
+    if (!road) { road = FirstAlive(FindAll(TypeOf(sRoadClass))); sRoad.set(road); }
+    if (!road) return;
+    void *a[] = { &target };
+    Invoke(sRoadShift, road, a);
+    sLaneTarget = target; sLaneTries++; sLaneLastTry = sFrame;
+    if (gBF.laneOther) sLaneMoved = true;
+    BFLog(LANE_LOG_MOVE, cur, target, LaneNow());
+}
+
 static void OilTick() {
     OilBreakdownTick();                           // every frame (it watches for the end of a shot)
     OilMirrorTick();                              // every frame (cheap texture check), full pass every 30
@@ -3384,6 +3509,7 @@ void BFEngineTick(void) {
             SkinRefreshTick();
             InHandFallbackTick();
             ArsenalTick();
+            LaneTick();
         } catch (...) {
             BFLog(@"C++ exception in tick");
         }
@@ -3496,6 +3622,9 @@ static void LaneDebug(char *buf, size_t size) {
     add(" | DragManager");
     FieldText(d, dm, "firstLaneLeft", tmp, sizeof(tmp)); add(tmp);
     FieldText(d, dm, "secondLaneRight", tmp, sizeof(tmp)); add(tmp);
+    snprintf(tmp, sizeof(tmp), " | other lane: on=%d home=%d now=%d tries=%d reverts=%d%s", gBF.laneOther ? 1 : 0, sLaneHome, LaneNow(), sLaneTries, sLaneReverts, sLaneGaveUp ? " GAVE UP" : ""); add(tmp);
+    add(" | InventaryData");                        // which pin system the game uses
+    FieldText(sInvData.get(), N.InvData, "UsePinHolder", tmp, sizeof(tmp)); add(tmp);
     snprintf(tmp, sizeof(tmp), " | oil far edge rows=%d scale=%.4f", sSizeYRows, sSizeYScale); add(tmp);
 }
 
