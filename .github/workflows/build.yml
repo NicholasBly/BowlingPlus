@@ -1,4 +1,14 @@
-# Builds the iOS tweak (BowlingPlus.dylib + .deb) with Theos.
+# Builds the iOS tweak (BowlingPlus.dylib + .deb) with Theos and, when it can get the game, the patched IPA.
+#
+# The IPA is what makes 120 FPS possible: iOS caps apps at 60 Hz unless the app's Info.plist has
+# CADisableMinimumFrameDurationOnPhone = YES, and the game ships it set to NO. tools/inject_ipa.py sets it
+# (and adds the dylib). Injecting the dylib with a signer's own option (Sideloadly, Signulous) or installing
+# the .deb leaves the game's NO in place, so 120 FPS mode then runs at 60 ("plist120=0" in Copy debug info).
+#
+# The game is NOT in the repo. Give the workflow a direct download link to the decrypted game .ipa, either:
+#   * as the repository secret GAME_IPA_URL (Settings > Secrets and variables > Actions), or
+#   * in the ipa_url box when you start it by hand (Actions > Build BowlingPlus > Run workflow).
+# Without one, it still builds and uploads the dylib + .deb, so you see whether the code compiles.
 name: Build BowlingPlus
 
 on:
@@ -8,6 +18,14 @@ on:
       - ".github/workflows/build-android.yml"
       - "**.md"
   workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct link to the decrypted game .ipa (overrides the GAME_IPA_URL secret)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -31,6 +49,31 @@ jobs:
           mkdir -p out
           cp "$(find .theos/obj -name BowlingPlus.dylib -not -path '*/arm64/*' | head -n 1)" out/
           cp packages/*.deb out/ 2>/dev/null || true
+          ls -la out
+
+      - name: Patched IPA (120 FPS-capable)
+        env:
+          GAME_IPA_URL: ${{ secrets.GAME_IPA_URL }}
+          INPUT_URL: ${{ github.event.inputs.ipa_url }}
+        run: |
+          URL="${INPUT_URL:-$GAME_IPA_URL}"
+          if [ -z "$URL" ]; then
+            echo "::warning::No game link (GAME_IPA_URL secret or ipa_url input): dylib + .deb only. Build the IPA with tools/inject_ipa.py, or 120 FPS stays capped at 60."
+            exit 0
+          fi
+          curl -fL --retry 3 -o "$RUNNER_TEMP/game.ipa" "$URL"
+          VER="$(sed -n 's/^Version: //p' control)"
+          python3 tools/inject_ipa.py "$RUNNER_TEMP/game.ipa" out/BowlingPlus.dylib "out/BowlingPlus-$VER.ipa"
+          # check the result instead of trusting it: the 120 Hz key must be YES and the dylib must be inside
+          python3 - "out/BowlingPlus-$VER.ipa" <<'PY'
+          import plistlib, re, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          plist = next(n for n in z.namelist() if re.match(r'Payload/[^/]+\.app/Info\.plist$', n))
+          ok120 = plistlib.loads(z.read(plist)).get('CADisableMinimumFrameDurationOnPhone') is True
+          dylib = any(n.endswith('/Frameworks/BowlingPlus.dylib') for n in z.namelist())
+          print('120 Hz allowed:', ok120, '| dylib inside:', dylib)
+          sys.exit(0 if ok120 and dylib else 1)
+          PY
           ls -la out
 
       - uses: actions/upload-artifact@v4
