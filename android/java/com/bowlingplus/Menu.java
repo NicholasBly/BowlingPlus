@@ -30,7 +30,8 @@ public final class Menu {
     static FrameLayout overlay;
     static Activity act;
     static final List<TextView> helpLabels = new ArrayList<>();
-    static TextView statusLabel, ballLabel, arsenalLabel, fpsLabel, oilLabel, autoLabel, pinImageLabel, bgLabel, speedLabel, spinLabel;
+    static TextView statusLabel, ballLabel, arsenalLabel, fpsLabel, oilLabel, autoLabel, pinImageLabel, bgLabel, speedLabel, spinLabel, pinFricLabel, pinPhysStats;
+    static SeekBar pinFricSlider;
     static Switch spareSwitch, autoSwitch;
     static Button resumeButton, updateButton, skipButton;
     static SeekBar speedSlider, spinSlider;
@@ -182,9 +183,45 @@ public final class Menu {
                 cell(c, rowView(c, "Oil color", "Pick the color the lane shows oil in, or keep the game's.", oilColorButton)),
                 cell(c, rowView(c, "Show oil thickness", "Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same.", toggle(c, "oilThick2", null))),
                 cell(c, rowView(c, "Show oil breakdown", "Redraws the lane oil after every shot so you can watch it break down over the game.", toggle(c, "oilBreak", null))),
-                cell(c, rowView(c, "Invisible oil", "Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing.", toggle(c, "oilInvis", () -> tickRefresh()))),
                 cell(c, rowView(c, "Fix oil display side", "The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went.", toggle(c, "oilMirror", null))),
                 cell(c, libStack) }));
+
+        // ---- Game modes (1.7.2)
+        stack.addView(group(c, "\uD83C\uDFB2", "Game modes", "modes", true, new View[]{
+                cell(c, rowView(c, "Invisible oil", "Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball.", toggle(c, "oilInvis", () -> tickRefresh()))),
+                cell(c, rowView(c, "9-pin no-tap", "9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only.", toggle(c, "noTap9", null))) }));
+
+        // ---- Pin physics (1.7.0)
+        pinPhysStats = UiKit.label(c, "", 12, UiKit.ACCENT, true);
+        pinFricLabel = UiKit.label(c, "", 16, UiKit.ACCENT, true);
+        pinFricSlider = slider(c, 40);                                   // 0.10..0.50 step 0.01
+        pinFricSlider.setOnSeekBarChangeListener(sliderListener(() -> {
+            Config.set("pinFric", 0.10 + pinFricSlider.getProgress() / 100.0);
+            updatePinFricLabel();
+        }));
+        Switch ppSwitch = toggle(c, "pinPhys", () -> {
+            if (Config.b("pinPhys", false)) { Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); }   // the recommended values
+            updatePinFricLabel();
+            tickRefresh();
+        });
+        LinearLayout ppStack = UiKit.row(c, false);
+        ppStack.addView(rowView(c, "Realistic pin physics", "Retunes the pins so they carry like real ones. Tested in a copy of the game's own physics (PhysX 4.1, the game's pins and lane) against the bowling congress's Bowlscore test of real pins: the game strikes 25% of the time where real pins strike 42-44%, and entry angle doesn't matter. With these settings it strikes 37%, angle matters again, and the 10 pin is the most common leave. Turning it on sets the recommended values. Practice only.", ppSwitch));
+        ppStack.addView(pinPhysStats, mt(c, 6));
+        View fricCell = sliderCell(c, "Pin friction", pinFricLabel, pinFricSlider,
+                "How much the pins grip each other, the ball and the deck. The game's own pins use 0.50 (sliding) / 0.30 (starting). Lower lets pins slide off each other and keep moving, like real plastic-coated pins: 0.25 is recommended. Tap Reset for it.",
+                () -> { Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); updatePinFricLabel(); });
+        double fr = Config.d("pinFric", 0);
+        pinFricSlider.setProgress((int) Math.round(((fr >= 0.05 ? fr : 0.25) - 0.10) * 100));
+        updatePinFricLabel();
+        Switch rateSwitch = toggle(c, "pinRate2x", () -> {
+            if (Config.b("pinRate2x", false) && !Config.b("pinPhys", false)) {   // it needs realistic pin physics
+                Config.set("pinPhys", true); Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); updatePinFricLabel();
+                syncAll();
+            }
+            tickRefresh();
+        });
+        View rateCell = cell(c, rowView(c, "Double physics rate (experimental)", "Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model: Bowlscore 37.5% to 40.5%, pocket hits 37% to 46% strikes, entry angle matters more, and the 10 pin is still the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on.", rateSwitch));
+        stack.addView(group(c, "\uD83C\uDFB3", "Pin physics", "pinphys", true, new View[]{ cell(c, ppStack), fricCell, rateCell }));
 
         // ---- Fixes
         ballLabel = UiKit.label(c, "", 12, UiKit.dim(0.5f), false);
@@ -193,8 +230,6 @@ public final class Menu {
         skinStack.addView(ballLabel, mt(c, 6));
         stack.addView(group(c, "\uD83D\uDEE0", "Fixes", "fixes", true, new View[]{
                 cell(c, skinStack),
-                cell(c, rowView(c, "Pin physics fix", "Fast pins can't fly through other pins, and pins clipped low at the base can tip over properly. Practice only.", toggle(c, "pin", null))),
-                cell(c, rowView(c, "Improve spinning pin collision (experimental)", "Uses Unity's speculative collisions, which also predict spin.", toggle(c, "pinSpec2", null))),
                 cell(c, rowView(c, "Fix connection", "If loading sits on \"connecting\" for 30 s, shows the game's gray offline button. A loading circle stuck for 30 s gets hidden so you can try again.", toggle(c, "unstick", null))),
                 cell(c, rowView(c, "Game server over IPv4", "The game always picks IPv6 when some DNS servers offer it, but its servers don't answer on IPv6, so it hangs indefinitely. This forces IPv4.", toggle(c, "ipv4", null))) }));
 
@@ -429,6 +464,7 @@ public final class Menu {
         String pinName = Config.b("pinImage", false) ? Pins.activeName() : null;
         setText(pinImageLabel, pinName != null ? pinName + " \u00B7 " + lastState.optString("pinImage") : lastState.optString("pinImage"));
         setText(bgLabel, Bg.status());
+        setText(pinPhysStats, lastState.optString("pinPhys"));
         boolean safe = lastState.optBoolean("safe", false);
         int safeVis = safe ? View.VISIBLE : View.GONE;
         if (resumeButton.getVisibility() != safeVis) resumeButton.setVisibility(safeVis);
@@ -460,6 +496,13 @@ public final class Menu {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) syncSwitches(g.getChildAt(i));
         }
+    }
+
+    static void updatePinFricLabel() {
+        if (pinFricLabel == null) return;
+        double f = Config.d("pinFric", 0);
+        if (f < 0.05) f = 0.25;
+        pinFricLabel.setText(Math.abs(f - 0.25) < 0.001 ? "0.25 \u2605" : String.format(java.util.Locale.US, "%.2f", f));
     }
 
     static void updateSpeedLabels() {

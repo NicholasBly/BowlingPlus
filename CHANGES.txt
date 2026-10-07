@@ -1,7 +1,41 @@
-BowlingPlus 1.6.4 - changed files against your repo at commit 6f423a2 ("1.6.1"); includes 1.6.2-1.6.3 and the iOS
-build fix + IPA workflow, in case those aren't pushed. Copy each file over the same path in the repo root, then
-DELETE the root CHANGES.txt committed in 6f423a2.
+BowlingPlus 1.7.2: files changed against your GitHub repo at "1.6.9 v2" (c2616c6), so 1.7.0, 1.7.1 and 1.7.2 together.
+Copy each file over the same path in the repo, and DELETE the files listed under Removed.
 
-1.6.4: pins keep their turn on ball pickups (now watching InventaryData.kegels, the pins actually on the lane),
-       pickups no longer count as throws, experimental "Bowl on the other lane" switch (Practice fun) on both
-       platforms (src/Menu.mm, android/.../Menu.java, settings in BFShared.h + Engine.*), richer Copy debug info.
+Changed:
+  CHANGELOG.md
+  README.md
+  VERIFIED_NOTES.md
+  android/README.md
+  android/java/com/bowlingplus/BF.java
+  android/java/com/bowlingplus/Menu.java
+  android/java/com/bowlingplus/Oil.java
+  android/java/com/bowlingplus/Pins.java
+  android/native/BFShared.h
+  android/native/Engine.cpp
+  android/native/Game.cpp
+  android/native/Jni.cpp
+  control
+  src/BFShared.h
+  src/Engine.mm
+  src/Game.mm
+  src/Menu.mm
+  src/OilUI.mm
+  tools/dev/README.md
+  tools/dev/pinsim/checks.inc
+  tools/dev/pinsim/scenario.h
+
+Added:
+  PIN_PHYSICS_STUDY.md
+  docs/pin-physics-bowlscore.png
+  docs/pin-physics-pinpin.png
+  tools/dev/physrate/check.py
+  tools/dev/pinlab/README.md
+  tools/dev/pinlab/build_physx.sh
+  tools/dev/pinlab/export_scene.py
+  tools/dev/pinlab/pinlab.cpp
+  tools/dev/pinlab/scene.txt
+
+Removed (delete these):
+  CHANGES.txt
+
+(Do not commit this CHANGES.txt.)

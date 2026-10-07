@@ -48,7 +48,9 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIButton *updateButton, *helpButton;
 @property (nonatomic, strong) UISwitch *pinImageSwitch;
 @property (nonatomic, strong) UILabel *pinImageLabel;
-@property (nonatomic, strong) UISwitch *bgSwitch;
+@property (nonatomic, strong) UISwitch *bgSwitch, *pinPhysSwitch, *pinRateSwitch, *noTapSwitch;
+@property (nonatomic, strong) UISlider *pinFricSlider;
+@property (nonatomic, strong) UILabel *pinFricLabel, *pinPhysStats;
 @property (nonatomic, strong) UILabel *bgLabel;
 @property (nonatomic, copy) NSString *updateURL;
 @property (nonatomic, strong) UIButton *oilColorButton;
@@ -541,10 +543,39 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
         [self cell:[self row:@"Oil color" help:@"Pick the color the lane shows oil in, or keep the game's." control:self.oilColorButton]],
         [self cell:[self row:@"Show oil thickness" help:@"Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same." control:self.oilThickSwitch]],
         [self cell:[self row:@"Show oil breakdown" help:@"Redraws the lane oil after every shot so you can watch it break down over the game." control:self.oilBreakSwitch]],
-        [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing." control:self.oilInvisSwitch]],
         [self cell:[self row:@"Fix oil display side" help:@"The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went." control:self.oilMirrorSwitch]],
         [self cell:libStack],
     ]]];
+
+    // ---- Game modes (1.7.2)
+    self.noTapSwitch = [self switchOn:gBF.noTap9 action:@selector(noTapChanged:)];
+    [stack addArrangedSubview:[self group:@"Game modes" icon:@"\U0001F3B2" key:@"modes" open:YES cells:@[
+        [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball." control:self.oilInvisSwitch]],
+        [self cell:[self row:@"9-pin no-tap" help:@"9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only." control:self.noTapSwitch]],
+    ]]];
+
+    // ---- Pin physics (1.7.0)
+    self.pinPhysSwitch = [self switchOn:gBF.pinPhys action:@selector(pinPhysChanged:)];
+    self.pinFricLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
+    UISlider *fric = [UISlider new];
+    fric.minimumValue = 0.10f;
+    fric.maximumValue = 0.50f;
+    fric.minimumTrackTintColor = Accent();
+    [fric addTarget:self action:@selector(pinFricChanged:) forControlEvents:UIControlEventValueChanged];
+    [fric addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    self.pinFricSlider = fric;
+    UIView *fricCell = [self sliderCell:@"Pin friction" value:self.pinFricLabel reset:@selector(pinFricReset) slider:fric
+                                   help:@"How much the pins grip each other, the ball and the deck. The game's own pins use 0.50 (sliding) / 0.30 (starting). Lower lets pins slide off each other and keep moving, like real plastic-coated pins: 0.25 is recommended. Tap Reset for it."];
+    self.pinPhysStats = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    self.pinPhysStats.numberOfLines = 0;
+    UIStackView *ppStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        [self row:@"Realistic pin physics" help:@"Retunes the pins so they carry like real ones. Tested in a copy of the game's own physics (PhysX 4.1, the game's pins and lane) against the bowling congress's Bowlscore test of real pins: the game strikes 25% of the time where real pins strike 42-44%, and entry angle doesn't matter. With these settings it strikes 37%, angle matters again, and the 10 pin is the most common leave. Turning it on sets the recommended values. Practice only." control:self.pinPhysSwitch],
+        self.pinPhysStats]];
+    ppStack.axis = UILayoutConstraintAxisVertical;
+    ppStack.spacing = 6;
+    self.pinRateSwitch = [self switchOn:gBF.pinRate2x action:@selector(pinRateChanged:)];
+    UIView *rateCell = [self cell:[self row:@"Double physics rate (experimental)" help:@"Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model: Bowlscore 37.5% to 40.5%, pocket hits 37% to 46% strikes, entry angle matters more, and the 10 pin is still the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on." control:self.pinRateSwitch]];
+    [stack addArrangedSubview:[self group:@"Pin physics" icon:@"\U0001F3B3" key:@"pinphys" open:YES cells:@[[self cell:ppStack], fricCell, rateCell]]];
 
     // ---- Fixes
     self.skinSwitch = [self switchOn:gBF.textureFix action:@selector(skinChanged:)];
@@ -552,14 +583,10 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     UIStackView *skinStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"Match Up skins" help:@"Fixes the Match Up Pearl/BP ball textures." control:self.skinSwitch], self.ballLabel]];
     skinStack.axis = UILayoutConstraintAxisVertical;
     skinStack.spacing = 6;
-    self.pinSwitch = [self switchOn:gBF.pinFix action:@selector(pinChanged:)];
-    self.specSwitch = [self switchOn:gBF.pinSpec action:@selector(specChanged:)];
     self.unstickSwitch = [self switchOn:gBF.unstick action:@selector(unstickChanged:)];
     self.ipv4Switch = [self switchOn:gBF.gameIPv4 action:@selector(ipv4Changed:)];
     [stack addArrangedSubview:[self group:@"Fixes" icon:@"\U0001F6E0" key:@"fixes" open:YES cells:@[
         [self cell:skinStack],
-        [self cell:[self row:@"Pin physics fix" help:@"Fast pins can't fly through other pins, and pins clipped low at the base can tip over properly. Practice only." control:self.pinSwitch]],
-        [self cell:[self row:@"Improve spinning pin collision (experimental)" help:@"Uses Unity's speculative collisions, which also predict spin." control:self.specSwitch]],
         [self cell:[self row:@"Fix connection" help:@"If loading sits on \"connecting\" for 30 s, shows the game's gray offline button. A loading circle stuck for 30 s gets hidden so you can try again." control:self.unstickSwitch]],
         [self cell:[self row:@"Game server over IPv4" help:@"The game always picks IPv6 when some DNS servers offer it, but its servers don't answer on IPv6, so it hangs indefinitely. This forces IPv4." control:self.ipv4Switch]],
     ]]];
@@ -695,8 +722,32 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 }
 
 - (void)skinChanged:(UISwitch *)s  { gBF.textureFix = s.on; BFSaveConfig(); }
-- (void)pinChanged:(UISwitch *)s   { gBF.pinFix = s.on; BFSaveConfig(); }
-- (void)specChanged:(UISwitch *)s  { gBF.pinSpec = s.on; BFSaveConfig(); }
+- (void)pinPhysChanged:(UISwitch *)s {
+    gBF.pinPhys = s.on;
+    if (s.on) gBF.pinFric = 0.25f;                 // turning it on sets the recommended values
+    BFSaveConfig();
+    [self refresh];
+}
+- (void)pinRateChanged:(UISwitch *)s {
+    gBF.pinRate2x = s.on;
+    if (s.on && !gBF.pinPhys) { gBF.pinPhys = YES; gBF.pinFric = 0.25f; }   // it needs realistic pin physics
+    BFSaveConfig();
+    [self refresh];
+}
+- (void)pinFricChanged:(UISlider *)s {          // 0.10 ... 0.50 in 0.01 steps
+    gBF.pinFric = roundf(s.value * 100.0f) / 100.0f;
+    [self updatePinFricLabel];
+}
+- (void)pinFricReset {
+    gBF.pinFric = 0.25f;
+    self.pinFricSlider.value = 0.25f;
+    [self updatePinFricLabel];
+    BFSaveConfig();
+}
+- (void)updatePinFricLabel {
+    float f = gBF.pinFric >= 0.05f ? gBF.pinFric : 0.25f;
+    self.pinFricLabel.text = fabsf(f - 0.25f) < 0.001f ? @"0.25 \u2605" : [NSString stringWithFormat:@"%.2f", f];
+}
 - (void)unstickChanged:(UISwitch *)s { gBF.unstick = s.on; BFSaveConfig(); }
 - (void)ipv4Changed:(UISwitch *)s  { gBF.gameIPv4 = s.on; BFSaveConfig(); }
 - (void)menuButtonChanged:(UISwitch *)s { gBF.menuButton = s.on; BFSaveConfig(); BFMenuButtonRefresh(); }
@@ -724,6 +775,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self refresh];
 }
 - (void)oilColorTapped { [self hideMenu]; BFOilShowColorPicker(); }
+- (void)noTapChanged:(UISwitch *)s { gBF.noTap9 = s.on; BFSaveConfig(); }
 - (void)oilInvisChanged:(UISwitch *)s  { gBF.oilInvisible = s.on; BFSaveConfig(); [self refresh]; }
 - (void)oilLibraryTapped { [self hideMenu]; BFOilShowLibrary(); }
 - (void)autoChanged:(UISwitch *)s  { gBF.spareAuto = s.on; BFSaveConfig(); [self refresh]; }
@@ -844,8 +896,11 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self syncHelpButton];
     for (UILabel *h in self.helpLabels) h.hidden = !gBF.menuHelp;
     self.skinSwitch.on = gBF.textureFix;
-    self.pinSwitch.on = gBF.pinFix;
-    self.specSwitch.on = gBF.pinSpec;
+    self.pinPhysSwitch.on = gBF.pinPhys;
+    self.pinRateSwitch.on = gBF.pinRate2x;
+    if (!self.pinFricSlider.isTracking) self.pinFricSlider.value = gBF.pinFric >= 0.05f ? gBF.pinFric : 0.25f;
+    [self updatePinFricLabel];
+    self.pinPhysStats.text = BFPinPhysStatus();
     self.unstickSwitch.on = gBF.unstick;
     self.ipv4Switch.on = gBF.gameIPv4;
     self.menuButtonSwitch.on = gBF.menuButton;
@@ -853,6 +908,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilMirrorSwitch.on = gBF.oilMirrorFix;
     self.oilBreakSwitch.on = gBF.oilBreakdown;
     self.oilInvisSwitch.on = gBF.oilInvisible;
+    self.noTapSwitch.on = gBF.noTap9;
     self.oilThickSwitch.on = gBF.oilThickness;
     self.pinImageSwitch.on = gBF.pinImage;
     self.bgSwitch.on = gBF.bgImage;

@@ -243,6 +243,7 @@ static Json StateJson() {          // everything the menu, the oil tab and the l
     s.set("fps", BFFpsLine());
     s.set("oil", BFOilStatusLine());
     s.set("pinImage", BFPinImageStatus());
+    s.set("pinPhys", BFPinPhysStatus());
     s.set("lobby", Json::Bool_(BFPracticeLobbyOpen()));
     s.set("oilReady", Json::Bool_(BFOilReady()));
     s.set("safe", Json::Bool_(gBFSafeMode));

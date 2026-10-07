@@ -55,6 +55,8 @@ Json BFConfigJson(void) {
     d.set("oilInvis", Json::Bool_(gBF.oilInvisible)); d.set("oilThick2", Json::Bool_(gBF.oilThickness));
     d.set("oilHue", gBF.oilHue); d.set("pinImage", Json::Bool_(gBF.pinImage));
     d.set("bgImage", Json::Bool_(gBF.bgImage)); d.set("bgTitle", Json::Bool_(gBF.bgTitle));
+    d.set("pinPhys", Json::Bool_(gBF.pinPhys)); d.set("pinFric", gBF.pinFric); d.set("pinRate2x", Json::Bool_(gBF.pinRate2x));
+    d.set("oilShowOrig", gBF.oilShowOrig); d.set("noTap9", Json::Bool_(gBF.noTap9));
     d.set("logHosts", Json::Bool_(gBF.logHosts));
     d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
     d.set("laneOther", Json::Bool_(gBF.laneOther));
@@ -93,6 +95,11 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "pinImage") gBF.pinImage = on;
     else if (k == "bgImage") gBF.bgImage = on;
     else if (k == "bgTitle") gBF.bgTitle = on;
+    else if (k == "pinPhys") gBF.pinPhys = on;
+    else if (k == "pinFric") gBF.pinFric = (float)v;
+    else if (k == "pinRate2x") gBF.pinRate2x = on;
+    else if (k == "oilShowOrig") gBF.oilShowOrig = (int)v;
+    else if (k == "noTap9") gBF.noTap9 = on;
     else if (k == "logHosts") gBF.logHosts = on;
     else if (k == "menuButton") gBF.menuButton = on;
     else if (k == "fbWebLogin") gBF.fbWebLogin = on;

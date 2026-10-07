@@ -108,6 +108,8 @@ key**: uninstall once (the game's data goes with it), install, and from then on 
 
 Never commit `bowlingplus.keystore` or `bowlingplus-secrets.txt` (this repo is public).
 
+Since 1.7.1 the released APKs are signed with BowlingPlus's own key (certificate SHA-256 `8E:B1:67:00:A8:33:D9:60:CE:F7:10:D1:80:08:29:BC:59:B8:98:20:A5:EC:5A:35:24:7F:AA:80:FF:BB:8A:59`). Anyone can check an APK with `apksigner verify --print-certs BowlingPlus-x.y.z.apk`. The key and its password are kept outside the repo by the maintainer; builds from GitHub Actions use them through the four repository secrets above.
+
 ## Opening the menu
 
 Shake the phone (about as hard as you'd shake a bottle of sauce) **or tap with three fingers at once**. On

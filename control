@@ -1,6 +1,6 @@
 Package: com.bowlingplus.tweak
 Name: BowlingPlus
-Version: 1.6.9
+Version: 1.7.2
 Architecture: iphoneos-arm
 Description: Bug fixes + an offline fun menu for Bowling by Jason Belmonte. Shake to open.
 Maintainer: You

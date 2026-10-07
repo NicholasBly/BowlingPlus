@@ -9,7 +9,7 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Feature | What it does | Where it works |
 |---|---|---|
 | Match Up skin fix | Match Up Pearl and Match Up BP get their real skins on the rack, in the Arsenal, previews, your hand and replays | Everywhere (looks only) |
-| Pin physics fix | Fast or spinning pins can't pass through other pins, and pins clipped low at the base can tip over | Practice only |
+| Realistic pin physics | Pins grip each other less (friction 0.25 instead of 0.5/0.3), which brings the game's strike rate on the bowling congress's Bowlscore test from 25% toward real pins' 42-44% and makes entry angle matter again (see PIN_PHYSICS_STUDY.md). Counts first-ball strikes with it on and off | Practice only |
 | Ball speed | Slider from 1x to 5x | Practice only |
 | Ball spin (RPM) | Slider from 1x to 17x: past the game's ~600 rpm cap, up to about 10,000 rpm, with the extra grip (hook) that much spin gives | Practice only |
 | Spare shooting mode | Pick which pins are standing at the start of every frame, or auto-rack the same pins every frame | Practice only |
@@ -31,6 +31,8 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Oil color | Pick the color the lane shows oil in, or keep the game's | Everywhere (looks only) |
 | Custom pins | A library of pin pictures: Brunswick Max Crown built in, plus as many of your own as you like (draw on the 2:1 wrap template: one sheet that wraps around the pin, so no seams). Each one turns in 3D before you choose it | Everywhere (looks only) |
 | Alley background | Your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): fill, fit, stretch or tile, with or without the alley name | Everywhere (looks only) |
+| 9-pin no-tap | Game mode: 9 or more on a full rack is a strike; the game scores it itself | Practice only |
+| Double physics rate (experimental) | The game's physics runs every 3.75 ms instead of 7.5, with a speed check on every throw that undoes it if anything's off. In the model: 37.5% to 40.5% Bowlscore strikes, entry angle matters more | Practice only |
 | Sweeper banner fix | The blue banner on the pin sweeper no longer goes black at the back of the lane or gets its ends cut off | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
 
@@ -81,7 +83,7 @@ Use an IPA that already has the tweak inside (see "Make a patched IPA" below), t
 
 - **Pins:** every pin uses Unity's cheapest collision check ("Discrete"), and the game's collision padding is 20x thinner than Unity's default. A fast pin can move several centimeters between physics checks and skip right through another pin's skinny neck. The fix switches the pins (and the ball) to "Continuous Dynamic", which checks the whole path between steps.
 - **Match Up Pearl:** each ball's store entry links to a skin file in the game's own asset bundles, and a flag called `texc` picks which half of that file to show (most files hold two balls). The Pearl's entry points at the wrong file, the same black look as the BP. Its real art is the left half of `Text_MatchupPearl_MatchupHybrid`, the file the Match Up Hybrid uses. The tweak checks that file's name in the game's skin catalog, points the Pearl at it (in memory only), and picks the half the Hybrid doesn't use. After that, the game's own code draws it right everywhere. Turning the switch off puts the game's original data back.
-- **Pins hit low:** pins ran on Unity's old default spin limit (7 rad/s), so 1.1.0 raised it to 50. 1.2.x adds an experimental pins-only option for speculative collision checks (never the ball: on the ball it caused jumps), because the v1.1 sweep checks only follow straight-line motion: a tumbling pin's top could end up inside another pin before the hit was noticed (the game's contact margin is only 0.5 mm, and Unity removed its setter).
+- **Pin physics:** the pins on the lane are the scene's kegels, and the game rebuilds their Rigidbodies at every rack, so 1.7.0 sets the friction on their colliders' materials instead (it stays). The numbers come from a PhysX 4.1 copy of the game's own pins and lane, checked against USBC's Bowlscore tests of real pins: `PIN_PHYSICS_STUDY.md`.
 - **Arsenal search:** the game rebuilds the list with `ResetScroll()`, which re-counts the balls. v1.0 used `ReloadData()`, which only redraws what's on screen, so the scroll area kept its old size.
 - **Match Up BP:** its store entry points at `black_pearl2_dif_x512.jpg`, a file that isn't in any of the game's asset bundles, so it never loads (white on the rack, or the last ball's skin in your hand). The real Black Pearl art does ship, as the left half of `tex_blackpearl_flameturquoise.png` (the file the game had put on the Pearl), so the tweak points the BP there. A drawn look-alike is only a last resort if no working skin can be found.
 - **Speed:** the game launches the ball with one push, and the hook comes from friction with the oil. The tweak waits for the launch and multiplies the speed once.
@@ -121,6 +123,9 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.
+- **1.7.1:** double physics rate (experimental); pattern and pin library rows line up; the Android APK is signed with BowlingPlus's own key from now on.
+- **1.7.0:** a new Pin physics category: realistic pin physics (pin friction 0.25, tested in a PhysX copy of the game against real-pin data), with first-ball counts on and off; the old pin fix (which never reached the lane pins) is gone.
 - **1.6.9:** your own alley background; the pin library's "Off" shows the game's own pins (Gold...); the sweeper's banner shows its B and O.
 - **1.6.8:** a pin library with Brunswick Max Crown built in, your own pictures, and a 3D preview of each; the sweeper's banner no longer goes black or gets cut off.
 - **1.6.7:** the pinsetter now lifts and sets pins showing their own turns (in 1.6.6 every lifted pin showed the same face).

@@ -25,7 +25,6 @@ enum { CDM_DISCRETE = 0, CDM_CONTINUOUS_DYNAMIC = 2, CDM_SPECULATIVE = 3 };
 // an experimental option for PINS ONLY. Never the ball: the ball spins at ~600 rpm, so speculative
 // contacts reach far ahead of it and "ghost" contacts with the pin deck and pins launched it into
 // the air (1.2.0 bug).
-static int PinCDM()  { return gBF.pinSpec ? CDM_SPECULATIVE : CDM_CONTINUOUS_DYNAMIC; }
 static int BallCDM() { return CDM_CONTINUOUS_DYNAMIC; }
 // DLC_TYPE.DLC_TEXTURE: the game's id for "3D ball skin file"
 enum { DLC_TEXTURE = 3 };
@@ -516,20 +515,6 @@ static void SetCDM(void *rb, int mode) {
 // Pins also get a higher spin limit. They ran on Unity's old default (7 rad/s, newer Unity
 // uses 50). A pin clipped low at the base has to spin faster than that to tip over, so the
 // extra energy was thrown away and the pin just rocked in place.
-static void SetPinPhysics(void *rb, bool on) {
-    if (!rb || !N.RB_getCDM || !N.RB_setCDM) return;
-    if (on && InvokeBool(N.RB_isKinematic, rb, nullptr, true)) return;
-    int mode = on ? PinCDM() : CDM_DISCRETE;
-    int cur = InvokeInt(N.RB_getCDM, rb, nullptr, -1);
-    if (cur < 0 || cur == mode) return;
-    void *a[] = { &mode };
-    Invoke(N.RB_setCDM, rb, a);
-    if (N.RB_setMaxAngVel) {
-        float w = on ? 50.0f : 7.0f;
-        void *b[] = { &w };
-        Invoke(N.RB_setMaxAngVel, rb, b);
-    }
-}
 
 static void *BallBody() {
     void *rpt = sRPT.get();
@@ -537,29 +522,6 @@ static void *BallBody() {
     return GetComp(At<void *>(rpt, N.rpt_sphere), N.tRigidbody);
 }
 
-static void PinFixTick() {
-    bool want = gBF.pinFix && gBFStatus.offline;
-    if ((!want && !sPinFixOn) || sFrame % 15 != 0) return;
-    if (!N.PinHolder || N.ph_pins < 0 || N.pin_physic < 0) return;
-    if (sFrame % 120 == 0 || !sHolders[0].get()) {
-        Il2CppArray *all = FindAll(N.tPinHolder);
-        for (int i = 0; i < 4; i++) {
-            void *h = (size_t)i < Len(all) ? Elem(all, i) : nullptr;
-            sHolders[i].set(Alive(h) ? h : nullptr);
-        }
-    }
-    for (int i = 0; i < 4; i++) {
-        void *holder = sHolders[i].get();
-        ListView lv;
-        if (!holder || !ReadList(At<void *>(holder, N.ph_pins), lv)) continue;
-        for (int p = 0; p < lv.size; p++) {
-            void *pin = lv.items[p];
-            if (!pin) continue;
-            SetPinPhysics(GetComp(GameObjectOf(At<void *>(pin, N.pin_physic)), N.tRigidbody), want);
-        }
-    }
-    sPinFixOn = want;
-}
 
 #define PIN_TURN_CLOCK CFAbsoluteTimeGetCurrent()
 #define PIN_TURN_LOG @"pin turns: %s"
@@ -684,6 +646,12 @@ static int32_t TurnPredict(int i) {
     return TurnPending(i);
 }
 
+// For the pin physics counts (PinPhysRack, further down): what this rack says about the throw before it.
+static int sRackKnocked = 0;
+static bool sRackFull = true;
+static unsigned sRackLeave = 0;
+static void PinPhysRack(int knocked, bool fullRack, unsigned leave);
+
 // Kegel i's turn for this rack. r is the game's own random draw.
 static int32_t TurnPick(int32_t r) {
     double now = PinNow();
@@ -695,20 +663,25 @@ static int32_t TurnPick(int32_t r) {
     sTurnLast = now;
     int i = sTurnNext % sTurnCount;                    // (two racks in a row wrap around)
     sTurnNext = i + 1;
-    if (i == 0) sTurnRacks++;
+    if (i == 0) { sTurnRacks++; sRackKnocked = 0; sRackFull = true; sRackLeave = 0; }
     int up = TurnPinUp(i);
     if (up < 0) sTurnUpUnknown++;
-    bool keep = false;
+    bool keep = false, wasUp = sTurnHave[i] && sTurnWasUp[i];
+    if (!wasUp) sRackFull = false;
     if (sTurnKeep && sTurnHave[i]) {
-        if (up == 0) { keep = true; sTurnOffLane++; }  // off the lane: its turn doesn't show, keep it as it is
-        else if (sTurnWasUp[i] || up < 0) {           // standing at the last rack: kept unless it was knocked over
+        if (up == 0) {                                 // off the lane: its turn doesn't show, keep it as it is
+            keep = true;
+            sTurnOffLane++;
+            if (wasUp) sRackKnocked++;                 // (the game put it down: it fell in the last throw)
+        } else if (sTurnWasUp[i] || up < 0) {         // standing at the last rack: kept unless it was knocked over
             float lean = TurnPinLean(i);
             if (lean < 0) sTurnTiltFails++;
-            if (lean > 15.0f) sTurnKnocked++;
+            if (lean > 15.0f) { sTurnKnocked++; if (wasUp) sRackKnocked++; }
             else {
                 keep = true;
                 sTurnKept++;
                 if (lean > sTurnMaxStandTilt) sTurnMaxStandTilt = lean;
+                if (wasUp) sRackLeave |= 1u << i;
             }
         }
     }
@@ -724,6 +697,7 @@ static int32_t TurnPick(int32_t r) {
     }
     if (up >= 0) sTurnWasUp[i] = up == 1;
     sTurnUpKnown[i] = up >= 0;
+    if (i == sTurnCount - 1 && sTurnKeep) PinPhysRack(sRackKnocked, sRackFull, sRackLeave);
     return r;
 }
 
@@ -1143,9 +1117,9 @@ NSString *BFPinImageStatus(void) {
     return @"Shows on the pins when a lane is on screen.";
 }
 
-static void BallCCDTick() {   // the ball too, while the pin fix or a speed boost is on
+static void BallCCDTick() {   // continuous collision for the ball, while realistic pin physics or a speed boost is on
     if (sFrame % 15 != 0) return;
-    bool want = gBFStatus.offline && (gBF.pinFix || gBF.speedMult > 1.5f);
+    bool want = gBFStatus.offline && (gBF.pinPhys || gBF.speedMult > 1.5f);
     if (!want && !sBallCCDOn) return;
     void *rb = BallBody();
     if (!rb) return;
@@ -2146,6 +2120,501 @@ static void BannerTopTick() {
     sTopOn = want;
 }
 
+#define PP_LOG @"pin physics: %s"
+// ---- realistic pin physics (Practice) ----
+// What the game has (1.907, scene level1 + code; see VERIFIED_NOTES 5f and tools/dev/pinlab): the pins on the lane are
+// PinsPhys/PinUnity1..10 (InventaryData.kegels), each with seven colliders (five convex hulls, two capsules) whose
+// physics materials "Pin" / "PinButtom" have friction 0.5 dynamic / 0.3 static, combined by Minimum with whatever
+// they touch. InventaryData.ResetRigidBody rebuilds every pin's Rigidbody at each rack (DestroyImmediate + AddComponent,
+// then maxDepenetrationVelocity and maxAngularVelocity 100000); the colliders and their materials stay.
+// A PhysX 4.1 model of exactly that setup (tools/dev/pinlab), run through the US Bowling Congress's Bowlscore test
+// (23 offsets x 11 entry angles), strikes 25% of the time where real pins strike about 42-44%, and entry angle makes no
+// difference. With the pins' friction at 0.25 it strikes 37%, entry angle matters again (31% at 0-3 degrees, 40% at
+// 6-10), and the 10 pin becomes the most common single-pin leave, as with real right-handed pocket hits. Restitution
+// barely matters (as USBC found with real balls), and it can't be set in this build anyway.
+// So, while it's on: every lane pin collider's material (Collider.material, a per-collider copy) gets the chosen
+// friction (static and dynamic), and the ball uses continuous collision. Off, outside Practice or on a new scene, the
+// materials get their own values back. It also counts first balls (from a full rack) with it on and off, and logs each.
+static const float kPinFricDefault = 0.25f;
+static const int kPPMax = 96;
+static Ref sPPMat[kPPMax];                    // the pin colliders' materials (per-collider copies)
+static float sPPSf0[kPPMax], sPPDf0[kPPMax];   // their own frictions
+static int sPPCount = 0, sPPSets = 0, sPPFails = 0;
+static bool sPPApplied = false;
+static Il2CppClass *sPPMatClass = nullptr, *sPPColClass = nullptr;
+static const MethodInfo *sPPGetDf = nullptr, *sPPSetDf = nullptr, *sPPGetSf = nullptr, *sPPSetSf = nullptr, *sPPColMat = nullptr;
+static bool sPPTried = false, sThrowSeen = false;
+static bool sRateOn = false;                   // (the double physics rate, below)
+struct PPStats { int balls, strikes, pins, leaves[10]; };
+static PPStats sPPStats[3];                   // [0] the game's own pins, [1] realistic, [2] realistic + double rate
+
+static float PinFriction() { return gBF.pinFric >= 0.05f && gBF.pinFric <= 1.0f ? gBF.pinFric : kPinFricDefault; }
+
+static bool PPResolve() {
+    if (sPPTried) return sPPSetDf && sPPSetSf && sPPColMat;
+    sPPTried = true;
+    ExtraResolve();
+    sPPMatClass = FindClass("UnityEngine", "PhysicsMaterial");
+    sPPColClass = FindClass("UnityEngine", "Collider");
+    sPPGetDf = XM(sPPMatClass, "get_dynamicFriction", 0);
+    sPPSetDf = XM(sPPMatClass, "set_dynamicFriction", 1, "System.Single");
+    sPPGetSf = XM(sPPMatClass, "get_staticFriction", 0);
+    sPPSetSf = XM(sPPMatClass, "set_staticFriction", 1, "System.Single");
+    sPPColMat = XM(sPPColClass, "get_material", 0);
+    return sPPSetDf && sPPSetSf && sPPColMat;
+}
+
+static float PPFloat(const MethodInfo *m, void *obj, float def) {
+    bool ok = false;
+    Il2CppObject *b = m ? Invoke(m, obj, nullptr, &ok) : nullptr;
+    return ok && b ? *(float *)Unbox(b) : def;
+}
+
+// Every collider under the lane pins (the pin GameObject and two levels of children), and its material.
+static void PPCollect(void *tr, int depth) {
+    if (!tr || depth > 2 || sPPCount >= kPPMax) return;
+    bool ok = false;
+    void *go = (void *)Invoke(X.comp_go, tr, nullptr, &ok);
+    void *ga[] = { TypeOf(sPPColClass) };
+    void *col = ok && go ? (void *)Invoke(X.go_getComponent, go, ga, &ok) : nullptr;
+    if (ok && Alive(col)) {
+        void *mat = (void *)Invoke(sPPColMat, col, nullptr, &ok);   // (makes this collider's own copy, once)
+        if (ok && Alive(mat)) {
+            sPPSf0[sPPCount] = PPFloat(sPPGetSf, mat, 0.3f);
+            sPPDf0[sPPCount] = PPFloat(sPPGetDf, mat, 0.5f);
+            sPPMat[sPPCount++].set(mat);
+        }
+    }
+    int n = InvokeInt(X.tr_childCount, tr, nullptr, 0);
+    for (int i = 0; i < n && i < 16; i++) {
+        void *ia[] = { &i };
+        void *ch = (void *)Invoke(X.tr_child, tr, ia, &ok);
+        if (ok && ch) PPCollect(ch, depth + 1);
+    }
+}
+
+static void PPSet(int i, float sf, float df) {
+    void *mat = sPPMat[i].get();
+    if (!Alive(mat)) { sPPFails++; return; }
+    void *a[] = { &sf }, *b[] = { &df };
+    bool ok1 = false, ok2 = false;
+    Invoke(sPPSetSf, mat, a, &ok1);
+    Invoke(sPPSetDf, mat, b, &ok2);
+    if (ok1 && ok2) sPPSets++; else sPPFails++;
+}
+
+static void PPRestore() {
+    for (int i = 0; i < sPPCount; i++) PPSet(i, sPPSf0[i], sPPDf0[i]);
+    sPPApplied = false;
+}
+
+static void PinPhysTick() {
+    if (!sSettled) return;
+    // (a shot replay is still Practice: gBFStatus.offline is false while LOC_REPLAYER is up)
+    bool want = gBF.pinPhys && (gBFStatus.offline || (sMode == MODE_FUN && sLoc == LOC_REPLAYER));
+    // a real throw (the ball leaves the hand faster than 1 m/s; picking a ball up passes LOC_THROWING too)
+    if (sLoc == LOC_THROWING && !sThrowSeen && N.RB_getVel) {
+        void *rb = BallBody();
+        bool ok = false;
+        Il2CppObject *bv = rb ? Invoke(N.RB_getVel, rb, nullptr, &ok) : nullptr;
+        if (ok && bv) { BFVec3 v = *(BFVec3 *)Unbox(bv); if (v.x * v.x + v.y * v.y + v.z * v.z > 1.0f) sThrowSeen = true; }
+    }
+    if (sFrame % 30 != 0) return;
+    if (!want && !sPPApplied) return;
+    if (!PPResolve() || !X.tr_child || !X.go_getComponent || !X.comp_go) return;
+    if (sPPCount && !Alive(sPPMat[0].get())) { sPPCount = 0; sPPApplied = false; }   // a new scene: find them again
+    if (!want) { PPRestore(); BFLog(PP_LOG, "off: the game's own pin friction is back"); return; }
+    if (!sPPCount) {
+        Il2CppArray *k = TurnKegels();
+        for (size_t i = 0; k && i < Len(k); i++) {
+            void *go = Elem(k, i);
+            bool ok = false;
+            void *tr = Alive(go) ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
+            if (ok && tr) PPCollect(tr, 0);
+        }
+        if (!sPPCount) return;
+        char msg[160];
+        snprintf(msg, sizeof(msg), "found %d pin colliders (their own friction %.2f static / %.2f dynamic)", sPPCount, sPPSf0[0], sPPDf0[0]);
+        BFLog(PP_LOG, (const char *)msg);
+    }
+    float f = PinFriction();
+    for (int i = 0; i < sPPCount; i++) {                 // set, and put back if anything changed it
+        void *mat = sPPMat[i].get();
+        if (!Alive(mat)) continue;
+        if (!sPPApplied || fabsf(PPFloat(sPPGetDf, mat, f) - f) > 0.001f || fabsf(PPFloat(sPPGetSf, mat, f) - f) > 0.001f) PPSet(i, f, f);
+    }
+    if (!sPPApplied) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "on: pin friction %.2f", f);
+        BFLog(PP_LOG, (const char *)msg);
+    }
+    sPPApplied = true;
+}
+
+static void PinPhysRack(int knocked, bool fullRack, unsigned leave) {
+    if (!sThrowSeen) return;                            // a rack without a throw (picking up a ball, spare mode...)
+    sThrowSeen = false;
+    char pins[40] = "";
+    for (int i = 0; i < 10; i++)
+        if (leave >> i & 1) snprintf(pins + strlen(pins), sizeof(pins) - strlen(pins), "%s%d", pins[0] ? "-" : "", i + 1);
+    char msg[160];
+    if (!fullRack) {
+        snprintf(msg, sizeof(msg), "second ball: %d down%s%s (%s)", knocked, pins[0] ? ", left " : ", all down", pins, sPPApplied ? "realistic" : "game's own");
+        BFLog(PP_LOG, (const char *)msg);
+        return;
+    }
+    PPStats &s = sPPStats[sPPApplied ? (sRateOn ? 2 : 1) : 0];
+    s.balls++;
+    s.pins += knocked;
+    if (knocked >= 10) s.strikes++;
+    else if (knocked == 9) for (int i = 0; i < 10; i++) if (leave >> i & 1) s.leaves[i]++;
+    snprintf(msg, sizeof(msg), "first ball: %s%s%s (%s, friction %.2f)", knocked >= 10 ? "strike" : "", knocked >= 10 ? "" : "left ", knocked >= 10 ? "" : pins,
+             sPPApplied ? (sRateOn ? "realistic, double rate" : "realistic") : "game's own", sPPApplied ? PinFriction() : sPPCount ? sPPDf0[0] : 0.5f);
+    BFLog(PP_LOG, (const char *)msg);
+}
+
+// ---- double physics rate (Practice, experimental) ----
+// What the engine has (Unity 6000.0.67f1, read from libunity.so and UnityFramework; the same on both): the setter of
+// Time.fixedDeltaTime is stripped (managed and native), but the native getter survives. It calls the TimeManager getter
+// (its first BL) and reads the step as a rational: count (int64, +0x50) x denominator (u32, +0x5c) / numerator (u32,
+// +0x58) = 1058399 / 141120000 s = 7.5 ms. The TimeManager's own sync (a virtual method) copies those 16 bytes to +0x70
+// and stores 1/step as a float at +0x84. BowlingPlus writes the halved count to +0x50 and +0x70 and 2/step to +0x84 (what
+// that sync would write for half the step), only after checking all of them hold exactly the expected values and the
+// game's own getter agrees; it reads the getter back afterwards, and puts the old values back when it's off, outside
+// Practice, or on a new scene. Safety: during every throw the ball's measured speed (how far it moves per real second)
+// is compared with its own velocity; if physics runs fast or slow (ratio outside 0.8..1.25) twice in a row, it undoes the
+// change and stays off until the game restarts. In the PhysX model (PIN_PHYSICS_STUDY.md): Bowlscore 37.5% -> 40.5%,
+// pocket throws 37% -> 46% strikes, entry angle matters more, the 10 pin still the most common single-pin leave.
+typedef void *(*BFTimeMgrFn)();
+static uint8_t *sTM = nullptr;
+static bool sRateTried = false, sRateBroken = false, sRateLastThrow = false;
+static int64_t sRateCount0 = 0;
+static float sRateInv0 = 0;
+static const char *sRateWhy = "off";
+static const MethodInfo *sRateGetDt = nullptr;
+static int sRateChecks = 0, sRateBad = 0;
+static float sRateRatio = 0, sRateRatioOff = 0;
+
+static float RateManagedStep() {
+    if (!sRateGetDt) sRateGetDt = XM(FindClass("UnityEngine", "Time"), "get_fixedDeltaTime", 0);
+    return PPFloat(sRateGetDt, nullptr, -1.0f);
+}
+
+// In the native step getter's code: the first BL (the TimeManager getter), if the step is read right after it
+// (ldr x?, [x0, #0x50] and ldr w?, [x0, #0x58]) as in both builds. Returns the BL's target, or null and why.
+static const uint8_t *RateFindGetter(const uint32_t *code, const char **why) {
+    for (int i = 0; i < 6; i++) {
+        uint32_t ins = code[i];
+        if ((ins & 0xFC000000u) != 0x94000000u) continue;
+        bool r50 = false, r58 = false;
+        for (int k = i + 1; k < i + 6; k++) {
+            uint32_t c = code[k];
+            if ((c & 0xFFFFFFE0u) == (0xF9400000u | (0x50u / 8) << 10)) r50 = true;
+            if ((c & 0xFFFFFFE0u) == (0xB9400000u | (0x58u / 4) << 10)) r58 = true;
+        }
+        if (!r50 || !r58) { *why = "the step getter isn't the expected code"; return nullptr; }
+        int32_t imm = (int32_t)(ins << 6) >> 6;
+        return (const uint8_t *)(code + i) + (intptr_t)imm * 4;
+    }
+    *why = "the step getter has no call";
+    return nullptr;
+}
+
+static uint8_t *RateTimeManager() {
+    if (sTM || sRateTried) return sTM;
+    sRateTried = true;
+    typedef void *(*ResolveFn)(const char *);
+    ResolveFn resolve = (ResolveFn)Api("il2cpp_resolve_icall");
+    if (!resolve) { sRateWhy = "no il2cpp_resolve_icall"; return nullptr; }
+    const uint32_t *code = (const uint32_t *)resolve("UnityEngine.Time::get_fixedDeltaTime");
+    if (!code) code = (const uint32_t *)resolve("UnityEngine.Time::get_fixedDeltaTime()");
+    if (!code) { sRateWhy = "no native step getter"; return nullptr; }
+    const uint8_t *fn = RateFindGetter(code, &sRateWhy);
+    if (!fn) return nullptr;
+    sTM = (uint8_t *)((BFTimeMgrFn)fn)();
+    if (!sTM) sRateWhy = "no TimeManager";
+    return sTM;
+}
+
+static double RateStepAt(const uint8_t *tm, int off) {           // a rational at tm+off, in seconds
+    int64_t count = *(const int64_t *)(tm + off);
+    uint32_t num = *(const uint32_t *)(tm + off + 8), den = *(const uint32_t *)(tm + off + 12);
+    return num ? (double)count * den / num : 0.0;
+}
+
+static bool RateApply(bool on) {
+    uint8_t *tm = RateTimeManager();
+    if (!tm) return false;
+    if (on) {
+        double dt = RateStepAt(tm, 0x50);
+        float managed = RateManagedStep();
+        bool same = *(int64_t *)(tm + 0x70) == *(int64_t *)(tm + 0x50) && *(uint64_t *)(tm + 0x78) == *(uint64_t *)(tm + 0x58);
+        float inv = *(float *)(tm + 0x84);
+        if (dt < 0.002 || dt > 0.05 || fabs(managed - dt) > 1e-5 || !same || fabsf(inv - (float)(1.0 / dt)) > 0.01f * (float)(1.0 / dt)) {
+            sRateWhy = "the engine's step isn't laid out as expected (left alone)";
+            return false;
+        }
+        sRateCount0 = *(int64_t *)(tm + 0x50);
+        sRateInv0 = inv;
+        int64_t half = (sRateCount0 + 1) / 2;
+        *(int64_t *)(tm + 0x50) = half;
+        *(int64_t *)(tm + 0x70) = half;
+        *(float *)(tm + 0x84) = (float)(1.0 / RateStepAt(tm, 0x50));
+        float now = RateManagedStep();
+        if (fabs(now - dt / 2) > 1e-5) {                            // the game doesn't see it: put it back
+            *(int64_t *)(tm + 0x50) = sRateCount0;
+            *(int64_t *)(tm + 0x70) = sRateCount0;
+            *(float *)(tm + 0x84) = sRateInv0;
+            sRateWhy = "the game didn't see the new step (put back)";
+            return false;
+        }
+        sRateOn = true;
+        sRateWhy = "on";
+        char msg[120];
+        snprintf(msg, sizeof(msg), "double physics rate on: step %.3f ms -> %.3f ms", dt * 1000, now * 1000.0);
+        BFLog(PP_LOG, (const char *)msg);
+        return true;
+    }
+    if (!sRateOn) return true;
+    *(int64_t *)(tm + 0x50) = sRateCount0;
+    *(int64_t *)(tm + 0x70) = sRateCount0;
+    *(float *)(tm + 0x84) = sRateInv0;
+    sRateOn = false;
+    if (!sRateBroken) sRateWhy = "off";
+    char msg[96];
+    snprintf(msg, sizeof(msg), "double physics rate off: step back to %.3f ms", RateManagedStep() * 1000.0);
+    BFLog(PP_LOG, (const char *)msg);
+    return true;
+}
+
+// During a throw: does the ball move as fast as its velocity says? (physics time = real time)
+static double sSpdT0 = -1, sSpdY0 = 0, sSpdVSum = 0;
+static int sSpdN = 0;
+static bool sSpdDone = false;
+static void RateSpeedCheck() {
+    if (sLoc != LOC_THROWING) { sSpdT0 = -1; sSpdDone = false; return; }
+    sRateLastThrow = sRateOn;                       // the rate this throw (and so its replay) is recorded at
+    if (sSpdDone || !N.RB_getVel) return;
+    void *rb = BallBody();
+    bool ok = false;
+    Il2CppObject *bv = rb ? Invoke(N.RB_getVel, rb, nullptr, &ok) : nullptr;
+    if (!ok || !bv) return;
+    BFVec3 v = *(BFVec3 *)Unbox(bv);
+    void *tr = Invoke(N.Comp_getTransform, rb, nullptr, &ok);
+    Il2CppObject *pb = ok && tr && X.tr_getPos ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+    if (!ok || !pb) return;
+    float y = ((BFVec3 *)Unbox(pb))->y;
+    double t = PinNow();
+    if (v.y < 3.0f || y > 16.5f) { if (sSpdT0 >= 0 && v.y < 3.0f) sSpdT0 = -1; return; }   // rolling down the lane, before the pins
+    if (sSpdT0 < 0) { sSpdT0 = t; sSpdY0 = y; sSpdVSum = 0; sSpdN = 0; return; }
+    sSpdVSum += v.y;
+    sSpdN++;
+    if (t - sSpdT0 < 0.3 || sSpdN < 8) return;
+    float ratio = (float)(((y - sSpdY0) / (t - sSpdT0)) / (sSpdVSum / sSpdN));
+    sSpdDone = true;
+    char msg[120];
+    if (!sRateOn) { sRateRatioOff = ratio; snprintf(msg, sizeof(msg), "speed check (normal rate): ball moved at %.2f x its velocity", ratio); BFLog(PP_LOG, (const char *)msg); return; }
+    sRateRatio = ratio;
+    sRateChecks++;
+    bool bad = ratio < 0.8f || ratio > 1.25f;
+    sRateBad = bad ? sRateBad + 1 : 0;
+    snprintf(msg, sizeof(msg), "speed check (double rate): ball moved at %.2f x its velocity%s", ratio, bad ? " - out of range" : "");
+    BFLog(PP_LOG, (const char *)msg);
+    if (sRateBad >= 2) {
+        sRateBroken = true;
+        sRateWhy = "switched itself off: physics ran at the wrong speed";
+        RateApply(false);
+    }
+}
+
+static void RateTick() {
+    if (!sSettled) return;
+    RateSpeedCheck();
+    if (sFrame % 30 != 0) return;
+    // A replay plays one recorded frame per physics step, so it runs at the rate its throw was recorded at (1.7.1 put
+    // the normal rate back on the replay screen, which played double-rate throws at half speed).
+    bool replay = sMode == MODE_FUN && sLoc == LOC_REPLAYER;
+    bool want = gBF.pinPhys && gBF.pinRate2x && !sRateBroken && (replay ? sRateLastThrow : gBFStatus.offline);
+    if (want && !sRateOn) RateApply(true);
+    else if (!want && sRateOn) RateApply(false);
+    else if (sRateOn && sTM && *(int64_t *)(sTM + 0x50) != (sRateCount0 + 1) / 2) {   // something put the step back
+        sRateOn = false;
+        BFLog(PP_LOG, "the engine's step changed by itself: double rate will be applied again");
+    }
+}
+
+static void RateDebug(char *buf, size_t size) {
+    snprintf(buf, size, "physics rate: want=%d on=%d step=%.3f ms (game %.3f) | %s | speed checks %d, last %.2f (normal rate %.2f)",
+             gBF.pinRate2x ? 1 : 0, sRateOn ? 1 : 0, RateManagedStep() * 1000.0f, sRateCount0 ? sRateCount0 * 1000.0 / 141120000.0 : 7.5,
+             sRateWhy, sRateChecks, sRateRatio, sRateRatioOff);
+}
+
+// ---- the game's own settings, for the game modes ----
+// What the game has (1.907): GameParams.GetSetting(type) reads the current mode's GameSettings (GameParams._allSettings,
+// a Dictionary<GameModes, GameSettings>; mode NONE (4) reads another mode). GameParams.SetSetting saves to disk
+// (GameSettings.SaveState); GameSettings.SetSetting on the mode's own object changes memory only. SettingType:
+// G_SOUNDS 0, OFF_CROSSOVER 1, CHANGE_OIL 2, CHANGE_LANE 3, SHOW_OIL_PATTERN 4, LIFT_BUMPERS 5, FRAME_COUNT 6 ...
+// OilMapGenerator.IsActive = GetSetting(SHOW_OIL_PATTERN) > 0 && player level > 2, and ReDrawOil only shows the oil when
+// it's active, so with that setting at 0 in memory the game never puts the oil on the lane.
+static const MethodInfo *sGsGet = nullptr, *sGsSetMem = nullptr, *sGsSetSaved = nullptr, *sGsItem = nullptr;
+static Il2CppClass *sGsParams = nullptr;
+static void *GameSettingsNow() {
+    if (!sGsParams) sGsParams = FindClass("", "GameParams");
+    if (!sGsParams) return nullptr;
+    void *dict = nullptr;
+    static FieldInfo *all = nullptr;
+    if (!all) all = StaticField(sGsParams, "_allSettings");
+    if (!all) return nullptr;
+    StaticRead(all, &dict);
+    if (!dict) return nullptr;
+    if (!sGsItem) sGsItem = XM(ClassOf(dict), "get_Item", 1);
+    int mode = sMode;
+    void *a[] = { &mode };
+    bool ok = false;
+    void *gs = sGsItem ? (void *)Invoke(sGsItem, dict, a, &ok) : nullptr;
+    if (!ok || !gs) return nullptr;
+    if (!sGsGet) {
+        sGsGet = XM(ClassOf(gs), "GetSetting", 1);
+        sGsSetMem = XM(ClassOf(gs), "SetSetting", 2);
+        sGsSetSaved = XM(sGsParams, "SetSetting", 2);
+    }
+    return gs;
+}
+static int GameSettingGet(int type) {
+    void *gs = GameSettingsNow();
+    void *a[] = { &type };
+    return gs && sGsGet ? InvokeInt(sGsGet, gs, a, -1) : -1;
+}
+static bool GameSettingSet(int type, int value, bool save) {   // save: through GameParams (as the game's own menu does)
+    void *gs = GameSettingsNow();
+    if (!gs) return false;
+    void *a[] = { &type, &value };
+    bool ok = false;
+    if (save && sGsSetSaved) Invoke(sGsSetSaved, nullptr, a, &ok);
+    else if (sGsSetMem) Invoke(sGsSetMem, gs, a, &ok);
+    return ok;
+}
+
+#define NT_LOG @"9-pin no-tap: %s"
+// ---- game mode: 9-pin no-tap (Practice) ----
+// What the game has (1.907, RunPsycsTest's update, constructor values): after a throw, once every pin is slower than
+// sleepVelocity (0.1 m/s) or asleep, it sets `end` and counts `_curTimeout` down from `_timeout` (1.5 s), then calls
+// endThrought, which reads each pin's position and up direction, builds the standing list and scores the throw
+// (InfoScreenManager.ProcessThrow); `_globalTimeout` (3.5 s) ends it anyway if the pins never settle.
+// No-tap: on a ball from a full rack, as soon as `end` is set with exactly one pin standing, BowlingPlus pushes that pin
+// back toward the pit (it slides and tips over) well inside the 1.5 s, so the game counts 10 and scores its own strike.
+// If it's somehow still up with 0.4 s to go, it's put under the deck, where the game keeps the pins that are down.
+static int sNtEndOff = -2, sNtCurOff = -2;
+static bool sNtThrow = false, sNtFull = false, sNtHandled = false;
+static int sNtPin = -1, sNtKnocks = 0, sNtFallbacks = 0;
+
+static bool NtPinStanding(int i, void *go) {
+    float lean = TurnPinLean(i);
+    if (lean < 0 || lean > 20.0f) return false;
+    bool ok = false;
+    void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+    Il2CppObject *pb = ok && tr && X.tr_getPos ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+    if (!ok || !pb) return false;
+    BFVec3 p = *(BFVec3 *)Unbox(pb);
+    return p.z > -0.05f && p.z < 0.1f && p.y < 19.2f && p.y > 17.5f;   // upright, on the deck
+}
+
+static void NoTapTick() {
+    bool want = gBF.noTap9 && gBFStatus.offline && sSettled && sTurnKeep;
+    if (!want) { sNtThrow = false; return; }
+    void *rpt = sRPT.get();
+    if (!rpt || !N.RB_setVel) return;
+    if (sNtEndOff == -2) {
+        char tn[64];
+        Il2CppClass *k = ClassOf(rpt);
+        sNtEndOff = FieldTypeName(k, "end", tn, sizeof(tn)) && !strcmp(tn, "System.Boolean") ? FieldOffset(k, "end") : -1;
+        sNtCurOff = FieldTypeName(k, "_curTimeout", tn, sizeof(tn)) && !strcmp(tn, "System.Single") ? FieldOffset(k, "_curTimeout") : -1;
+    }
+    if (sNtEndOff < 0 || sNtCurOff < 0) return;
+    if (sLoc == LOC_THROWING && !sNtThrow) {             // a throw: was the rack before it full?
+        bool full = sTurnCount == 10;
+        for (int i = 0; i < sTurnCount; i++) if (!sTurnHave[i] || !sTurnWasUp[i]) full = false;
+        sNtThrow = true;
+        sNtFull = full;
+        sNtHandled = false;
+        sNtPin = -1;
+    }
+    if (sLoc == LOC_START_POS || sLoc == LOC_BALL_RETURNER) sNtThrow = false;
+    if (!sNtThrow || !sNtFull || !At<bool>(rpt, sNtEndOff)) return;
+    Il2CppArray *kegs = TurnKegels();
+    if (!kegs || Len(kegs) != 10) return;
+    if (!sNtHandled) {
+        sNtHandled = true;
+        int standing = 0, which = -1;
+        for (int i = 0; i < 10; i++) {
+            void *go = Elem(kegs, i);
+            if (Alive(go) && NtPinStanding(i, go)) { standing++; which = i; }
+        }
+        if (standing != 1) return;
+        void *rb = GetComp(Elem(kegs, which), N.tRigidbody);
+        if (!rb) return;
+        BFVec3 push = { 0.0f, 1.3f, 0.0f };             // toward the pit: friction at the base tips it over
+        void *a[] = { &push };
+        Invoke(N.RB_setVel, rb, a);
+        sNtPin = which;
+        sNtKnocks++;
+        char msg[96];
+        snprintf(msg, sizeof(msg), "9 on the first ball: the %d pin goes over for the strike", which + 1);
+        BFLog(NT_LOG, (const char *)msg);
+        return;
+    }
+    if (sNtPin < 0) return;
+    float left = At<float>(rpt, sNtCurOff);
+    void *go = Elem(kegs, sNtPin);
+    if (left < 0.4f && Alive(go) && NtPinStanding(sNtPin, go)) {   // still up: put it where the game keeps down pins
+        bool ok = false;
+        void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+        Il2CppObject *pb = ok && tr && X.tr_getPos ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+        static const MethodInfo *setPos = XM(X.Transform, "set_position", 1, "UnityEngine.Vector3");
+        if (ok && pb && setPos) {
+            BFVec3 p = *(BFVec3 *)Unbox(pb);
+            p.z = -200.0f;
+            void *a[] = { &p };
+            Invoke(setPos, tr, a);
+            sNtFallbacks++;
+            BFLog(NT_LOG, "the pin stayed up: put it down");
+        }
+        sNtPin = -1;
+    }
+}
+
+static void NoTapDebug(char *buf, size_t size) {
+    snprintf(buf, size, "9-pin no-tap: on=%d fields=%d/%d knocked over=%d put down=%d", gBF.noTap9 ? 1 : 0, sNtEndOff, sNtCurOff, sNtKnocks, sNtFallbacks);
+}
+
+static void PinPhysStatus(char *buf, size_t size) {
+    char part[3][120];
+    for (int k = 0; k < 3; k++) {
+        const PPStats &s = sPPStats[k];
+        if (!s.balls) snprintf(part[k], sizeof(part[k]), "no first balls yet");
+        else snprintf(part[k], sizeof(part[k]), "%d first ball%s, %d strike%s (%.0f%%), %.1f pins", s.balls, s.balls == 1 ? "" : "s",
+                      s.strikes, s.strikes == 1 ? "" : "s", 100.0 * s.strikes / s.balls, (double)s.pins / s.balls);
+    }
+    snprintf(buf, size, "Realistic: %s\nRealistic + double rate: %s\nGame's own: %s%s%s", part[1], part[2], part[0],
+             sRateBroken ? "\nDouble rate: " : "", sRateBroken ? sRateWhy : "");
+}
+
+static void PinPhysDebug(char *buf, size_t size) {
+    int topPin = -1, topN = 0;
+    for (int i = 0; i < 10; i++) if (sPPStats[1].leaves[i] > topN) { topN = sPPStats[1].leaves[i]; topPin = i + 1; }
+    snprintf(buf, size, "pin physics: on=%d friction=%.2f (own %.2f/%.2f) colliders=%d applied=%d sets=%d fails=%d | first balls realistic %d/%d strikes %d pins (top leave %d x%d) | own %d/%d strikes %d pins",
+             gBF.pinPhys ? 1 : 0, PinFriction(), sPPCount ? sPPSf0[0] : -1.0f, sPPCount ? sPPDf0[0] : -1.0f, sPPCount, sPPApplied ? 1 : 0, sPPSets, sPPFails,
+             sPPStats[1].strikes, sPPStats[1].balls, sPPStats[1].pins, topPin, topN, sPPStats[0].strikes, sPPStats[0].balls, sPPStats[0].pins);
+    size_t used = strlen(buf);
+    if (used + 1 < size) snprintf(buf + used, size - used, " | double rate %d/%d strikes %d pins", sPPStats[2].strikes, sPPStats[2].balls, sPPStats[2].pins);
+}
+
+NSString *BFPinPhysStatus(void) {             // for the menu
+    char buf[300];
+    PinPhysStatus(buf, sizeof(buf));
+    return @(buf);
+}
+
 NSData *BFGamePinPNG(void) {                     // the game's current pin picture (for the pin library), main thread
     std::vector<uint8_t> png;
     if (!sSettled || !GamePinPNG(png)) return nil;
@@ -3005,10 +3474,37 @@ static int RandomUnlockedOil(int avoid) {         // returns OIL_SELECTED value 
     return picks[arc4random_uniform((uint32_t)picks.size())];
 }
 
+// The oil used to flash on the lane for a moment after picking a ball: the game's SelectBall redraws the oil and shows it
+// (OilMapGenerator.ReDrawOil), and this tick hid it again a frame later. Now, while invisible oil is on, the game's own
+// "show oil pattern" setting is 0 in memory (not saved), so the game never shows it; it's restored (and saved) when
+// invisible oil is turned off. gBF.oilShowOrig keeps the original across a crash.
+#define INVIS_LOG @"invisible oil: %s"
+static int sInvisShowOrig = 0;
 static void OilInvisibleTick() {
     void *gen = OilGenerator();
     bool want = gBF.oilInvisible && InPracticeOil();
     bool safe = sLoc == LOC_START_POS || sLoc == LOC_BALL_RETURNER || sLoc == LOC_UPPER_SCREEN;
+    if (!sInvisShowOrig && gBF.oilShowOrig > 0) sInvisShowOrig = gBF.oilShowOrig;   // (left over from a crash)
+    if (want && sSettled && sMode == MODE_FUN) {
+        int cur = GameSettingGet(4);                    // SHOW_OIL_PATTERN
+        if (cur > 0 && GameSettingSet(4, 0, false)) {
+            if (!sInvisShowOrig) sInvisShowOrig = cur;
+            if (gBF.oilShowOrig != sInvisShowOrig) { gBF.oilShowOrig = sInvisShowOrig; BFSaveConfig(); }
+            bool off = false;
+            void *a[] = { &off };
+            if (gen && N.OG_showOnLane) Invoke(N.OG_showOnLane, gen, a);   // hide what's on the lane now
+            BFLog(INVIS_LOG, "the game's oil display is off while invisible oil is on");
+        }
+    }
+    if (!want && sInvisShowOrig > 0 && safe && sSettled && sMode == MODE_FUN) {
+        if (GameSettingSet(4, sInvisShowOrig, true)) {  // back, and saved (as the game's own settings menu does)
+            sInvisShowOrig = 0;
+            gBF.oilShowOrig = 0;
+            BFSaveConfig();
+            if (gen && N.OG_reloadRedraw && sInvisOrig <= 0) Invoke(N.OG_reloadRedraw, gen, nullptr);   // show it again
+            BFLog(INVIS_LOG, "the game's oil display is back");
+        }
+    }
     if (!want) {
         if (sInvisOrig > 0 && safe && gen && N.OG_reloadRedraw) {   // put the pattern you picked back
             SetOilSelected(sInvisOrig);
@@ -4106,8 +4602,10 @@ void BFEngineTick(void) {
             DiagTick();
             OilTick();
             FpsTick();
-            PinFixTick();
             PinTurnTick();
+            PinPhysTick();
+            RateTick();
+            NoTapTick();
             BgTick();
             BannerTopTick();
             PinImageTick();
@@ -4246,8 +4744,8 @@ NSString *BFDebugInfo(void) {
     [s appendFormat:@"BowlingPlus v%@ | iOS %@ | %s\n", BF_VERSION, [UIDevice currentDevice].systemVersion, u.machine];
     [s appendFormat:@"engine=%d settled=%d safe=%d mode=%d loc=%d offline=%d tutorial=%d frame=%d\n",
         gBFStatus.engineReady, sSettled, gBFSafeMode, sMode, sLoc, gBFStatus.offline, sInTutorial, sFrame];
-    [s appendFormat:@"cfg: skin=%d pins=%d pinSpec=%d speed=%.1f spare=%d auto=%d mask=0x%03x fps120=%d\n",
-        gBF.textureFix, gBF.pinFix, gBF.pinSpec, gBF.speedMult, gBF.spareMode, gBF.spareAuto, gBF.lastPinMask, gBF.fps120];
+    [s appendFormat:@"cfg: skin=%d pinPhys=%d pinFric=%.2f speed=%.1f spare=%d auto=%d mask=0x%03x fps120=%d\n",
+        gBF.textureFix, gBF.pinPhys, PinFriction(), gBF.speedMult, gBF.spareMode, gBF.spareAuto, gBF.lastPinMask, gBF.fps120];
     [s appendFormat:@"%@ | skinKind=%d\n", sBallLine.length ? sBallLine : @"no current ball", sCurSkin];
     bool live = N.ok && !gBFSafeMode && sSettled;
     ListView cat;
@@ -4280,8 +4778,8 @@ NSString *BFDebugInfo(void) {
     {
         [s appendFormat:@"pin image: on=%d materials=%d size=%d fails=%d\n", gBF.pinImage, sPinImgMats, sPinImgSize, sPinImgFails];
     }
-    [s appendFormat:@"loading: unstick=%d rescued=%d spinner=%d | ipv4=%d dnsSlots=%d | pinSpec(pins only)=%d ball=%d\n",
-        gBF.unstick, sUnstuckCount, sSpinnerCount, gBF.gameIPv4, BFDnsHookSlots(), gBF.pinSpec, BallCDM()];
+    [s appendFormat:@"loading: unstick=%d rescued=%d spinner=%d | ipv4=%d dnsSlots=%d | ball cdm=%d\n",
+        gBF.unstick, sUnstuckCount, sSpinnerCount, gBF.gameIPv4, BFDnsHookSlots(), BallCDM()];
     {
         void *inv = SpinInventary();
         [s appendFormat:@"pin tap: %@\n", sTapNote];
@@ -4297,6 +4795,6 @@ NSString *BFDebugInfo(void) {
                     N.RB_getLinDamp ? InvokeFloat(N.RB_getLinDamp, rb, -1) : -1.f,
                     N.RB_getAngDamp ? InvokeFloat(N.RB_getAngDamp, rb, -1) : -1.f, lv.size];
     }
-    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; TurnDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; BgDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; }
+    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; TurnDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; BgDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; PinPhysDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; RateDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; NoTapDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; }
     return s;
 }

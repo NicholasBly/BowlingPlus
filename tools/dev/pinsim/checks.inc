@@ -40,12 +40,15 @@ int main() {
 
     Throw({ 1, 2, 4 }, false);
     Check("ball 1 knocks 1, 2, 4: the rack for ball 2 keeps every standing pin's turn", Same(Turns(), t0, Except({ 1, 2, 4 })));
+    Check("pin physics count: that rack reports a first ball, 3 down, 3-5-6-7-8-9-10 left",
+          gLastFull && gLastKnocked == 3 && gLastLeave == ((1u << 2) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 9)));
     Check("the pinsetter lifted the 7 standing pins showing their own turns (reflections too)", gLifted.size() == 7 && PinsetterMatched());
     for (int k = 0; k < 5; k++) Pickup();
     Check("pickups before ball 2: standing pins keep their turns", Same(Turns(), t0, Except({ 1, 2, 4 })));
     int new1 = sTurnNew;
     Throw({ 3, 5, 6, 7, 8, 9, 10 }, true);
     std::vector<float> t1 = Turns();
+    Check("pin physics count: the spare's rack reports a second ball (not a full rack), 7 down, none left", !gLastFull && gLastKnocked == 7 && gLastLeave == 0);
     Check("spare, new frame: all 10 pins get new turns", sTurnNew - new1 == 10);
     Check("the pinsetter set the new rack down already showing those new turns", gLifted.size() == 10 && PinsetterMatched());
     for (int k = 0; k < 5; k++) Pickup();
@@ -53,6 +56,7 @@ int main() {
 
     Throw({}, false);
     Check("gutter ball 1: the rack for ball 2 keeps all 10 turns", Same(Turns(), t1));
+    Check("pin physics count: a gutter ball reports a first ball, 0 down, all 10 left", gLastFull && gLastKnocked == 0 && gLastLeave == 0x3FF);
     Check("... and the pinsetter lifted all 10 showing them", gLifted.size() == 10 && PinsetterMatched());
     int new2 = sTurnNew;
     Throw({ 7, 10 }, true);
@@ -64,6 +68,7 @@ int main() {
     int new3 = sTurnNew;
     Throw(All(), true);
     std::vector<float> t3 = Turns();
+    Check("pin physics count: a strike reports a first ball, 10 down", gLastFull && gLastKnocked == 10 && gLastLeave == 0);
     Check("strike: all 10 get new turns in the next frame", sTurnNew - new3 == 10);
     Check("... shown that way by the pinsetter on the way down", PinsetterMatched());
 

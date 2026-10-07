@@ -1,6 +1,12 @@
 // The fake lane: racks exactly like the game's RunPsycsTest.UpdatePinPositions (decoded from 1.907): copy _kegsUp
 // into mdl_ShootCurrentData.CurrentData.Before, then for each kegel in order move it, draw Random.Range(0, 16)
 // through the game's engine-function pointer, and set rotation = turn about world Z (no lean).
+// what the rack reports for the pin physics counts (Game.cpp PinPhysRack; recorded here)
+static int gRackReports = 0, gLastKnocked = -1;
+static bool gLastFull = false;
+static unsigned gLastLeave = 0;
+static void PinPhysRack(int knocked, bool fullRack, unsigned leave) { gRackReports++; gLastKnocked = knocked; gLastFull = fullRack; gLastLeave = leave; }
+
 static std::vector<int32_t> gDraws;                  // everything the engine drew, in order
 static uint32_t gSeed = 20261006;
 static int32_t EngineRandomRangeInt(int32_t lo, int32_t hi) {

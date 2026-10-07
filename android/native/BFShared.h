@@ -6,7 +6,7 @@
 #include "Platform.h"
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION "1.6.9"
+#define BF_VERSION "1.7.2"
 #define BF_PLATFORM_VERSION "android-1"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
@@ -41,6 +41,11 @@ typedef struct {
     // (new fields go last: the initializers in Engine.mm / Engine.cpp are positional)
     bool     bgImage;      // the alley background uses the player's own picture (looks only)
     bool     bgTitle;      // ...and the room's name stays on it
+    bool     pinPhys;      // realistic pin physics (Practice): pin collider friction, ball continuous collision
+    float    pinFric;      // ...the pins' friction (0 = the recommended 0.25)
+    bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
+    int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
+    bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
 } BFConfig;
 
 // Live game status for the menu
@@ -84,7 +89,8 @@ Json BFOilBuiltins(void);                                   // [{index, name, fe
 Json BFOilCompute(int templateIndex, const Json *fwd, const Json *rev, int drop, bool exact, int feet, bool precise);   // null when it couldn't
 Str BFPinImagePath(void);
 Str BFBgImagePath(void);
-bool BFGamePinToFile(const Str &path);      // Game.cpp: the game's current pin picture as PNG (Unity's thread)                    // files/BowlingPlus/bg_image.png (fitted to the wall, 2820:850)
+bool BFGamePinToFile(const Str &path);
+Str BFPinPhysStatus(void);                  // Game.cpp: first-ball counts with realistic pin physics on and off      // Game.cpp: the game's current pin picture as PNG (Unity's thread)                    // files/BowlingPlus/bg_image.png (fitted to the wall, 2820:850)
 Str BFPinImageStatus(void);
 void BFOilApplyHue(void);
 void BFOilSetCustom(const Json *pattern);                   // nullptr = off

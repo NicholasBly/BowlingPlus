@@ -829,6 +829,25 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
 
 #pragma mark - pattern library (+ QR share / import)
 
+// A library row's columns: the dot, thumbnail and menu button keep their size; only the text column grows or
+// shrinks (and wraps). Without this the dot label stretched in short rows (pushing the thumbnail right) and got
+// squeezed into a "(" in long ones.
+static void LibraryRowLayout(UIView *dot, UIView *thumb, UIView *texts, UIView *more) {
+    dot.translatesAutoresizingMaskIntoConstraints = NO;
+    [dot.widthAnchor constraintEqualToConstant:24].active = YES;
+    if ([dot isKindOfClass:[UILabel class]]) ((UILabel *)dot).textAlignment = NSTextAlignmentCenter;
+    for (UIView *v in @[dot, thumb, more ?: dot]) {
+        [v setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [v setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    }
+    [texts setContentHuggingPriority:UILayoutPriorityDefaultLow - 1 forAxis:UILayoutConstraintAxisHorizontal];
+    [texts setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    for (UIView *l in ((UIStackView *)texts).arrangedSubviews) {
+        [l setContentHuggingPriority:UILayoutPriorityDefaultLow - 1 forAxis:UILayoutConstraintAxisHorizontal];
+        [l setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    }
+}
+
 @interface BFOilLibrary : NSObject <PHPickerViewControllerDelegate, AVCaptureMetadataOutputObjectsDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIView *overlay, *card, *scanOverlay;
 @property (nonatomic, strong) UIStackView *list;
@@ -947,7 +966,9 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
         [more addTarget:self action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
         [views addObject:more];
     }
+    LibraryRowLayout(dot, thumb, texts, views.count > 3 ? views.lastObject : nil);
     UIStackView *row = OStack(views, UILayoutConstraintAxisHorizontal, 10);
+    row.alignment = UIStackViewAlignmentCenter;
     row.translatesAutoresizingMaskIntoConstraints = NO;
     [box addSubview:row];
     [NSLayoutConstraint activateConstraints:@[
@@ -2147,7 +2168,9 @@ NSString *BFPinUseLast(void) { return PinUse(PinEntry(PinLastId()) ? PinLastId()
         [more addTarget:self action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
         [views addObject:more];
     }
+    LibraryRowLayout(dot, thumb, texts, views.count > 3 ? views.lastObject : nil);
     UIStackView *row = OStack(views, UILayoutConstraintAxisHorizontal, 10);
+    row.alignment = UIStackViewAlignmentCenter;
     row.translatesAutoresizingMaskIntoConstraints = NO;
     [box addSubview:row];
     [NSLayoutConstraint activateConstraints:@[

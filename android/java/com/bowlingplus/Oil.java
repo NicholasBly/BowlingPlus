@@ -166,7 +166,9 @@ public final class Oil {
         box.setBackground(active ? UiKit.roundStroke(Color.argb(40, 255, 204, 61), 14, UiKit.YELLOW, 1.5f, c) : UiKit.round(UiKit.dim(0.05f), 14, c));
         int pad = UiKit.dp(c, 10);
         box.setPadding(UiKit.dp(c, 12), pad, UiKit.dp(c, 6), pad);
-        box.addView(UiKit.label(c, active ? "\u25C9" : "\u25CB", 20, active ? UiKit.YELLOW : UiKit.dim(0.4f), true));
+        TextView dot = UiKit.label(c, active ? "\u25C9" : "\u25CB", 20, active ? UiKit.YELLOW : UiKit.dim(0.4f), true);
+        dot.setGravity(android.view.Gravity.CENTER);
+        box.addView(dot, UiKit.lp(UiKit.dp(c, 24), LinearLayout.LayoutParams.WRAP_CONTENT));   // a fixed column, so the thumbnails line up
         if (p != null) {
             int tw = UiKit.dp(c, 96), th = UiKit.dp(c, 30);
             ImageView thumb = new ImageView(c);

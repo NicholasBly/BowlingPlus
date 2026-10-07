@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.6.9"
+#define BF_VERSION @"1.7.2"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 
@@ -34,6 +34,11 @@ typedef struct {
     // (new fields go last: the initializers in Engine.mm / Engine.cpp are positional)
     bool     bgImage;      // the alley background uses the player's own picture (looks only)
     bool     bgTitle;      // ...and the room's name stays on it
+    bool     pinPhys;      // realistic pin physics (Practice): pin collider friction, ball continuous collision
+    float    pinFric;      // ...the pins' friction (0 = the recommended 0.25)
+    bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
+    int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
+    bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
 } BFConfig;
 
 // Live game status for the menu
@@ -90,7 +95,8 @@ NSString *BFPinUseLast(void);
 NSString *BFBgImagePath(void);                     // Game.mm: Documents/BowlingPlus/bg_image.png (fitted to the wall, 2820:850)
 NSData *BFGamePinPNG(void);                        // Game.mm: the game's current pin picture as PNG (main thread), nil if it can't                      // OilUI.mm: puts the last chosen picture back on (the menu switch)
 void BFBgShowSheet(void);                          // OilUI.mm: the alley background sheet
-NSString *BFBgStatus(void);                        // OilUI.mm: a line for the menu
+NSString *BFBgStatus(void);
+NSString *BFPinPhysStatus(void);                   // Game.mm: first-ball counts with realistic pin physics on and off                        // OilUI.mm: a line for the menu
 void BFOilApplyHue(void);                         // Game.mm: push gBF.oilHue to the lane now      // runs the game's Kegel engine
 NSArray<UIColor *> *BFOilColors(int n, float *maxHeight);                       // the game's oil color gradient
 void BFOilSetCustom(NSDictionary *pattern);

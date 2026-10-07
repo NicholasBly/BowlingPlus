@@ -2,6 +2,54 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.7.2] - 2026-10-07
+
+### Added
+- **Game modes** (new menu category, Practice):
+  - **Invisible oil** moved here from the Oil category.
+  - **9-pin no-tap**: 9 or more on a full rack counts as a strike. The game counts the pins 1.5 s after they all settle (`RunPsycsTest.end`, `_curTimeout`); when the first ball leaves exactly one pin standing, BowlingPlus pushes it back toward the pit right as they settle, so the game counts 10 and scores its own strike and moves on (no score editing). If it somehow stays up, it's put under the deck (where the game keeps down pins) 0.4 s before the count. Logged with which pin went over; Copy debug info has a `9-pin no-tap:` line.
+
+### Fixed
+- **Replays of double-rate throws played at half speed.** A replay plays one recorded frame per physics step (`ReplayManager.FixedUpdateCall`), and BowlingPlus put the normal rate back on the replay screen (its Practice check excluded the replayer). A replay now runs at the rate its throw was recorded at. The pin friction also stays on through replays (it was being removed and put back around every replay).
+- **Invisible oil: the oil flashed on the lane for a moment after picking a ball.** The game's ball selection redraws the oil and shows it, and BowlingPlus hid it a frame later. Now, while invisible oil is on, the game's own "show oil pattern" setting is 0 in memory only (`GameSettings.SetSetting`, not saved), so the game never shows it; turning invisible oil off restores and saves it (`GameParams.SetSetting`, as the game's menu does). The original is kept in BowlingPlus's settings in case the app is closed mid-game.
+
+### Not tested on a device when this was written
+All three. Checked without a device: both platforms compile; the shared native blocks are identical on both platforms; the pin simulation (41 checks) and the engine-lookup check pass; the game's code paths were read in the Android binary (endThrought timing, the settings dictionary, the replay's per-step playback).
+
+## [1.7.1] - 2026-10-07
+
+### Added
+- **Double physics rate (experimental)** in Pin physics (Practice, with Realistic pin physics): the game's physics runs every 3.75 ms instead of 7.5. Unity doesn't let apps change this (the setter is stripped from the engine itself), so BowlingPlus changes the engine's own fixed-step setting in memory: found through the engine's surviving step getter, written only after checking the values are laid out exactly as read from both builds, and read back through the game's own getter. During every throw it checks the ball moves at its real speed; if physics ever runs fast or slow (twice in a row), it puts the engine back and stays off until restart. In the PhysX model (1,012 Bowlscore shots each): 37.5 % -> 40.5 % strikes (real pins 42-44 %), pocket throws 37 % -> 46 %, entry angle matters more (33 % at 0-3 degrees, 44 % at 6-10), and the 10 pin stays the most common single-pin leave. Friction stays 0.25: higher friction with the double rate made the 5 pin the most common leave.
+- First-ball counts get a third group, **Realistic + double rate**; Copy debug info gets a `physics rate:` line (the step, why it's on or off, and the speed checks, with the normal-rate check as a baseline).
+- **Android signing key.** The APK is now signed with BowlingPlus's own key (SHA-256 `8E:B1:67:00:A8:33:D9:60:CE:F7:10:D1:80:08:29:BC:59:B8:98:20:A5:EC:5A:35:24:7F:AA:80:FF:BB:8A:59`), so future versions install over it without uninstalling. Installing this one over an older BowlingPlus APK still needs one last uninstall (the old ones used throwaway keys).
+- `tools/dev/physrate/check.py`: checks the engine lookup against the game's libunity.so and UnityFramework.
+
+### Fixed
+- **Pattern and pin libraries:** rows didn't line up (the radio dot stretched in short rows, pushing the thumbnail right, and was squeezed into a "(" in long ones). The dot, thumbnail and menu button now keep their size and only the text column grows or wraps (iOS); Android's dot gets the same fixed column.
+
+### Not tested on a device when this was written
+The double rate, the row layout and the signed APK. Checked without a device: both platforms compile; the shared native blocks are identical on both platforms; the engine lookup finds the TimeManager getter in both real binaries and refuses a lookalike (`tools/dev/physrate`); the pin simulation passes all 41 checks; the APK verifies with the new key.
+
+## [1.7.0] - 2026-10-07
+
+### Added
+- **Pin physics** (new menu category, Practice only):
+  - **Realistic pin physics**: every pin on the lane gets friction 0.25 (sliding and starting) instead of the game's 0.5 / 0.3, and the ball uses continuous collision. Turning it on sets the recommended values; off, outside Practice or on a new scene, the pins get their own values back.
+  - **Pin friction** slider, 0.10 to 0.50 (Reset = 0.25).
+  - **Counts**: first balls from a full rack with it on and with it off (strikes, strike %, average pins), shown under the switch and in Copy debug info (`pin physics:` line, with the most common single-pin leave). Every first and second ball is logged with what it left, so you can compare by feel and by numbers.
+- **`PIN_PHYSICS_STUDY.md`** and **`tools/dev/pinlab`**: the game's pin physics rebuilt on PhysX 4.1 (the engine Unity 6 embeds) with the game's own pins, materials, lane, rack and settings, checked against the US Bowling Congress's Bowlscore tests of real pins. In that model the game strikes 25 % of the time on Bowlscore's grid where real pins strike 42-44 %, and entry angle makes no difference; with pin friction 0.25 it strikes 37 %, entry angle matters again (31 % at 0-3 degrees, 40 % at 6-10), and the 10 pin is the most common single-pin leave in pocket throws. Restitution barely matters (as USBC found), and the coarse physics step, larger contact offsets or more solver iterations aren't reachable or don't help.
+
+### Removed
+- **"Pin physics fix"**: it changed the `PinHolder` pins, which never move; the lane's pins are the scene's kegels, and the game rebuilds their Rigidbodies at every rack anyway. It never reached a pin you bowl at.
+- **"Improve spinning pin collision (experimental)"**: speculative collisions give spinning and head-first pins huge spurious impulses in the model (speed errors up to 20x).
+
+### Changed
+- The ball's continuous collision now follows "Realistic pin physics" (or a speed boost, as before) instead of the old pin fix.
+- `VERIFIED_NOTES.md`: section 5 corrected (the 7 rad/s spin cap and "project defaults" were about the PinHolder pins), new section 5f with the lane pins' real setup, what the engine still lets BowlingPlus change, and the study's results.
+
+### Not tested on a device when this was written
+All of it. Checked without a device: both platforms compile; the shared native blocks are identical on both platforms; the pin simulation passes all 41 checks, including four new ones for the first-ball counts (a first ball with pins left, a spare, a strike, a gutter ball); the settings' effect was measured in the PhysX 4.1 model, not in the game.
+
 ## [1.6.9] - 2026-10-07
 
 ### Added
