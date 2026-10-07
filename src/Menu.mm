@@ -48,6 +48,8 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIButton *updateButton, *helpButton;
 @property (nonatomic, strong) UISwitch *pinImageSwitch;
 @property (nonatomic, strong) UILabel *pinImageLabel;
+@property (nonatomic, strong) UISwitch *bgSwitch;
+@property (nonatomic, strong) UILabel *bgLabel;
 @property (nonatomic, copy) NSString *updateURL;
 @property (nonatomic, strong) UIButton *oilColorButton;
 @property (nonatomic, strong) UISwitch *specSwitch, *fpsSwitch, *unstickSwitch, *ipv4Switch, *menuButtonSwitch;
@@ -569,17 +571,20 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     fpsStack.axis = UILayoutConstraintAxisVertical;
     fpsStack.spacing = 6;
     self.pinImageSwitch = [self switchOn:gBF.pinImage action:@selector(pinImageChanged:)];
-    UIButton *photos = [self button:@"From Photos" filled:NO small:YES action:@selector(pinImageFromPhotos)];
-    UIButton *files = [self button:@"From Files" filled:NO small:YES action:@selector(pinImageFromFiles)];
-    UIStackView *pickRow = [self hstack:@[photos, files] spacing:8];
-    pickRow.distribution = UIStackViewDistributionFillEqually;
     self.pinImageLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIStackView *pinStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Use my own pin image" help:@"Puts your own picture on the pins (all lanes). Draw on the wrap template: one sheet that wraps around the pin like paper, so there are no seams. Looks only." control:self.pinImageSwitch],
-        pickRow, [self button:@"Get the wrap template + guide" filled:NO small:YES action:@selector(pinImageGuide)], self.pinImageLabel]];
+        [self row:@"Custom pins" help:@"Puts a picture on the pins (all lanes): Brunswick Max Crown is built in, and you can add your own. Choose pins shows each one turning in 3D first. Looks only." control:self.pinImageSwitch],
+        [self button:@"\U0001F3B3  Choose pins\u2026" filled:NO small:YES action:@selector(pinLibraryTapped)], self.pinImageLabel]];
     pinStack.axis = UILayoutConstraintAxisVertical;
     pinStack.spacing = 8;
-    [stack addArrangedSubview:[self group:@"Pins & display" icon:@"\U0001F3A8" key:@"look" open:YES cells:@[[self cell:fpsStack], [self cell:pinStack]]]];
+    self.bgSwitch = [self switchOn:gBF.bgImage action:@selector(bgChanged:)];
+    self.bgLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    UIStackView *bgStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        [self row:@"Alley background" help:@"Puts your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): from Photos or Files, filled, fitted, stretched or tiled. Looks only." control:self.bgSwitch],
+        [self button:@"\U0001F5BC  Choose picture\u2026" filled:NO small:YES action:@selector(bgTapped)], self.bgLabel]];
+    bgStack.axis = UILayoutConstraintAxisVertical;
+    bgStack.spacing = 8;
+    [stack addArrangedSubview:[self group:@"Pins & display" icon:@"\U0001F3A8" key:@"look" open:YES cells:@[[self cell:fpsStack], [self cell:pinStack], [self cell:bgStack]]]];
 
     // ---- Help & diagnostics (folded by default)
     self.debugButton = [self button:@"Copy debug info" filled:NO small:NO action:@selector(copyDebugTapped)];
@@ -701,24 +706,23 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 - (void)oilBreakChanged:(UISwitch *)s  { gBF.oilBreakdown = s.on; BFSaveConfig(); }
 - (void)oilThickChanged:(UISwitch *)s  { gBF.oilThickness = s.on; BFSaveConfig(); }
 - (void)pinImageChanged:(UISwitch *)s {
-    gBF.pinImage = s.on;
+    if (s.on) {
+        BFPinUseLast();
+        if (!gBF.pinImage) { [self pinLibraryTapped]; return; }   // nothing chosen yet: open the library
+    } else {
+        gBF.pinImage = NO;
+        BFSaveConfig();
+    }
+    [self refresh];
+}
+- (void)pinLibraryTapped { [self hideMenu]; BFPinShowLibrary(); }
+- (void)bgTapped { [self hideMenu]; BFBgShowSheet(); }
+- (void)bgChanged:(UISwitch *)s {
+    if (s.on && ![[NSFileManager defaultManager] fileExistsAtPath:BFBgImagePath()]) { s.on = NO; [self bgTapped]; return; }   // nothing picked yet
+    gBF.bgImage = s.on;
     BFSaveConfig();
-    if (s.on && ![[NSFileManager defaultManager] fileExistsAtPath:BFPinImagePath()]) [self pinImageFromPhotos];   // nothing picked yet
     [self refresh];
 }
-- (void)pinImagePicked:(NSString *)message {
-    [self refresh];
-    self.pinImageLabel.text = message;
-}
-- (void)pinImageFromPhotos {
-    __weak BFMenu *weak = self;
-    BFPinImagePick(NO, ^(NSString *m) { [weak pinImagePicked:m]; });
-}
-- (void)pinImageFromFiles {
-    __weak BFMenu *weak = self;
-    BFPinImagePick(YES, ^(NSString *m) { [weak pinImagePicked:m]; });
-}
-- (void)pinImageGuide { BFPinImageShareGuide(); }
 - (void)oilColorTapped { [self hideMenu]; BFOilShowColorPicker(); }
 - (void)oilInvisChanged:(UISwitch *)s  { gBF.oilInvisible = s.on; BFSaveConfig(); [self refresh]; }
 - (void)oilLibraryTapped { [self hideMenu]; BFOilShowLibrary(); }
@@ -833,6 +837,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.arsenalLabel.hidden = self.arsenalLabel.text.length == 0;
     self.fpsLabel.hidden = self.fpsLabel.text.length == 0;
     self.pinImageLabel.hidden = self.pinImageLabel.text.length == 0;
+    self.bgLabel.hidden = self.bgLabel.text.length == 0;
 }
 
 - (void)syncControls {
@@ -850,7 +855,10 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilInvisSwitch.on = gBF.oilInvisible;
     self.oilThickSwitch.on = gBF.oilThickness;
     self.pinImageSwitch.on = gBF.pinImage;
-    self.pinImageLabel.text = BFPinImageStatus();
+    self.bgSwitch.on = gBF.bgImage;
+    self.bgLabel.text = BFBgStatus();
+    NSString *pinName = BFPinActiveName();
+    self.pinImageLabel.text = gBF.pinImage && pinName ? [NSString stringWithFormat:@"%@ \u00B7 %@", pinName, BFPinImageStatus()] : BFPinImageStatus();
     self.oilColorButton.backgroundColor = gBF.oilHue < 0 ? [UIColor colorWithRed:0.86 green:0.70 blue:0.50 alpha:1]
                                                         : [UIColor colorWithHue:gBF.oilHue saturation:0.85 brightness:0.95 alpha:1];
     [self.oilColorButton setTitle:gBF.oilHue < 0 ? @"game" : @"" forState:UIControlStateNormal];

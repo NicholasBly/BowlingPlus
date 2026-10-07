@@ -561,18 +561,17 @@ public final class Oil {
 
     public interface Cb { void run(String message); }
 
-    static void savePin(byte[] imageBytes, Cb done) {
-        new Thread(() -> {
-            String msg = savePinImage(imageBytes, true);
-            BP.UI.post(() -> { if (msg != null) done.run(msg); });
-        }).start();
-    }
+    static void savePin(byte[] imageBytes, Cb done) { Pins.addPicked(imageBytes, done); }   // into the pin library
 
-    // SavePinImage: wrap (~2:1) -> native wrap conversion + fill; square/other -> stretch + fill
-    static String savePinImage(byte[] imageBytes, boolean turnOn) {
-        if (imageBytes == null) return "That picture couldn't be read.";
+    // The picture in the game's layout (OilUI.mm PinProcess): wrap (~2:1) -> native wrap conversion + fill;
+    // square/other -> stretch + fill. png is null if it couldn't be read; msg says what happened.
+    static final class Processed { byte[] png; String msg; }
+    static Processed processPin(byte[] imageBytes) {
+        Processed r = new Processed();
+        r.msg = "That picture couldn't be read.";
+        if (imageBytes == null) return r;
         Bitmap img = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
-        if (img == null || img.getWidth() < 8 || img.getHeight() < 8) return "That picture couldn't be read.";
+        if (img == null || img.getWidth() < 8 || img.getHeight() < 8) return r;
         int w = img.getWidth(), h = img.getHeight();
         boolean wrap = w >= h * 1.5, square = Math.abs(w - h) < 2;
         int side;
@@ -588,20 +587,12 @@ public final class Oil {
             out = rgbaOnWhite(img, side, side);
             if (out != null) N.pinFill(out, side, true);
         }
-        if (out == null) return "Couldn't read that picture.";
-        byte[] png = BP.encodePng(out, side, side);
-        String path = N.call("pinImagePath");
-        try {
-            new java.io.File(path).getParentFile().mkdirs();
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(path)) { fos.write(png); }
-            if (turnOn) {
-                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(new java.io.File(new java.io.File(path).getParent(), "pin_image_source.png"))) { fos.write(imageBytes); }
-                Config.set("pinImage", true);
-            }
-        } catch (Throwable t) { return "Couldn't save the picture."; }
-        if (wrap) return "Wrap picture put on the pins (" + side + " px). Seams always match in this layout.";
-        return square ? "Pin picture saved (" + side + " px). It's on the pins now."
-                : "Pin picture saved. It wasn't square or 2:1, so it was stretched to " + side + " x " + side + " (game layout).";
+        if (out == null) { r.msg = "Couldn't read that picture."; return r; }
+        r.png = BP.encodePng(out, side, side);
+        r.msg = wrap ? "Wrap picture (" + side + " px). Seams always match in this layout."
+                : square ? "Pin picture (" + side + " px)."
+                : "It wasn't square or 2:1, so it was stretched to " + side + " x " + side + " (game layout).";
+        return r;
     }
 
     // draw the image onto white at w x h, return RGBA rows top-down

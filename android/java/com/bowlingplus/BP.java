@@ -161,6 +161,7 @@ public final class BP {
                 String cfg = N.call("start", a.toString());   // loads settings, starts the crash guard
                 Config.load(cfg);
                 Oil.start();                                  // the custom pattern you had on last time
+                Pins.migrate();                               // 1.6.8: your pin picture joins the pin library
                 OilTab.start();                               // the "Custom oil" tab on the practice pattern screen
                 MenuButton.start();                           // optional draggable on-screen button to open the menu
                 FbLogin.start();                              // force the browser login flow + watch for a Facebook login

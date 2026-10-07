@@ -78,7 +78,8 @@ static struct {
     Il2CppClass *InvData;
     Il2CppObject *tInvData;
     int inv_pinMat, inv_mirrorMat, inv_rpmFactor, inv_maxOmega, inv_maxRpm;
-    const MethodInfo *Comp_getTransform, *GO_getTransform, *Tr_getRot, *Tr_setRot, *Tr_getLocalRot, *Tr_setLocalRot;
+    const MethodInfo *Comp_getTransform, *GO_getTransform, *Tr_getRot, *Tr_setRot, *Tr_getLocalRot, *Tr_setLocalRot,
+                     *Tr_getLocalPos, *Tr_setLocalPos, *Tr_setLocalScale;
     int ph_pins, pin_physic, ldt_dlcID, ldt_toChange, ldt_objectID, item_itemId, item_baseId, shop_name, si_dlcLink;
     int ih_shop, ars_ballsData, ars_scroll;
     FieldInfo *gp_gameMode, *gp_location, *inv_currentBall, *ih_instance, *invd_instance;
@@ -290,6 +291,9 @@ static bool Resolve() {
         N.Tr_setRot      = Meth(tr, "set_rotation", 1);
         N.Tr_getLocalRot = Meth(tr, "get_localRotation", 0);
         N.Tr_setLocalRot = Meth(tr, "set_localRotation", 1);
+        N.Tr_getLocalPos = Meth(tr, "get_localPosition", 0);
+        N.Tr_setLocalPos = Meth(tr, "set_localPosition", 1);
+        N.Tr_setLocalScale = Meth(tr, "set_localScale", 1);
     }
     N.ldt_dlcID     = Off(N.LoadDLCTex, "dlcIDToLoad");
     N.ldt_toChange  = Off(N.LoadDLCTex, "toChangeTexture");
@@ -825,6 +829,72 @@ static void PinsetterTurnTick() {
     }
 }
 
+// ---- the sweeper's banner (everywhere, looks only) ----
+// What the game has (1.907, scene level1, read from the files): the blue "BELMO" banner on the pin sweeper is a
+// world-space Canvas, PinSpotter/animation_mashina/.../pinspotter_1:joint42/joint1/GrabliCaption/Canvas (about
+// 198 canvas units per metre). Its layers sit at different depths (canvas z): Image (a dark plate) +7.3, Bar (the
+// head-to-head timer) 0, and Logo 0 with Fan (the blue stars) 0, H2H (grey, head-to-head) -1 and Text (the
+// letters) -3 under it (Logo is scaled 0.962). The sweeper bar around it (mesh polySurface2130, skinned to joint42
+// and joint1) is a frame: front face at -4.95 around a window about x -122..122, y -10..11, a dark back panel at
+// +4.45, end blocks reaching -7.3, and it bends during the sweep (joint1 turns up to about 12 degrees against
+// joint42). So the banner sat recessed in the bar: on a device the bar covered both of its ends (B and O cut by
+// straight lines, both layers), and at the back of the lane the back panel covered the whole blue layer while the
+// letters, a little further forward, stayed. PinSpotterInfoPannel (jasonLogo = Logo, bar = Bar's Image) only
+// switches the two on and off, so a position set on them stays.
+// The fix: Logo and Bar are moved to z = -12, in front of every part of the bar (its most forward part, the end
+// blocks, is at -7.3), and sized to the bar's window: x -122.2..122.2, y -10.0..11.3 (measured from the mesh).
+static const float kBannerZ = -12.0f;
+static Ref sBannerPanel;
+static int sBannerLogoOff = -2, sBannerBarOff = -2;
+static int sBannerSets = 0, sBannerFails = 0;
+
+struct BFVec3 { float x, y, z; };
+
+// Moves one banner layer unless it's already there. Returns 1 moved, 0 already there, -1 failed.
+static int BannerPlace(void *tr, float h) {          // h: the layer's own rect height (canvas units)
+    bool ok = false;
+    Il2CppObject *b = Invoke(N.Tr_getLocalPos, tr, nullptr, &ok);
+    if (!ok || !b) return -1;
+    BFVec3 cur = *(BFVec3 *)Unbox(b);
+    if (fabsf(cur.z - kBannerZ) < 0.01f) return 0;
+    BFVec3 pos = { 0.0f, 0.65f, kBannerZ };
+    BFVec3 scale = { 244.4f / 256.0f, 21.3f / h, 0.962f };    // (z scale kept: the Logo's layers keep their order)
+    void *a[] = { &pos };
+    Invoke(N.Tr_setLocalPos, tr, a, &ok);
+    if (!ok) return -1;
+    void *c[] = { &scale };
+    Invoke(N.Tr_setLocalScale, tr, c, &ok);
+    return ok ? 1 : -1;
+}
+
+static void SweeperBannerTick() {
+    if (!N.Tr_getLocalPos || !N.Tr_setLocalPos || !N.Tr_setLocalScale || !N.GO_getTransform || !N.Comp_getTransform) return;
+    if (sFrame % 60 != 0) return;
+    void *panel = sBannerPanel.get();
+    if (!panel) {
+        Il2CppClass *k = FindClass("", "PinSpotterInfoPannel");
+        if (!k) return;
+        if (sBannerLogoOff == -2) {
+            char tn[64];
+            sBannerLogoOff = (FieldTypeName(k, "jasonLogo", tn, sizeof(tn)) && !strcmp(tn, "UnityEngine.GameObject")) ? FieldOffset(k, "jasonLogo") : -1;
+            sBannerBarOff = (FieldTypeName(k, "bar", tn, sizeof(tn)) && !strcmp(tn, "UnityEngine.UI.Image")) ? FieldOffset(k, "bar") : -1;
+        }
+        panel = FirstAlive(FindAll(TypeOf(k)));
+        if (!panel) return;
+        sBannerPanel.set(panel);
+    }
+    void *logo = sBannerLogoOff >= 0x10 ? At<void *>(panel, sBannerLogoOff) : nullptr;
+    void *bar = sBannerBarOff >= 0x10 ? At<void *>(panel, sBannerBarOff) : nullptr;
+    bool ok = false;
+    void *tr = Alive(logo) ? Invoke(N.GO_getTransform, logo, nullptr, &ok) : nullptr;
+    int r = (ok && tr) ? BannerPlace(tr, 22.0f) : -1;
+    if (r > 0) sBannerSets++; else if (r < 0 && logo) sBannerFails++;
+    ok = false;
+    tr = Alive(bar) ? Invoke(N.Comp_getTransform, bar, nullptr, &ok) : nullptr;
+    r = (ok && tr) ? BannerPlace(tr, 23.0f) : -1;
+    if (r > 0) sBannerSets++; else if (r < 0 && bar) sBannerFails++;
+}
+
 // Stands in for the engine's Random.RandomRangeInt. The game's Random.Range(int, int) jumps here with its
 // caller's return address intact, so __builtin_return_address(0) is the call site in the game's code.
 __attribute__((noinline)) static int32_t BFRandomRangeInt(int32_t lo, int32_t hi) {
@@ -919,14 +989,15 @@ static void PinTurnTick() {
         BFLog(PIN_TURN_LOG, (const char *)msg);
     }
     sTurnKeep = sTurnHook == 1 && sSettled && sMode == MODE_FUN;   // Practice, its replays included
-    if (sSettled) PinsetterTurnTick();
+    if (sSettled) { PinsetterTurnTick(); SweeperBannerTick(); }
 }
 
 static void TurnDebug(char *buf, size_t size) {
-    snprintf(buf, size, "pin turns: hook=%s sites=%d keep=%d kegels=%d | racks=%d kept=%d new=%d knocked=%d offLane=%d | other=%d upUnknown=%d leanFails=%d maxStandLean=%.1f | pinsetter: found=%d mirrors=%d sets=%d busy=%d fails=%d",
+    snprintf(buf, size, "pin turns: hook=%s sites=%d keep=%d kegels=%d | racks=%d kept=%d new=%d knocked=%d offLane=%d | other=%d upUnknown=%d leanFails=%d maxStandLean=%.1f | pinsetter: found=%d mirrors=%d sets=%d busy=%d fails=%d | sweeper banner: found=%d moved=%d fails=%d",
              sTurnWhy, sTurnSites, sTurnKeep ? 1 : 0, sTurnCount, sTurnRacks, sTurnKept, sTurnNew, sTurnKnocked, sTurnOffLane,
              sTurnOther, sTurnUpUnknown, sTurnTiltFails, sTurnMaxStandTilt, sSetterPinsOff >= 0x10 ? 1 : 0,
-             sSetterMirrorOff >= 0x10 && sSetterMgr.get() ? 1 : 0, sSetterSets, sSetterBusy, sSetterFails);
+             sSetterMirrorOff >= 0x10 && sSetterMgr.get() ? 1 : 0, sSetterSets, sSetterBusy, sSetterFails,
+             sBannerPanel.get() ? 1 : 0, sBannerSets, sBannerFails);
 }
 
 // ---- your own pin image (looks only) ----
@@ -1664,6 +1735,421 @@ static void SkinRefreshTick() {
     void *a[] = { &force };
     Invoke(N.InvD_InitBallsOnReturner, inv, a);   // same call the game makes when your inventory changes
     BFLog(@"skin fix: refreshed the ball rack");
+}
+
+#include <sys/stat.h>
+#define BG_IMAGE_PATH std::string(BFBgImagePath().UTF8String ?: "")
+#define BG_LOG @"alley background: %s"
+#define BF_UTF8(s) std::string([Str(s) UTF8String] ?: "")
+NSString *BFBgImagePath(void) {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    return [[docs stringByAppendingPathComponent:@"BowlingPlus"] stringByAppendingPathComponent:@"bg_image.png"];
+}
+// ---- engine methods for the two parts below, found by full signature on first use ----
+struct BFExtra {
+    bool tried;
+    Il2CppClass *Image, *Sprite, *RenderTexture, *GL, *Graphic, *Material, *Texture, *Object, *Transform, *GameObject;
+    const MethodInfo *img_setOverride, *sp_create, *rt_ctor, *rt_getActive, *rt_setActive, *rt_release;
+    const MethodInfo *gl_push, *gl_pop, *gl_ortho, *gl_begin, *gl_end, *gl_tex, *gl_vert, *gl_clear, *gl_color;
+    const MethodInfo *gr_defaultMat, *mat_ctor, *mat_setPass, *mat_setTex, *mat_setInt, *gr_getMat, *gr_setMat;
+    const MethodInfo *tex_w, *tex_h, *t2d_read, *encodePng, *obj_destroy, *obj_name, *tr_parent, *tr_find, *tr_childCount, *tr_child;
+    const MethodInfo *comp_go, *go_setActive, *go_activeSelf, *go_getComponent, *tr_getPos;
+};
+static BFExtra X;
+
+static const MethodInfo *XM(Il2CppClass *k, const char *name, int argc, const char *t0 = nullptr, const char *t1 = nullptr,
+                            const char *t2 = nullptr, const char *t3 = nullptr) {
+    if (!k) return nullptr;
+    const char *types[4] = { t0, t1, t2, t3 };
+    return FindMethodSig(k, name, argc, types);
+}
+
+static void ExtraResolve() {
+    if (X.tried) return;
+    X.tried = true;
+    X.Image = FindClass("UnityEngine.UI", "Image");
+    X.Graphic = FindClass("UnityEngine.UI", "Graphic");
+    X.Sprite = FindClass("UnityEngine", "Sprite");
+    X.RenderTexture = FindClass("UnityEngine", "RenderTexture");
+    X.GL = FindClass("UnityEngine", "GL");
+    X.Material = FindClass("UnityEngine", "Material");
+    X.Texture = FindClass("UnityEngine", "Texture");
+    X.Object = FindClass("UnityEngine", "Object");
+    X.Transform = FindClass("UnityEngine", "Transform");
+    X.GameObject = FindClass("UnityEngine", "GameObject");
+    Il2CppClass *conv = FindClass("UnityEngine", "ImageConversion");
+    Il2CppClass *t2d = FindClass("UnityEngine", "Texture2D");
+    X.img_setOverride = XM(X.Image, "set_overrideSprite", 1);
+    X.sp_create = XM(X.Sprite, "Create", 3, "UnityEngine.Texture2D", "UnityEngine.Rect", "UnityEngine.Vector2");
+    X.rt_ctor = XM(X.RenderTexture, ".ctor", 4, "System.Int32", "System.Int32", "System.Int32", "UnityEngine.RenderTextureFormat");
+    X.rt_getActive = XM(X.RenderTexture, "get_active", 0);
+    X.rt_setActive = XM(X.RenderTexture, "set_active", 1);
+    X.rt_release = XM(X.RenderTexture, "Release", 0);
+    X.gl_push = XM(X.GL, "PushMatrix", 0);
+    X.gl_pop = XM(X.GL, "PopMatrix", 0);
+    X.gl_ortho = XM(X.GL, "LoadOrtho", 0);
+    X.gl_begin = XM(X.GL, "Begin", 1, "System.Int32");
+    X.gl_end = XM(X.GL, "End", 0);
+    X.gl_tex = XM(X.GL, "TexCoord2", 2, "System.Single", "System.Single");
+    X.gl_vert = XM(X.GL, "Vertex3", 3, "System.Single", "System.Single", "System.Single");
+    X.gl_clear = XM(X.GL, "Clear", 3, "System.Boolean", "System.Boolean", "UnityEngine.Color");
+    X.gl_color = XM(X.GL, "Color", 1, "UnityEngine.Color");
+    X.gr_defaultMat = XM(X.Graphic, "get_defaultGraphicMaterial", 0);
+    X.gr_getMat = XM(X.Graphic, "get_material", 0);
+    X.gr_setMat = XM(X.Graphic, "set_material", 1);
+    X.mat_ctor = XM(X.Material, ".ctor", 1, "UnityEngine.Material");
+    X.mat_setPass = XM(X.Material, "SetPass", 1, "System.Int32");
+    X.mat_setTex = XM(X.Material, "set_mainTexture", 1);
+    X.mat_setInt = XM(X.Material, "SetInt", 2, "System.String", "System.Int32");
+    X.tex_w = XM(X.Texture, "get_width", 0);
+    X.tex_h = XM(X.Texture, "get_height", 0);
+    X.t2d_read = XM(t2d, "ReadPixels", 3, "UnityEngine.Rect", "System.Int32", "System.Int32");
+    X.encodePng = XM(conv, "EncodeToPNG", 1, "UnityEngine.Texture2D");
+    X.obj_destroy = XM(X.Object, "Destroy", 1, "UnityEngine.Object");
+    X.obj_name = XM(X.Object, "get_name", 0);
+    X.tr_parent = XM(X.Transform, "get_parent", 0);
+    X.tr_find = XM(X.Transform, "Find", 1, "System.String");
+    X.tr_childCount = XM(X.Transform, "get_childCount", 0);
+    X.tr_child = XM(X.Transform, "GetChild", 1, "System.Int32");
+    X.tr_getPos = XM(X.Transform, "get_position", 0);
+    X.comp_go = XM(FindClass("UnityEngine", "Component"), "get_gameObject", 0);
+    X.go_setActive = XM(X.GameObject, "SetActive", 1, "System.Boolean");
+    X.go_activeSelf = XM(X.GameObject, "get_activeSelf", 0);
+    X.go_getComponent = XM(X.GameObject, "GetComponent", 1, "System.Type");
+}
+
+struct BFColor { float r, g, b, a; };
+struct BFRect { float x, y, w, h; };
+struct BFVec2 { float x, y; };
+
+static bool NameStarts(void *obj, const char *prefix) {
+    bool ok = false;
+    Il2CppString *s = X.obj_name ? (Il2CppString *)Invoke(X.obj_name, obj, nullptr, &ok) : nullptr;
+    if (!ok || !s) return false;
+    std::string n = BF_UTF8(s);
+    return n.compare(0, strlen(prefix), prefix) == 0;
+}
+
+// ---- the game's own pin picture, for the pin library's "Off" preview (looks only) ----
+// What the game has (1.907): the pin pictures (pins/fulltextures, 178 of them, 512 x 512) are compressed and not
+// readable, and this build has no Graphics.Blit or RenderTexture.GetTemporary. So BowlingPlus draws the picture into
+// a RenderTexture itself with GL immediate mode (a copy of the UI material, which shows _MainTex as it is), reads it
+// back (Texture2D.ReadPixels) and makes a PNG (ImageConversion.EncodeToPNG). Which picture: the pins' material
+// (InventaryData's pin material) shows the game's own, unless a custom picture is on, then it's the original
+// BowlingPlus kept for that material.
+static const char *sGamePinWhy = "not asked yet";
+static int sGamePinSize = 0;
+
+static bool GamePinPNG(std::vector<uint8_t> &png) {
+    ExtraResolve();
+    png.clear();
+    if (!X.rt_ctor || !X.rt_setActive || !X.gl_begin || !X.gl_vert || !X.gl_tex || !X.gr_defaultMat || !X.mat_ctor ||
+        !X.mat_setPass || !X.mat_setTex || !X.t2d_read || !X.encodePng || !N.T2D_ctor || !N.Texture2D || !N.M_getMainTex) {
+        sGamePinWhy = "a method is missing";
+        return false;
+    }
+    void *inv = ReadStaticObj(N.invd_instance, N.InventaryData, "_instance");
+    void *mat = inv && N.inv_pinMat >= 0 ? At<void *>(inv, N.inv_pinMat) : nullptr;
+    if (!Alive(mat)) { sGamePinWhy = "no pin material"; return false; }
+    int mi = PinMatIndex(mat);
+    void *tex = mi >= 0 && sPinMatOrig[mi] ? Target(sPinMatOrig[mi]) : (void *)Invoke(N.M_getMainTex, mat, nullptr);
+    if (!Alive(tex)) { sGamePinWhy = "no pin picture"; return false; }
+    int w = InvokeInt(X.tex_w, tex, nullptr, 512), h = InvokeInt(X.tex_h, tex, nullptr, 512);
+    if (w < 8 || h < 8 || w > 2048 || h > 2048) { w = 512; h = 512; }
+    bool ok = false;
+    Il2CppObject *rt = NewObject(X.RenderTexture);
+    int zero = 0, fmt = 0;                                   // no depth, RenderTextureFormat.ARGB32
+    void *ra[] = { &w, &h, &zero, &fmt };
+    if (rt) Invoke(X.rt_ctor, rt, ra, &ok);
+    if (!ok) { sGamePinWhy = "couldn't make the render texture"; return false; }
+    void *base = (void *)Invoke(X.gr_defaultMat, nullptr, nullptr, &ok);
+    Il2CppObject *m = (ok && base) ? NewObject(X.Material) : nullptr;
+    void *ma[] = { base };
+    ok = false;
+    if (m) Invoke(X.mat_ctor, m, ma, &ok);
+    if (!ok) { sGamePinWhy = "couldn't make the material"; return false; }
+    void *ta[] = { tex };
+    Invoke(X.mat_setTex, m, ta);
+    void *prev = X.rt_getActive ? (void *)Invoke(X.rt_getActive, nullptr, nullptr) : nullptr;
+    void *sa[] = { rt };
+    Invoke(X.rt_setActive, nullptr, sa);
+    if (X.gl_push) Invoke(X.gl_push, nullptr, nullptr);
+    if (X.gl_ortho) Invoke(X.gl_ortho, nullptr, nullptr);
+    BFColor white = { 1, 1, 1, 1 };
+    bool yes = true;
+    void *ca[] = { &yes, &yes, &white };
+    if (X.gl_clear) Invoke(X.gl_clear, nullptr, ca);
+    int pass = 0;
+    void *pa[] = { &pass };
+    Invoke(X.mat_setPass, m, pa);
+    int quads = 7;                                           // GL.QUADS
+    void *ba[] = { &quads };
+    Invoke(X.gl_begin, nullptr, ba);
+    void *wa[] = { &white };
+    if (X.gl_color) Invoke(X.gl_color, nullptr, wa);
+    const float q[4][2] = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } };
+    float zz = 0;
+    for (int k = 0; k < 4; k++) {
+        float u = q[k][0], v = q[k][1];
+        void *tc[] = { &u, &v };
+        Invoke(X.gl_tex, nullptr, tc);
+        void *vc[] = { &u, &v, &zz };
+        Invoke(X.gl_vert, nullptr, vc);
+    }
+    Invoke(X.gl_end, nullptr, nullptr);
+    if (X.gl_pop) Invoke(X.gl_pop, nullptr, nullptr);
+    Il2CppObject *t2 = NewObject(N.Texture2D);
+    void *da[] = { &w, &h };
+    ok = false;
+    if (t2) Invoke(N.T2D_ctor, t2, da, &ok);
+    BFRect r = { 0, 0, (float)w, (float)h };
+    void *rd[] = { &r, &zero, &zero };
+    bool read = false;
+    if (ok) Invoke(X.t2d_read, t2, rd, &read);
+    void *pv[] = { prev };
+    Invoke(X.rt_setActive, nullptr, pv);
+    Il2CppArray *bytes = nullptr;
+    if (read) {
+        void *ea[] = { t2 };
+        bytes = (Il2CppArray *)Invoke(X.encodePng, nullptr, ea, &ok);
+    }
+    if (bytes && Len(bytes)) png.assign((uint8_t *)Data(bytes), (uint8_t *)Data(bytes) + Len(bytes));
+    if (X.rt_release) Invoke(X.rt_release, rt, nullptr);
+    if (X.obj_destroy) {
+        void *d1[] = { t2 }, *d2[] = { m }, *d3[] = { rt };
+        if (t2) Invoke(X.obj_destroy, nullptr, d1);
+        Invoke(X.obj_destroy, nullptr, d2);
+        Invoke(X.obj_destroy, nullptr, d3);
+    }
+    sGamePinSize = w;
+    sGamePinWhy = png.empty() ? "reading it back failed" : "ok";
+    return !png.empty();
+}
+
+// ---- your own alley background (looks only) ----
+// What the game has (1.907, scene level1): the picture behind the lanes is a world-space canvas,
+// ObjectsToShift/Banners (2820 x 850: three Images OBJ_BG_banner_1..3_940x850 side by side, no gaps), with a copy for
+// the floor reflection (ObjectsToShift/BannersMirror) and one more set (Banners). Each room puts its own sprite on
+// them (Orange Tenpin Bowl: Banner_room_back_Orange_back) and shows its name from Banners/TitleSubcanvas
+// (OBJ_headline_Orange and the others). BowlingPlus loads bg_image.png (already fitted to the wall's 2820:850 by the
+// menu) and puts a third of it on each panel as Image.overrideSprite, so the game's own sprites stay underneath and
+// come back as soon as it's off. While it's on, the room's name is hidden too, unless "Show the alley name" is on.
+static GCHandle sBgTex = 0, sBgSprite[3] = { 0, 0, 0 };
+static double sBgStamp = -1;
+static int sBgW = 0, sBgH = 0, sBgFails = 0, sBgPanels = 0, sBgTitles = 0;
+static const int kBgMax = 24;
+static Ref sBgPanel[kBgMax];
+static int sBgPanelIdx[kBgMax];
+static Ref sBgTitle[4];                                       // the TitleSubcanvas objects we hid
+static int sBgPanelCount = 0, sBgTitleCount = 0;
+static bool sBgApplied = false;
+
+static bool BgFileStamp(const std::string &path, double &stamp) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return false;
+    stamp = (double)st.st_mtime + st.st_size * 1e-9;
+    return true;
+}
+
+static void BgDropTexture() {
+    for (int i = 0; i < 3; i++) if (sBgSprite[i]) { Release(sBgSprite[i]); sBgSprite[i] = 0; }
+    if (sBgTex) { Release(sBgTex); sBgTex = 0; }
+}
+
+static bool BgLoad() {                                        // bg_image.png -> texture + 3 sprites (when it changed)
+    std::string path = BG_IMAGE_PATH;
+    double stamp = 0;
+    if (!BgFileStamp(path, stamp)) return false;
+    if (sBgTex && stamp == sBgStamp && Alive(Target(sBgTex))) return true;
+    if (sBgFails >= 3 || !N.Texture2D || !N.T2D_ctor || !N.LoadImage || !N.Byte || !X.sp_create) return false;
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::vector<uint8_t> png;
+    uint8_t buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) png.insert(png.end(), buf, buf + n);
+    fclose(f);
+    if (png.empty()) return false;
+    Il2CppObject *tex = NewObject(N.Texture2D);
+    int w = 2, h = 2;
+    bool ok = false;
+    void *ca[] = { &w, &h };
+    if (tex) Invoke(N.T2D_ctor, tex, ca, &ok);
+    Il2CppArray *bytes = ok ? NewArray(N.Byte, png.size()) : nullptr;
+    if (bytes) memcpy(Data(bytes), png.data(), png.size());
+    void *la[] = { tex, bytes };
+    if (!bytes || !InvokeBool(N.LoadImage, nullptr, la, false)) { sBgFails++; BFLog(BG_LOG, "couldn't load the picture"); return false; }
+    DontUnload(tex);
+    w = InvokeInt(X.tex_w, tex, nullptr, 0);
+    h = InvokeInt(X.tex_h, tex, nullptr, 0);
+    if (w < 3 || h < 1) { sBgFails++; return false; }
+    BgDropTexture();
+    sBgTex = Keep(tex);
+    for (int i = 0; i < 3; i++) {                            // a third of the picture for each panel, left to right
+        BFRect r = { (float)(w * i / 3), 0, (float)(w * (i + 1) / 3 - w * i / 3), (float)h };
+        BFVec2 pivot = { 0.5f, 0.5f };
+        void *sa[] = { tex, &r, &pivot };
+        void *sp = (void *)Invoke(X.sp_create, nullptr, sa, &ok);
+        if (ok && sp) { DontUnload(sp); sBgSprite[i] = Keep(sp); }
+    }
+    sBgStamp = stamp;
+    sBgW = w;
+    sBgH = h;
+    sBgFails = 0;
+    sBgApplied = false;                                       // put the new one on
+    BFLog(BG_LOG, "picture loaded");
+    return true;
+}
+
+// The panels (OBJ_BG_banner_<n>_940x850 Images) and their TitleSubcanvas, found once and kept.
+static void BgFindPanels() {
+    sBgPanelCount = 0;
+    sBgTitleCount = 0;
+    if (!X.Image || !X.obj_name) return;
+    Il2CppArray *all = FindAll(TypeOf(X.Image));
+    for (size_t i = 0; all && i < Len(all) && sBgPanelCount < kBgMax; i++) {
+        void *img = Elem(all, i);
+        if (!Alive(img) || !NameStarts(img, "OBJ_BG_banner_")) continue;
+        bool ok = false;
+        Il2CppString *s = (Il2CppString *)Invoke(X.obj_name, img, nullptr, &ok);
+        std::string n = ok && s ? BF_UTF8(s) : std::string();
+        int idx = n.size() > 14 ? n[14] - '1' : -1;            // OBJ_BG_banner_1_..: 0, 1, 2 from the left
+        if (idx < 0 || idx > 2) continue;
+        sBgPanel[sBgPanelCount].set(img);
+        sBgPanelIdx[sBgPanelCount] = idx;
+        sBgPanelCount++;
+        // its wall's room name: <wall>/TitleSubcanvas
+        void *tr = Invoke(N.Comp_getTransform, img, nullptr, &ok);
+        void *wall = ok && tr && X.tr_parent ? (void *)Invoke(X.tr_parent, tr, nullptr, &ok) : nullptr;
+        if (ok && wall && X.tr_find && sBgTitleCount < 4) {
+            void *fa[] = { NewString("TitleSubcanvas") };
+            void *title = (void *)Invoke(X.tr_find, wall, fa, &ok);
+            void *go = ok && title && X.comp_go ? (void *)Invoke(X.comp_go, title, nullptr, &ok) : nullptr;
+            bool known = false;
+            for (int k = 0; k < sBgTitleCount; k++) if (sBgTitle[k].get() == go) known = true;
+            if (ok && go && !known) sBgTitle[sBgTitleCount++].set(go);
+        }
+    }
+    sBgPanels = sBgPanelCount;
+    sBgTitles = sBgTitleCount;
+}
+
+static void BgShowTitles(bool show) {
+    if (!X.go_setActive) return;
+    for (int k = 0; k < sBgTitleCount; k++) {
+        void *go = sBgTitle[k].get();
+        if (!Alive(go)) continue;
+        void *a[] = { &show };
+        Invoke(X.go_setActive, go, a);
+    }
+}
+
+static void BgApply(bool on) {
+    if (!X.img_setOverride) return;
+    for (int i = 0; i < sBgPanelCount; i++) {
+        void *img = sBgPanel[i].get();
+        if (!Alive(img)) continue;
+        void *sp = on && sBgSprite[sBgPanelIdx[i]] ? Target(sBgSprite[sBgPanelIdx[i]]) : nullptr;
+        void *a[] = { sp };
+        Invoke(X.img_setOverride, img, a);
+    }
+    BgShowTitles(!on || gBF.bgTitle);
+    sBgApplied = on;
+}
+
+static bool sBgTitleShown = true;
+static void BgTick() {
+    if (!sSettled || sFrame % 30 != 0) return;
+    ExtraResolve();
+    bool want = gBF.bgImage && BgLoad();
+    bool lost = false;
+    for (int i = 0; i < sBgPanelCount; i++) if (!Alive(sBgPanel[i].get())) lost = true;
+    if (want && (!sBgPanelCount || lost) && sFrame % 300 == 0) { BgFindPanels(); sBgApplied = false; }
+    if (want && (!sBgApplied || sBgTitleShown != gBF.bgTitle)) { BgApply(true); sBgTitleShown = gBF.bgTitle; }
+    else if (!want && sBgApplied) { BgApply(false); BFLog(BG_LOG, "off: the room's own picture is back"); }
+}
+
+static void BgDebug(char *buf, size_t size) {
+    snprintf(buf, size, "alley background: on=%d size=%dx%d panels=%d titles=%d applied=%d fails=%d | game pin picture: %s (%d px)",
+             gBF.bgImage ? 1 : 0, sBgW, sBgH, sBgPanels, sBgTitles, sBgApplied ? 1 : 0, sBgFails, sGamePinWhy, sGamePinSize);
+}
+
+// ---- the sweeper's banner stays in front of the bar (everywhere, looks only) ----
+// After 1.6.8 put the banner in front of every part of the bar (as the scene data has it), a device still showed the
+// bar's frame over both ends of it: blue and letters cut by the same straight lines, at the same place as before.
+// Nothing in the scene's geometry, masks, materials or cameras explains it, and the bar (opaque) is drawn before the
+// banner (world-space UI), so it can only hide it through the depth test. So while the sweeper is down in front of
+// the pins (the banner less than 0.30 m above the lane; nothing is in front of it then), the banner's images draw
+// without the depth test: a copy of the UI material with unity_GUIZTestMode = Always (8). Raised, they go back to
+// the game's own material, so the banner can't show through anything above.
+static Ref sTopMat;
+static Ref sTopImg[6];
+static int sTopCount = 0, sTopOn = -1, sTopSets = 0;
+
+static void BannerTopFind(void *logo, void *bar) {
+    sTopCount = 0;
+    bool ok = false;
+    void *tr = Alive(logo) && N.GO_getTransform ? (void *)Invoke(N.GO_getTransform, logo, nullptr, &ok) : nullptr;
+    int n = ok && tr ? InvokeInt(X.tr_childCount, tr, nullptr, 0) : 0;
+    for (int i = 0; i < n && i < 5; i++) {                   // Fan, H2H, Text
+        void *ia[] = { &i };
+        void *ch = (void *)Invoke(X.tr_child, tr, ia, &ok);
+        void *go = ok && ch ? (void *)Invoke(X.comp_go, ch, nullptr, &ok) : nullptr;
+        void *ga[] = { TypeOf(X.Image) };
+        void *img = ok && go ? (void *)Invoke(X.go_getComponent, go, ga, &ok) : nullptr;
+        if (ok && Alive(img)) sTopImg[sTopCount++].set(img);
+    }
+    if (Alive(bar)) sTopImg[sTopCount++].set(bar);
+}
+
+static void BannerTopTick() {
+    if (!sSettled) return;
+    void *panel = sBannerPanel.get();
+    if (!Alive(panel) || sBannerLogoOff < 0x10) return;
+    ExtraResolve();
+    if (!X.gr_setMat || !X.mat_ctor || !X.mat_setInt || !X.gr_defaultMat || !X.tr_getPos || !X.tr_child || !X.go_getComponent || !X.comp_go) return;
+    bool ok = false;
+    void *tr = (void *)Invoke(N.Comp_getTransform, panel, nullptr, &ok);
+    Il2CppObject *pb = ok && tr ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+    if (!ok || !pb) return;
+    float height = ((BFVec3 *)Unbox(pb))->z;                // world up is +Z
+    int want = height < 0.30f ? 1 : 0;
+    if (want == sTopOn && sFrame % 120 != 0) return;
+    if (!sTopCount || sFrame % 120 == 0) {
+        void *logo = At<void *>(panel, sBannerLogoOff);
+        void *bar = sBannerBarOff >= 0x10 ? At<void *>(panel, sBannerBarOff) : nullptr;
+        BannerTopFind(logo, bar);
+    }
+    void *mat = sTopMat.get();
+    if (want && !Alive(mat)) {
+        void *base = (void *)Invoke(X.gr_defaultMat, nullptr, nullptr, &ok);
+        Il2CppObject *m = ok && base ? NewObject(X.Material) : nullptr;
+        void *ma[] = { base };
+        ok = false;
+        if (m) Invoke(X.mat_ctor, m, ma, &ok);
+        if (!ok) return;
+        int always = 8;                                       // CompareFunction.Always
+        void *sa[] = { NewString("unity_GUIZTestMode"), &always };
+        Invoke(X.mat_setInt, m, sa);
+        DontUnload(m);
+        sTopMat.set(m);
+        mat = m;
+    }
+    for (int i = 0; i < sTopCount; i++) {
+        void *img = sTopImg[i].get();
+        if (!Alive(img)) continue;
+        void *cur = X.gr_getMat ? (void *)Invoke(X.gr_getMat, img, nullptr) : nullptr;
+        bool isTop = cur && cur == mat;
+        if (want && !isTop) { void *a[] = { mat }; Invoke(X.gr_setMat, img, a); sTopSets++; }
+        else if (!want && isTop) { void *a[] = { nullptr }; Invoke(X.gr_setMat, img, a); sTopSets++; }
+    }
+    sTopOn = want;
+}
+
+NSData *BFGamePinPNG(void) {                     // the game's current pin picture (for the pin library), main thread
+    std::vector<uint8_t> png;
+    if (!sSettled || !GamePinPNG(png)) return nil;
+    return [NSData dataWithBytes:png.data() length:png.size()];
 }
 
 // ---- last resort, ball in your hand only: Pearl if its file can't be linked, BP if it has no skin ----
@@ -3622,6 +4108,8 @@ void BFEngineTick(void) {
             FpsTick();
             PinFixTick();
             PinTurnTick();
+            BgTick();
+            BannerTopTick();
             PinImageTick();
             BallCCDTick();
             SpeedTick();
@@ -3809,6 +4297,6 @@ NSString *BFDebugInfo(void) {
                     N.RB_getLinDamp ? InvokeFloat(N.RB_getLinDamp, rb, -1) : -1.f,
                     N.RB_getAngDamp ? InvokeFloat(N.RB_getAngDamp, rb, -1) : -1.f, lv.size];
     }
-    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; TurnDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; }
+    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; TurnDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; BgDebug(lanes, sizeof(lanes)); [s appendFormat:@"%s\n", lanes]; }
     return s;
 }

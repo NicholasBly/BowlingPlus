@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.6.7"
+#define BF_VERSION @"1.6.9"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 
@@ -31,6 +31,9 @@ typedef struct {
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
     bool     menuButton;   // show a draggable on-screen button to open the menu, as well as shake
     bool     laneOther;    // Practice: bowl on the game's other lane (experimental, off by default)
+    // (new fields go last: the initializers in Engine.mm / Engine.cpp are positional)
+    bool     bgImage;      // the alley background uses the player's own picture (looks only)
+    bool     bgTitle;      // ...and the room's name stays on it
 } BFConfig;
 
 // Live game status for the menu
@@ -81,6 +84,13 @@ NSString *BFPinImagePath(void);                   // Game.mm: Documents/BowlingP
 NSString *BFPinImageStatus(void);                 // Game.mm: what the pins show right now
 void BFPinImagePick(BOOL fromFiles, void (^done)(NSString *message));   // OilUI.mm
 void BFPinImageShareGuide(void);                  // OilUI.mm
+void BFPinShowLibrary(void);                       // OilUI.mm: the pin library (presets, your pictures, 3D preview)
+NSString *BFPinActiveName(void);                   // OilUI.mm: the pin picture on the pins (nil: the game's own)
+NSString *BFPinUseLast(void);
+NSString *BFBgImagePath(void);                     // Game.mm: Documents/BowlingPlus/bg_image.png (fitted to the wall, 2820:850)
+NSData *BFGamePinPNG(void);                        // Game.mm: the game's current pin picture as PNG (main thread), nil if it can't                      // OilUI.mm: puts the last chosen picture back on (the menu switch)
+void BFBgShowSheet(void);                          // OilUI.mm: the alley background sheet
+NSString *BFBgStatus(void);                        // OilUI.mm: a line for the menu
 void BFOilApplyHue(void);                         // Game.mm: push gBF.oilHue to the lane now      // runs the game's Kegel engine
 NSArray<UIColor *> *BFOilColors(int n, float *maxHeight);                       // the game's oil color gradient
 void BFOilSetCustom(NSDictionary *pattern);

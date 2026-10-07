@@ -55,6 +55,8 @@ void BFLoadConfig(void) {
     if (d[@"oilThick2"]) gBF.oilThickness = [d[@"oilThick2"] boolValue];   // new name: 1.4.1's default-on is dropped
     if (d[@"oilHue"])    gBF.oilHue = [d[@"oilHue"] floatValue];
     if (d[@"pinImage"])  gBF.pinImage = [d[@"pinImage"] boolValue];
+    if (d[@"bgImage"])   gBF.bgImage = [d[@"bgImage"] boolValue];
+    if (d[@"bgTitle"])   gBF.bgTitle = [d[@"bgTitle"] boolValue];
     if (d[@"privacyOK"]) gBF.privacyOK = [d[@"privacyOK"] boolValue];
     else if ([d[@"privacy"] boolValue]) gBF.privacyOK = true;     // auto-accept was on: you had accepted before
     if (isnan(gBF.speedMult) || gBF.speedMult < 1.f) gBF.speedMult = 1.f;
@@ -71,7 +73,7 @@ void BFSaveConfig(void) {
                          @"auto": @(gBF.spareAuto),
                          @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
                          @"unstick": @(gBF.unstick), @"ipv4": @(gBF.gameIPv4),
-                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage) };
+                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle) };
     [[NSUserDefaults standardUserDefaults] setObject:d forKey:kCfgKey];
 }
 

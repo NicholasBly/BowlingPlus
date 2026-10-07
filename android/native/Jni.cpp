@@ -27,6 +27,8 @@
 #include "BFShared.h"
 #include "KegelParse.h"
 #include "PinWrap.h"
+#include "PinPresets.h"
+#include "PinPreview.h"
 #include "PinGuide.h"
 #include "Logo.h"
 
@@ -291,6 +293,7 @@ static bool GameCmd(const Str &cmd, const Str &arg, Str &out) {
     if (cmd == "arsenal") { BFSetArsenalQuery(arg); return true; }
     if (cmd == "skipTutorial") { BFRequestSkipTutorial(); return true; }
     if (cmd == "applyHue") { BFOilApplyHue(); return true; }
+    if (cmd == "gamePinPNG") { out = BFGamePinToFile(arg) ? arg : Str(); return true; }   // arg: the file to write
     if (cmd == "pinTap") {
         float u = 0, v = 0;
         if (sscanf(arg.c_str(), "%f,%f", &u, &v) == 2) BFPinTapAt(u, v);
@@ -358,6 +361,13 @@ static jstring JNICALL N_call(JNIEnv *env, jclass, jstring jcmd, jstring jarg) {
     }
     if (cmd == "exitSafe") { BFExitSafeMode(); return nullptr; }
     if (cmd == "pinImagePath") return NewJStr(env, BFPinImagePath());
+    if (cmd == "bgImagePath") return NewJStr(env, BFBgImagePath());
+    if (cmd == "pinPresets") {      // [{id, name, sub}] (ids and names are plain text: no quotes)
+        Str o = "[";
+        for (int i = 0; i < kBPPinPresetCount; i++)
+            o += Str(i ? "," : "") + "{\"id\":\"" + kBPPinPresets[i].id + "\",\"name\":\"" + kBPPinPresets[i].name + "\",\"sub\":\"" + kBPPinPresets[i].sub + "\"}";
+        return NewJStr(env, o + "]");
+    }
     if (cmd == "kegelText") return NewJStr(env, KegelFromText(arg).Dump());
     // ---- everything else touches the game: Unity's thread
     if (!sStarted) return nullptr;
@@ -403,10 +413,46 @@ static jbyteArray JNICALL N_bytes(JNIEnv *env, jclass, jstring jname) {   // the
     else if (n == "wrapGuide") { p = kBPPinWrapGuidePNG; len = kBPPinWrapGuidePNGLen; }
     else if (n == "wrapTemplate") { p = kBPPinWrapTemplatePNG; len = kBPPinWrapTemplatePNGLen; }
     else if (n == "logo") { p = kBPLogoPNG; len = kBPLogoPNGLen; }
+    else if (n.size() > 7 && n.substr(0, 7) == "preset:") {   // the pin library's built-in pictures (PinPresets.h)
+        for (int i = 0; i < kBPPinPresetCount; i++)
+            if (n.substr(7) == kBPPinPresets[i].id) { p = kBPPinPresets[i].png; len = kBPPinPresets[i].len; }
+    }
     if (!p) return nullptr;
     jbyteArray a = env->NewByteArray((jsize)len);
     if (a) env->SetByteArrayRegion(a, 0, (jsize)len, (const jbyte *)p);
     return a;
+}
+
+// The pin library's spinning preview (PinPreview.h, shared with iOS): the picture is handed over once, then each
+// frame is drawn into the caller's int[] (ARGB, as Bitmap.setPixels wants).
+static std::mutex sSpinLock;
+static std::vector<uint8_t> sSpinTex, sSpinOut;
+static std::vector<float> sSpinZ;
+static int sSpinSide = 0;
+static BPPinShade sSpinShade;
+
+static void JNICALL N_pinPreviewTexture(JNIEnv *env, jclass, jbyteArray jrgba, jint side) {
+    std::lock_guard<std::mutex> g(sSpinLock);
+    jsize n = jrgba ? env->GetArrayLength(jrgba) : 0;
+    if (side <= 0 || n != side * side * 4) { sSpinTex.clear(); sSpinSide = 0; return; }
+    sSpinTex.resize((size_t)n);
+    env->GetByteArrayRegion(jrgba, 0, n, (jbyte *)sSpinTex.data());
+    sSpinSide = side;
+}
+
+static jboolean JNICALL N_pinPreviewRender(JNIEnv *env, jclass, jfloat angle, jint w, jint h, jintArray jout) {
+    std::lock_guard<std::mutex> g(sSpinLock);
+    if (!sSpinSide || w <= 0 || h <= 0 || !jout || env->GetArrayLength(jout) < w * h) return JNI_FALSE;
+    sSpinOut.resize((size_t)w * h * 4);
+    sSpinZ.resize((size_t)w * h);
+    PinPreviewRender(&sSpinShade, sSpinTex.data(), sSpinSide, angle, sSpinOut.data(), w, h, sSpinZ.data());
+    std::vector<jint> px((size_t)w * h);
+    for (size_t i = 0; i < px.size(); i++) {
+        const uint8_t *q = &sSpinOut[i * 4];
+        px[i] = (jint)(((uint32_t)q[3] << 24) | ((uint32_t)q[0] << 16) | ((uint32_t)q[1] << 8) | q[2]);
+    }
+    env->SetIntArrayRegion(jout, 0, (jsize)px.size(), px.data());
+    return JNI_TRUE;
 }
 
 // OilUI.mm SavePinImage, the two pixel steps (PinWrap.h, shared with iOS). RGBA rows top-down.
@@ -460,6 +506,8 @@ static void StartJavaSide(JNIEnv *env) {
         { (char *)"bytes", (char *)"(Ljava/lang/String;)[B", (void *)N_bytes },
         { (char *)"pinWrap", (char *)"([BII[BI)[B", (void *)N_pinWrap },
         { (char *)"pinFill", (char *)"([BIZ)V", (void *)N_pinFill },
+        { (char *)"pinPreviewTexture", (char *)"([BI)V", (void *)N_pinPreviewTexture },
+        { (char *)"pinPreviewRender", (char *)"(FII[I)Z", (void *)N_pinPreviewRender },
     };
     if (env->RegisterNatives(n, methods, sizeof(methods) / sizeof(methods[0])) != JNI_OK) {
         env->ExceptionClear();

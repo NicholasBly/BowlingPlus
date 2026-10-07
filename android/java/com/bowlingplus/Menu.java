@@ -30,7 +30,7 @@ public final class Menu {
     static FrameLayout overlay;
     static Activity act;
     static final List<TextView> helpLabels = new ArrayList<>();
-    static TextView statusLabel, ballLabel, arsenalLabel, fpsLabel, oilLabel, autoLabel, pinImageLabel, speedLabel, spinLabel;
+    static TextView statusLabel, ballLabel, arsenalLabel, fpsLabel, oilLabel, autoLabel, pinImageLabel, bgLabel, speedLabel, spinLabel;
     static Switch spareSwitch, autoSwitch;
     static Button resumeButton, updateButton, skipButton;
     static SeekBar speedSlider, spinSlider;
@@ -205,21 +205,31 @@ public final class Menu {
         fpsStack.addView(fpsLabel, mt(c, 6));
         pinImageLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
         Switch pinImageSwitch = toggle(c, "pinImage", () -> {
-            if (Config.b("pinImage", false)) Oil.pickPinImage(act, false, Menu::onPinPicked);
+            if (Config.b("pinImage", false)) {
+                Pins.useLast();
+                if (!Config.b("pinImage", false)) { hide(); Pins.show(act); return; }   // nothing chosen yet: open the library
+            }
             tickRefresh();
         });
-        Button photos = UiKit.button(c, "From Photos", false, true);
-        Button files = UiKit.button(c, "From Files", false, true);
-        photos.setOnClickListener(v -> Oil.pickPinImage(act, false, Menu::onPinPicked));
-        files.setOnClickListener(v -> Oil.pickPinImage(act, true, Menu::onPinPicked));
-        LinearLayout pickRow = UiKit.row(c, true);
-        pickRow.addView(photos, UiKit.lpWeight(1)); pickRow.addView(space(c, 8)); pickRow.addView(files, UiKit.lpWeight(1));
-        Button guide = UiKit.button(c, "Get the wrap template + guide", false, true);
-        guide.setOnClickListener(v -> Oil.sharePinGuide(act));
+        Button choose = UiKit.button(c, "\uD83C\uDFB3  Choose pins\u2026", false, true);
+        choose.setOnClickListener(v -> { hide(); Pins.show(act); });
         LinearLayout pinStack = UiKit.row(c, false);
-        pinStack.addView(rowView(c, "Use my own pin image", "Puts your own picture on the pins (all lanes). Draw on the wrap template: one sheet that wraps around the pin like paper, so there are no seams. Looks only.", pinImageSwitch));
-        pinStack.addView(pickRow, mt(c, 8)); pinStack.addView(guide, mt(c, 8)); pinStack.addView(pinImageLabel, mt(c, 8));
-        stack.addView(group(c, "\uD83C\uDFA8", "Pins & display", "look", true, new View[]{ cell(c, fpsStack), cell(c, pinStack) }));
+        pinStack.addView(rowView(c, "Custom pins", "Puts a picture on the pins (all lanes): Brunswick Max Crown is built in, and you can add your own. Choose pins shows each one turning in 3D first. Looks only.", pinImageSwitch));
+        pinStack.addView(choose, mt(c, 8)); pinStack.addView(pinImageLabel, mt(c, 8));
+        bgLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
+        Switch bgSwitch = toggle(c, "bgImage", () -> {
+            if (Config.b("bgImage", false)) {
+                java.io.File f = Bg.image();
+                if (f == null || !f.exists()) { Config.set("bgImage", false); hide(); Bg.show(act); return; }   // nothing picked yet
+            }
+            tickRefresh();
+        });
+        Button bgChoose = UiKit.button(c, "\uD83D\uDDBC  Choose picture\u2026", false, true);
+        bgChoose.setOnClickListener(v -> { hide(); Bg.show(act); });
+        LinearLayout bgStack = UiKit.row(c, false);
+        bgStack.addView(rowView(c, "Alley background", "Puts your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): from Photos or Files, filled, fitted, stretched or tiled. Looks only.", bgSwitch));
+        bgStack.addView(bgChoose, mt(c, 8)); bgStack.addView(bgLabel, mt(c, 8));
+        stack.addView(group(c, "\uD83C\uDFA8", "Pins & display", "look", true, new View[]{ cell(c, fpsStack), cell(c, pinStack), cell(c, bgStack) }));
 
         // ---- Help & diagnostics
         Button debug = UiKit.button(c, "Copy debug info", false, false);
@@ -416,7 +426,9 @@ public final class Menu {
         setText(arsenalLabel, lastState.optString("arsenal"));
         setTextOrHide(fpsLabel, lastState.optString("fps"));
         setTextOrHide(oilLabel, lastState.optString("oil"));
-        setText(pinImageLabel, lastState.optString("pinImage"));
+        String pinName = Config.b("pinImage", false) ? Pins.activeName() : null;
+        setText(pinImageLabel, pinName != null ? pinName + " \u00B7 " + lastState.optString("pinImage") : lastState.optString("pinImage"));
+        setText(bgLabel, Bg.status());
         boolean safe = lastState.optBoolean("safe", false);
         int safeVis = safe ? View.VISIBLE : View.GONE;
         if (resumeButton.getVisibility() != safeVis) resumeButton.setVisibility(safeVis);

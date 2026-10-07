@@ -6,7 +6,7 @@
 #include "Platform.h"
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION "1.6.7"
+#define BF_VERSION "1.6.9"
 #define BF_PLATFORM_VERSION "android-1"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
@@ -38,6 +38,9 @@ typedef struct {
     bool     menuButton;   // the draggable on-screen menu button (off by default)
     bool     fbWebLogin;   // Facebook login through the browser instead of the Facebook app (on by default)
     bool     laneOther;    // Practice: bowl on the game's other lane (experimental, off by default)
+    // (new fields go last: the initializers in Engine.mm / Engine.cpp are positional)
+    bool     bgImage;      // the alley background uses the player's own picture (looks only)
+    bool     bgTitle;      // ...and the room's name stays on it
 } BFConfig;
 
 // Live game status for the menu
@@ -80,6 +83,8 @@ bool BFOilReady(void);
 Json BFOilBuiltins(void);                                   // [{index, name, feet, ml}]
 Json BFOilCompute(int templateIndex, const Json *fwd, const Json *rev, int drop, bool exact, int feet, bool precise);   // null when it couldn't
 Str BFPinImagePath(void);
+Str BFBgImagePath(void);
+bool BFGamePinToFile(const Str &path);      // Game.cpp: the game's current pin picture as PNG (Unity's thread)                    // files/BowlingPlus/bg_image.png (fitted to the wall, 2820:850)
 Str BFPinImageStatus(void);
 void BFOilApplyHue(void);
 void BFOilSetCustom(const Json *pattern);                   // nullptr = off

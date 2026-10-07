@@ -17,6 +17,8 @@ public final class N {
     public static native byte[] bytes(String name);                         // embedded PNGs: pinGuide, wrapTemplate, logo...
     public static native byte[] pinWrap(byte[] src, int ww, int wh, byte[] tmpl, int side);   // wrap sheet -> game layout + fill
     public static native void pinFill(byte[] rgba, int side, boolean cleanEdges);              // game-layout fill
+    public static native void pinPreviewTexture(byte[] rgba, int side);                        // the 3D preview's picture (game layout)
+    public static native boolean pinPreviewRender(float angle, int w, int h, int[] argbOut);   // one frame of the 3D preview
 
     // convenience
     static String call(String cmd) { return call(cmd, ""); }

@@ -25,6 +25,8 @@ namespace IL {
     // p0 / p1 optionally pin the parameter types, e.g. "System.Type", "System.Byte[]".
     const MethodInfo *FindMethod(Il2CppClass *k, const char *name, int argc,
                                  const char *p0 = nullptr, const char *p1 = nullptr);
+    // every parameter's type name (types[argc]; nullptr = any), for overloads FindMethod can't tell apart
+    const MethodInfo *FindMethodSig(Il2CppClass *k, const char *name, int argc, const char *const *types);
     int FieldOffset(Il2CppClass *k, const char *name);          // -1 if missing
     bool FieldTypeName(Il2CppClass *k, const char *name, char *out, size_t size);   // e.g. "System.Int32"
     FieldInfo *StaticField(Il2CppClass *k, const char *name);   // runs the class constructor first

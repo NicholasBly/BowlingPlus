@@ -256,3 +256,19 @@ bool IL::Alive(void *o) {
     // UnityEngine.Object.m_CachedPtr (offset 0x10) is cleared when the object is destroyed
     return o && *(void **)((char *)o + 0x10) != nullptr;
 }
+
+const MethodInfo *IL::FindMethodSig(Il2CppClass *k, const char *name, int argc, const char *const *types) {
+    for (Il2CppClass *c = k; c; c = il2cpp_class_get_parent_ ? il2cpp_class_get_parent_(c) : nullptr) {
+        void *iter = nullptr;
+        const MethodInfo *m;
+        while ((m = il2cpp_class_get_methods_(c, &iter))) {
+            const char *mn = il2cpp_method_get_name_(m);
+            if (!mn || strcmp(mn, name) != 0 || (int)il2cpp_method_get_param_count_(m) != argc) continue;
+            bool ok = true;
+            for (int i = 0; i < argc && ok; i++) ok = ParamIs(m, (uint32_t)i, types ? types[i] : nullptr);
+            if (ok) return m;
+        }
+        if (!il2cpp_class_get_parent_) break;
+    }
+    return nullptr;
+}

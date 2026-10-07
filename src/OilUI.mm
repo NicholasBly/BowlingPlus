@@ -1241,11 +1241,12 @@ static void ImportKegelFile(void (^done)(NSDictionary *pattern, NSString *error)
 static BFOilTab *sTab;
 
 static void PinImageUpgrade(void);
+static void PinLibMigrate(void);
 
 void BFOilUIStart(void) {
     if (sTab) return;
     ApplyActive();                                 // the pattern you had on last time
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ PinImageUpgrade(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ PinImageUpgrade(); PinLibMigrate(); });
     sTab = [BFOilTab new];
     sTab.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:sTab selector:@selector(tick) userInfo:nil repeats:YES];
 }
@@ -1580,8 +1581,9 @@ static NSData *PinPNG(uint8_t *buf, int side) {
 //    layout from the pin's 3D shape, so the seams always match.
 //  - game layout (square): the game's own pin picture; the area around the half-pin shapes is filled from
 //    their edges (no crack), including background-colored slivers just inside the edges.
-static NSString *SavePinImage(UIImage *img, BOOL turnOn) {
-    if (!img || img.size.width < 8 || img.size.height < 8) return @"That picture couldn't be read.";
+static NSData *PinProcess(UIImage *img, NSString **message) {
+    if (message) *message = nil;
+    if (!img || img.size.width < 8 || img.size.height < 8) { if (message) *message = @"That picture couldn't be read."; return nil; }
     CGFloat w = img.size.width * img.scale, h = img.size.height * img.scale;
     BOOL wrap = w >= h * 1.5;
     BOOL square = fabs(w - h) < 2;
@@ -1602,29 +1604,43 @@ static NSString *SavePinImage(UIImage *img, BOOL turnOn) {
         out = PinRGBA(img, side, side);
         if (out) PinFillAround(out, side, 1);
     }
-    if (!out) return @"Couldn't read that picture.";
+    if (!out) { if (message) *message = @"Couldn't read that picture."; return nil; }
     NSData *png = PinPNG(out, side);
     free(out);
+    if (!png) { if (message) *message = @"Couldn't read that picture."; return nil; }
+    if (message) *message = wrap ? [NSString stringWithFormat:@"Wrap picture (%d px). Seams always match in this layout.", side]
+                          : square ? [NSString stringWithFormat:@"Pin picture (%d px).", side]
+                                   : [NSString stringWithFormat:@"It wasn't square or 2:1, so it was stretched to %d x %d (game layout).", side, side];
+    return png;
+}
+
+// The old single-picture save (still used once, to redo a pre-1.4.8 picture from its original).
+static NSString *SavePinImage(UIImage *img, BOOL turnOn) {
+    NSString *msg;
+    NSData *png = PinProcess(img, &msg);
+    if (!png) return msg;
     NSString *path = BFPinImagePath();
     [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
-    if (!png || ![png writeToFile:path atomically:YES]) return @"Couldn't save the picture.";
+    if (![png writeToFile:path atomically:YES]) return @"Couldn't save the picture.";
     if (turnOn) {
         [UIImagePNGRepresentation(img) writeToFile:PinSourcePath() atomically:YES];
         gBF.pinImage = YES;
         BFSaveConfig();
     }
-    if (wrap) return [NSString stringWithFormat:@"Wrap picture put on the pins (%d px). Seams always match in this layout.", side];
-    return square ? [NSString stringWithFormat:@"Pin picture saved (%d px). It's on the pins now.", side]
-                  : [NSString stringWithFormat:@"Pin picture saved. It wasn't square or 2:1, so it was stretched to %d x %d (game layout).", side, side];
+    return msg;
 }
+
+static void PinAddPicked(UIImage *img, void (^done)(NSString *message));   // the pin library (below)
 
 @interface BFPinPicker : NSObject <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
 @property (nonatomic, copy) void (^done)(NSString *message);
+@property (nonatomic, copy) void (^onImage)(UIImage *img);   // set: the picture goes here (the alley background) instead
 @end
 @implementation BFPinPicker
 - (void)finish:(UIImage *)img {
-    NSString *msg = img ? SavePinImage(img, YES) : nil;
-    dispatch_async(dispatch_get_main_queue(), ^{ if (msg && self.done) self.done(msg); });
+    if (!img) return;
+    if (self.onImage) { void (^cb)(UIImage *) = self.onImage; dispatch_async(dispatch_get_main_queue(), ^{ cb(img); }); return; }
+    PinAddPicked(img, self.done);                // into the pin library, and on the pins
 }
 - (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
     [picker dismissViewControllerAnimated:YES completion:^{ ODonePresenting(); }];
@@ -1658,9 +1674,12 @@ static void PinImageUpgrade(void) {
     if (img) BFLog(@"pin image: %@", SavePinImage(img, NO));
 }
 
-void BFPinImagePick(BOOL fromFiles, void (^done)(NSString *message)) {
+static void PickPicture(BOOL fromFiles, void (^done)(NSString *message), void (^onImage)(UIImage *));
+void BFPinImagePick(BOOL fromFiles, void (^done)(NSString *message)) { PickPicture(fromFiles, done, nil); }
+static void PickPicture(BOOL fromFiles, void (^done)(NSString *message), void (^onImage)(UIImage *)) {
     sPinPicker = [BFPinPicker new];
     sPinPicker.done = done;
+    sPinPicker.onImage = onImage;
     if (fromFiles) {
         UIDocumentPickerViewController *pick = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypeImage ] asCopy:YES];
         pick.delegate = sPinPicker;
@@ -1695,3 +1714,744 @@ void BFPinImageShareGuide(void) {
     avc.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *r, NSError *e) { ODonePresenting(); };
     OPresentVC(avc);
 }
+
+#pragma mark - pin library (1.6.8)
+
+// Your pin pictures and the built-in ones (PinPresets.h), each kept in the game's layout under
+// Documents/BowlingPlus/pins/<id>.png (and the picture as picked, <id>_src.png). Choosing one copies it to
+// pin_image.png, the file the game side (Game.mm, PinImageTick) watches; nothing else changes there.
+// The switch in the menu (gBF.pinImage) still turns custom pins on and off; the last one chosen is kept.
+
+#include "PinPresets.h"
+#include "PinPreview.h"
+
+static NSString *const kPinLibKey = @"BowlingPlus.pinLibrary";   // [{id, name}]: your own pictures, newest last
+static NSString *const kPinLastKey = @"BowlingPlus.pinActive";   // the last one chosen
+
+static NSString *PinLibDir(void) { return [[BFPinImagePath() stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"pins"]; }
+static NSString *PinFile(NSString *pid) { return [PinLibDir() stringByAppendingPathComponent:[pid stringByAppendingString:@".png"]]; }
+static NSString *PinSrcFile(NSString *pid) { return [PinLibDir() stringByAppendingPathComponent:[pid stringByAppendingString:@"_src.png"]]; }
+
+static NSMutableArray<NSDictionary *> *PinLibLoad(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (id e in [[NSUserDefaults standardUserDefaults] arrayForKey:kPinLibKey])
+        if ([e isKindOfClass:[NSDictionary class]] && [e[@"id"] isKindOfClass:[NSString class]]) [out addObject:e];
+    return out;
+}
+static void PinLibSave(NSArray *a) { [[NSUserDefaults standardUserDefaults] setObject:a forKey:kPinLibKey]; }
+static NSString *PinLastId(void) { return [[NSUserDefaults standardUserDefaults] stringForKey:kPinLastKey]; }
+static void PinSetLastId(NSString *pid) { [[NSUserDefaults standardUserDefaults] setObject:pid forKey:kPinLastKey]; }
+
+static const BPPinPreset *PinPresetFor(NSString *pid) {
+    for (int i = 0; i < kBPPinPresetCount; i++)
+        if ([pid isEqualToString:[@"preset." stringByAppendingString:@(kBPPinPresets[i].id)]]) return &kBPPinPresets[i];
+    return NULL;
+}
+static NSDictionary *PinEntry(NSString *pid) {
+    if (!pid.length) return nil;
+    const BPPinPreset *p = PinPresetFor(pid);
+    if (p) return @{ @"id": pid, @"name": @(p->name), @"sub": @(p->sub), @"preset": @YES };
+    for (NSDictionary *e in PinLibLoad()) if ([e[@"id"] isEqualToString:pid]) return e;
+    return nil;
+}
+static NSString *PinActiveId(void) { return gBF.pinImage && PinEntry(PinLastId()) ? PinLastId() : nil; }
+
+// The entry's picture in the game's layout; a preset is converted on first use (a second or two: call it off the
+// main thread). nil if it can't be made.
+static NSString *PinEnsureFile(NSString *pid) {
+    NSString *f = PinFile(pid);
+    if ([[NSFileManager defaultManager] fileExistsAtPath:f]) return f;
+    const BPPinPreset *p = PinPresetFor(pid);
+    if (!p) return nil;
+    UIImage *img = [UIImage imageWithData:[NSData dataWithBytesNoCopy:(void *)p->png length:p->len freeWhenDone:NO]];
+    NSData *png = PinProcess(img, NULL);
+    if (!png) return nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:PinLibDir() withIntermediateDirectories:YES attributes:nil error:nil];
+    return [png writeToFile:f atomically:YES] ? f : nil;
+}
+
+// Puts an entry on the pins (nil: the game's own pins). Returns a line for the user.
+static NSString *PinUse(NSString *pid) {
+    if (!pid) {
+        gBF.pinImage = NO;
+        BFSaveConfig();
+        return @"The game's own pins.";
+    }
+    NSString *f = PinEnsureFile(pid);
+    NSData *d = f ? [NSData dataWithContentsOfFile:f] : nil;
+    if (!d.length) return @"Couldn't read that pin picture.";
+    NSString *path = BFPinImagePath();
+    [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+    if (![d writeToFile:path atomically:YES]) return @"Couldn't save the pin picture.";
+    PinSetLastId(pid);
+    gBF.pinImage = YES;
+    BFSaveConfig();
+    return [NSString stringWithFormat:@"On the pins: %@", PinEntry(pid)[@"name"] ?: @"your picture"];
+}
+
+// 1.6.8: the picture you had becomes the first entry of the library ("My pin").
+static void PinLibMigrate(void) {
+    NSString *key = @"BowlingPlus.pinLibraryV1";
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:key]) return;
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:key];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:BFPinImagePath()]) return;
+    NSString *pid = [@"my." stringByAppendingString:NSUUID.UUID.UUIDString];
+    [fm createDirectoryAtPath:PinLibDir() withIntermediateDirectories:YES attributes:nil error:nil];
+    if (![fm copyItemAtPath:BFPinImagePath() toPath:PinFile(pid) error:nil]) return;
+    [fm copyItemAtPath:PinSourcePath() toPath:PinSrcFile(pid) error:nil];
+    NSMutableArray *lib = PinLibLoad();
+    [lib addObject:@{ @"id": pid, @"name": @"My pin" }];
+    PinLibSave(lib);
+    PinSetLastId(pid);
+    BFLog(@"pin library: your pin picture is now \"My pin\"");
+}
+
+static void PinAddPicked(UIImage *img, void (^done)(NSString *message)) {     // (any thread)
+    NSString *msg;
+    NSData *png = PinProcess(img, &msg);
+    if (!png) { dispatch_async(dispatch_get_main_queue(), ^{ if (done) done(msg); }); return; }
+    NSString *pid = [@"my." stringByAppendingString:NSUUID.UUID.UUIDString];
+    [[NSFileManager defaultManager] createDirectoryAtPath:PinLibDir() withIntermediateDirectories:YES attributes:nil error:nil];
+    BOOL ok = [png writeToFile:PinFile(pid) atomically:YES];
+    if (ok) [UIImagePNGRepresentation(img) writeToFile:PinSrcFile(pid) atomically:YES];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!ok) { if (done) done(@"Couldn't save the picture."); return; }
+        NSMutableArray *lib = PinLibLoad();
+        [lib addObject:@{ @"id": pid, @"name": [NSString stringWithFormat:@"My pin %lu", (unsigned long)lib.count + 1] }];
+        PinLibSave(lib);
+        NSString *used = PinUse(pid);
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"BFPinLibraryChanged" object:pid];
+        if (done) done([NSString stringWithFormat:@"%@ %@", used, msg ?: @""]);
+    });
+}
+
+NSString *BFPinActiveName(void) { return PinEntry(PinActiveId())[@"name"]; }
+NSString *BFPinUseLast(void) { return PinUse(PinEntry(PinLastId()) ? PinLastId() : nil); }
+
+#pragma mark - the spinning preview
+
+// Renders the pin (PinPreview.h) on a background queue, 30 times a second while it's on screen. Drag to turn it.
+@interface BFPinSpin : UIView
+@property (nonatomic, strong) UIImageView *imageView;
+@property (nonatomic, strong) UILabel *note;
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic) dispatch_queue_t queue;
+@property (nonatomic) CFTimeInterval lastTime, holdUntil;
+@property (atomic) float angle;
+@property (atomic) BOOL busy;
+@property (atomic) uint8_t *tex;           // side x side RGBA (owned; swapped on the queue)
+@property (atomic) int side;
+@property (nonatomic) int texGen;
+- (void)showFile:(NSString *)file orPNG:(NSData *)png;
+- (void)stop;
+@end
+
+@implementation BFPinSpin {
+    BPPinShade _shade;
+    std::vector<uint8_t> _out;
+    std::vector<float> _z;
+}
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.queue = dispatch_queue_create("bowlingplus.pinspin", DISPATCH_QUEUE_SERIAL);
+        self.imageView = [UIImageView new];
+        self.imageView.contentMode = UIViewContentModeScaleAspectFit;
+        self.imageView.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:self.imageView];
+        self.note = OLabel(@"", 12, UIFontWeightSemibold, ODim(0.6));
+        self.note.textAlignment = NSTextAlignmentCenter;
+        self.note.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:self.note];
+        [NSLayoutConstraint activateConstraints:@[
+            [self.imageView.topAnchor constraintEqualToAnchor:self.topAnchor],
+            [self.imageView.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+            [self.imageView.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+            [self.imageView.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+            [self.note.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
+            [self.note.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+        ]];
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
+        [self addGestureRecognizer:pan];
+        self.angle = -0.6f;                              // start a little turned, so it doesn't look flat
+        self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(frame:)];
+        self.link.preferredFramesPerSecond = 30;
+        [self.link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    }
+    return self;
+}
+- (void)stop {
+    [self.link invalidate];
+    self.link = nil;
+    dispatch_async(self.queue, ^{ free(self.tex); self.tex = NULL; });
+}
+- (void)pan:(UIPanGestureRecognizer *)g {
+    CGPoint t = [g translationInView:self];
+    [g setTranslation:CGPointZero inView:self];
+    self.angle += (float)t.x * 0.02f;
+    self.holdUntil = CACurrentMediaTime() + 1.5;     // holds still while you turn it, then spins on
+}
+- (void)showFile:(NSString *)file orPNG:(NSData *)png {
+    int gen = ++self.texGen;
+    self.note.text = @"Preparing\u2026";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        UIImage *img = png ? [UIImage imageWithData:png] : [UIImage imageWithContentsOfFile:file];
+        const int side = 1024;
+        uint8_t *rgba = img ? PinRGBA(img, side, side) : NULL;
+        dispatch_async(self.queue, ^{
+            if (gen != self.texGen) { free(rgba); return; }
+            free(self.tex);
+            self.tex = rgba;
+            self.side = side;
+            dispatch_async(dispatch_get_main_queue(), ^{ if (gen == self.texGen) self.note.text = rgba ? @"" : @"Couldn't show this picture"; });
+        });
+    });
+}
+- (void)frame:(CADisplayLink *)l {
+    CFTimeInterval now = CACurrentMediaTime();
+    float dt = self.lastTime > 0 ? (float)(now - self.lastTime) : 0;
+    self.lastTime = now;
+    if (now >= self.holdUntil) self.angle += dt * 6.2831853f / 7.0f;   // one turn every 7 s
+    if (self.busy || !self.window) return;
+    CGFloat scale = MIN(self.window.screen.scale, 2.0);
+    int w = (int)(self.bounds.size.width * scale), h = (int)(self.bounds.size.height * scale);
+    if (w < 8 || h < 8) return;
+    self.busy = YES;
+    float a = self.angle;
+    dispatch_async(self.queue, ^{
+        uint8_t *tex = self.tex;
+        if (!tex) { self.busy = NO; return; }
+        self->_out.resize((size_t)w * h * 4);
+        self->_z.resize((size_t)w * h);
+        PinPreviewRender(&self->_shade, tex, self.side, a, self->_out.data(), w, h, self->_z.data());
+        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(self->_out.data(), w, h, 8, w * 4, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        CGImageRef cg = ctx ? CGBitmapContextCreateImage(ctx) : NULL;
+        if (ctx) CGContextRelease(ctx);
+        CGColorSpaceRelease(cs);
+        UIImage *ui = cg ? [UIImage imageWithCGImage:cg scale:scale orientation:UIImageOrientationUp] : nil;
+        if (cg) CGImageRelease(cg);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ui) self.imageView.image = ui;
+            self.busy = NO;
+        });
+    });
+}
+@end
+
+#pragma mark - the library sheet
+
+@interface BFPinLibrary : NSObject <UIGestureRecognizerDelegate>
+@property (nonatomic, strong) UIView *overlay, *card;
+@property (nonatomic, strong) UIStackView *list;
+@property (nonatomic, strong) UILabel *status, *previewName;
+@property (nonatomic, strong) UIButton *useButton;
+@property (nonatomic, strong) BFPinSpin *spin;
+@property (nonatomic, copy) NSString *selected;     // the one in the preview ("" = the game's own pins)
+@property (nonatomic, strong) NSCache *thumbs;
+@property (nonatomic, strong) NSData *gamePin;      // the game's current pin picture (made when the library opens)
+@property (nonatomic) BOOL showing;
++ (instancetype)shared;
+- (void)show;
+@end
+
+@implementation BFPinLibrary
+
++ (instancetype)shared {
+    static BFPinLibrary *l;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        l = [BFPinLibrary new];
+        l.thumbs = [NSCache new];
+        [[NSNotificationCenter defaultCenter] addObserver:l selector:@selector(libraryChanged:) name:@"BFPinLibraryChanged" object:nil];
+    });
+    return l;
+}
+
+- (void)show {
+    if (self.showing) return;
+    UIView *overlay, *card;
+    UIStackView *stack = OSheet(&overlay, &card, YES);
+    self.overlay = overlay;
+    self.card = card;
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(outsideTap:)];
+    tap.cancelsTouchesInView = NO;
+    [overlay addGestureRecognizer:tap];
+
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    [close setTitle:@"\u2715" forState:UIControlStateNormal];
+    [close setTitleColor:ODim(0.7) forState:UIControlStateNormal];
+    close.titleLabel.font = OFont(20, UIFontWeightBold);
+    [close addTarget:self action:@selector(hide) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:OStack(@[OLabel(@"Pins", 22, UIFontWeightHeavy, UIColor.whiteColor), [UIView new], close], UILayoutConstraintAxisHorizontal, 8)];
+    self.status = OLabel(@"", 13, UIFontWeightSemibold, OYellow());
+    [stack addArrangedSubview:self.status];
+
+    UIView *stage = [UIView new];                      // the preview, on a soft panel
+    stage.backgroundColor = ODim(0.05);
+    stage.layer.cornerRadius = 16;
+    stage.clipsToBounds = YES;
+    self.spin = [BFPinSpin new];
+    self.spin.translatesAutoresizingMaskIntoConstraints = NO;
+    [stage addSubview:self.spin];
+    self.previewName = OLabel(@"", 15, UIFontWeightBold, UIColor.whiteColor);
+    self.previewName.textAlignment = NSTextAlignmentCenter;
+    self.previewName.translatesAutoresizingMaskIntoConstraints = NO;
+    [stage addSubview:self.previewName];
+    [NSLayoutConstraint activateConstraints:@[
+        [stage.heightAnchor constraintEqualToConstant:250],
+        [self.spin.topAnchor constraintEqualToAnchor:stage.topAnchor constant:8],
+        [self.spin.bottomAnchor constraintEqualToAnchor:self.previewName.topAnchor constant:-2],
+        [self.spin.centerXAnchor constraintEqualToAnchor:stage.centerXAnchor],
+        [self.spin.widthAnchor constraintEqualToConstant:150],
+        [self.previewName.leadingAnchor constraintEqualToAnchor:stage.leadingAnchor constant:8],
+        [self.previewName.trailingAnchor constraintEqualToAnchor:stage.trailingAnchor constant:-8],
+        [self.previewName.bottomAnchor constraintEqualToAnchor:stage.bottomAnchor constant:-10],
+    ]];
+    [stack addArrangedSubview:stage];
+    self.useButton = OButton(@"Use this pin", YES, self, @selector(useSelected));
+    [stack addArrangedSubview:self.useButton];
+    [stack addArrangedSubview:OLabel(@"Tap a pin to see it turn above (drag it to turn it yourself), then Use this pin. Looks only: all lanes, every mode.",
+                                     12, UIFontWeightRegular, ODim(0.55))];
+    self.list = OStack(nil, UILayoutConstraintAxisVertical, 8);
+    [stack addArrangedSubview:self.list];
+    UIStackView *adds = OStack(@[OButton(@"+ From Photos", NO, self, @selector(addFromPhotos)), OButton(@"+ From Files", NO, self, @selector(addFromFiles))],
+                               UILayoutConstraintAxisHorizontal, 8);
+    adds.distribution = UIStackViewDistributionFillEqually;
+    [stack addArrangedSubview:adds];
+    [stack addArrangedSubview:OButton(@"Get the wrap template + guide", NO, self, @selector(guide))];
+    [stack addArrangedSubview:OLabel(@"Best: draw on the wrap template (2:1, one sheet that wraps around the pin, so no seams). A square picture in the game's own layout works too.",
+                                     11, UIFontWeightRegular, ODim(0.45))];
+    self.showing = YES;
+    self.gamePin = BFGamePinPNG();                     // the game's own pins as they are now (Gold, Rainbow...)
+    BFLog(@"pin library: the game's own pin picture %@", self.gamePin ? [NSString stringWithFormat:@"read (%lu bytes)", (unsigned long)self.gamePin.length] : @"couldn't be read, showing the plain pin");
+    [self select:PinActiveId() ?: @""];
+    OPresent(overlay, card, YES);
+    // make the built-in pictures ready in the background, so choosing one is instant
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        for (int i = 0; i < kBPPinPresetCount; i++) PinEnsureFile([@"preset." stringByAppendingString:@(kBPPinPresets[i].id)]);
+    });
+}
+
+- (void)outsideTap:(UITapGestureRecognizer *)g {
+    if (![self.card pointInside:[g locationInView:self.card] withEvent:nil]) [self hide];
+}
+
+- (void)hide {
+    if (!self.showing) return;
+    self.showing = NO;
+    [self.spin stop];
+    self.spin = nil;
+    ODismiss(self.overlay);
+}
+
+- (void)libraryChanged:(NSNotification *)n {
+    if (!self.showing) return;
+    NSString *pid = [n.object isKindOfClass:[NSString class]] ? n.object : nil;
+    [self select:pid ?: self.selected];
+}
+
+// Shows a pin in the preview (it isn't used until "Use this pin").
+- (void)select:(NSString *)pid {
+    self.selected = pid ?: @"";
+    if (!self.selected.length) {
+        [self.spin showFile:nil orPNG:self.gamePin ?: [NSData dataWithBytesNoCopy:(void *)kBPPinTemplatePNG length:kBPPinTemplatePNGLen freeWhenDone:NO]];
+        self.previewName.text = @"The game's own pins";
+    } else {
+        NSString *sel = self.selected;
+        BFPinSpin *spin = self.spin;
+        self.previewName.text = PinEntry(sel)[@"name"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:PinFile(sel)]) [spin showFile:PinFile(sel) orPNG:nil];
+        else {
+            spin.note.text = @"Preparing\u2026";
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                NSString *f = PinEnsureFile(sel);
+                dispatch_async(dispatch_get_main_queue(), ^{ if ([self.selected isEqualToString:sel]) [spin showFile:f orPNG:nil]; });
+            });
+        }
+    }
+    [self reload];
+}
+
+- (void)reload {
+    for (UIView *v in self.list.arrangedSubviews) [v removeFromSuperview];
+    [self.list addArrangedSubview:[self row:nil]];
+    [self.list addArrangedSubview:OLabel(@"BOWLINGPLUS COLLECTION", 11, UIFontWeightHeavy, ODim(0.45))];
+    for (int i = 0; i < kBPPinPresetCount; i++) [self.list addArrangedSubview:[self row:PinEntry([@"preset." stringByAppendingString:@(kBPPinPresets[i].id)])]];
+    [self.list addArrangedSubview:OLabel(@"MY PINS", 11, UIFontWeightHeavy, ODim(0.45))];
+    NSArray *mine = PinLibLoad();
+    for (NSDictionary *e in mine) [self.list addArrangedSubview:[self row:e]];
+    if (!mine.count) [self.list addArrangedSubview:OLabel(@"None yet. Add a picture from Photos or Files below.", 12, UIFontWeightRegular, ODim(0.45))];
+    NSString *act = PinActiveId() ?: @"";
+    self.status.text = act.length ? [NSString stringWithFormat:@"On the pins: %@", PinEntry(act)[@"name"]] : @"The game's own pins";
+    BOOL same = [self.selected isEqualToString:act];
+    self.useButton.hidden = same;
+    [self.useButton setTitle:self.selected.length ? @"Use this pin" : @"Use the game's own pins" forState:UIControlStateNormal];
+}
+
+- (UIImage *)thumbFor:(NSDictionary *)e {
+    NSString *pid = e[@"id"];
+    UIImage *img = [self.thumbs objectForKey:pid];
+    if (img) return img;
+    __weak BFPinLibrary *weak = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        const BPPinPreset *p = PinPresetFor(pid);
+        UIImage *src = p ? [UIImage imageWithData:[NSData dataWithBytesNoCopy:(void *)p->png length:p->len freeWhenDone:NO]]
+                         : ([UIImage imageWithContentsOfFile:PinSrcFile(pid)] ?: [UIImage imageWithContentsOfFile:PinFile(pid)]);
+        if (!src) return;
+        CGSize sz = CGSizeMake(72, 36);
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:sz];
+        UIImage *t = [r imageWithActions:^(UIGraphicsImageRendererContext *c) {
+            [UIColor.whiteColor setFill];
+            UIRectFill(CGRectMake(0, 0, sz.width, sz.height));
+            CGFloat a = src.size.width / MAX(1, src.size.height);
+            CGFloat w = MIN(sz.width, sz.height * a), h = w / a;
+            [src drawInRect:CGRectMake((sz.width - w) / 2, (sz.height - h) / 2, w, h)];
+        }];
+        dispatch_async(dispatch_get_main_queue(), ^{ [weak.thumbs setObject:t forKey:pid]; if (weak.showing) [weak reload]; });
+    });
+    return nil;
+}
+
+- (UIView *)row:(NSDictionary *)e {
+    NSString *pid = e[@"id"] ?: @"";
+    BOOL active = [pid isEqualToString:PinActiveId() ?: @""];
+    BOOL sel = [pid isEqualToString:self.selected];
+    UIView *box = [UIView new];
+    box.backgroundColor = sel ? [OYellow() colorWithAlphaComponent:0.16] : ODim(0.05);
+    box.layer.cornerRadius = 14;
+    box.layer.borderWidth = sel ? 1.5 : 0;
+    box.layer.borderColor = OYellow().CGColor;
+    UILabel *dot = OLabel(active ? @"\u25C9" : @"\u25CB", 20, UIFontWeightBold, active ? OYellow() : ODim(0.4));
+    UIImageView *thumb = [UIImageView new];
+    thumb.layer.cornerRadius = 6;
+    thumb.clipsToBounds = YES;
+    thumb.contentMode = UIViewContentModeScaleAspectFill;
+    thumb.backgroundColor = ODim(0.9);
+    thumb.image = e ? [self thumbFor:e] : nil;
+    [thumb.widthAnchor constraintEqualToConstant:e ? 72 : 0].active = YES;
+    [thumb.heightAnchor constraintEqualToConstant:36].active = YES;
+    thumb.hidden = !e;
+    UILabel *name = OLabel(e ? e[@"name"] : @"Off: the game's own pins", 15, UIFontWeightBold, UIColor.whiteColor);
+    NSString *subText = !e ? @"No custom picture" : [e[@"preset"] boolValue] ? e[@"sub"] : (active ? @"On the pins" : @"Your picture");
+    UIStackView *texts = OStack(@[name, OLabel(subText, 11, UIFontWeightSemibold, ODim(0.5))], UILayoutConstraintAxisVertical, 1);
+    NSMutableArray *views = [NSMutableArray arrayWithObjects:dot, thumb, texts, nil];
+    if (e && ![e[@"preset"] boolValue]) {
+        UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
+        [more setImage:[UIImage systemImageNamed:@"ellipsis.circle" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:24 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+        more.tintColor = OYellow();
+        more.accessibilityLabel = @"Rename or delete";
+        [more.widthAnchor constraintEqualToConstant:44].active = YES;
+        [more.heightAnchor constraintEqualToConstant:44].active = YES;
+        objc_setAssociatedObject(more, "bpPin", e, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [more addTarget:self action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [views addObject:more];
+    }
+    UIStackView *row = OStack(views, UILayoutConstraintAxisHorizontal, 10);
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    [box addSubview:row];
+    [NSLayoutConstraint activateConstraints:@[
+        [row.topAnchor constraintEqualToAnchor:box.topAnchor constant:8],
+        [row.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-8],
+        [row.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:12],
+        [row.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-6],
+        [box.heightAnchor constraintGreaterThanOrEqualToConstant:56],
+    ]];
+    UITapGestureRecognizer *pick = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(pickRow:)];
+    pick.delegate = self;
+    [box addGestureRecognizer:pick];
+    box.accessibilityIdentifier = pid;
+    return box;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch {
+    for (UIView *v = touch.view; v && v != g.view; v = v.superview)
+        if ([v isKindOfClass:[UIControl class]]) return NO;
+    return YES;
+}
+
+- (void)pickRow:(UITapGestureRecognizer *)g {
+    [[UISelectionFeedbackGenerator new] selectionChanged];
+    [self select:g.view.accessibilityIdentifier ?: @""];
+}
+
+- (void)useSelected {
+    NSString *msg = PinUse(self.selected.length ? self.selected : nil);
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    OToast(msg);
+    [self reload];
+}
+
+- (void)moreTapped:(UIButton *)b {
+    NSDictionary *e = objc_getAssociatedObject(b, "bpPin");
+    if (!e) return;
+    __weak BFPinLibrary *weak = self;
+    OChoose(e[@"name"], nil, @[
+        @{ @"title": @"\u270E  Rename", @"action": ^{ [weak rename:e]; } },
+        @{ @"title": @"\u2B06\uFE0E  Share the picture", @"action": ^{ [weak share:e]; } },
+        @{ @"title": @"\u2715  Delete", @"destructive": @YES, @"confirm": @YES, @"action": ^{ [weak remove:e]; } },
+    ]);
+}
+
+- (void)rename:(NSDictionary *)e {
+    UIView *overlay, *card;
+    UIStackView *stack = OSheet(&overlay, &card, NO);
+    [stack addArrangedSubview:OLabel(@"Rename", 19, UIFontWeightHeavy, UIColor.whiteColor)];
+    UITextField *field = [UITextField new];
+    field.text = e[@"name"];
+    field.textColor = UIColor.whiteColor;
+    field.font = OFont(17, UIFontWeightSemibold);
+    field.backgroundColor = ODim(0.08);
+    field.layer.cornerRadius = 10;
+    field.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+    field.leftViewMode = UITextFieldViewModeAlways;
+    field.clearButtonMode = UITextFieldViewModeWhileEditing;
+    field.returnKeyType = UIReturnKeyDone;
+    [field.heightAnchor constraintEqualToConstant:44].active = YES;
+    [stack addArrangedSubview:field];
+    __weak UIView *wo = overlay;
+    __weak BFPinLibrary *weak = self;
+    UIButton *save = OButton(@"Save", YES, nil, nil);
+    [save addAction:[UIAction actionWithHandler:^(UIAction *a) {
+        NSString *name = [field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (name.length) {
+            NSMutableArray *lib = PinLibLoad();
+            for (NSUInteger i = 0; i < lib.count; i++)
+                if ([lib[i][@"id"] isEqualToString:e[@"id"]]) { NSMutableDictionary *m = [lib[i] mutableCopy]; m[@"name"] = name; lib[i] = m; }
+            PinLibSave(lib);
+        }
+        [field resignFirstResponder];
+        ODismiss(wo);
+        [weak select:weak.selected];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    UIButton *cancel = OButton(@"Cancel", NO, nil, nil);
+    [cancel addAction:[UIAction actionWithHandler:^(UIAction *a) { [field resignFirstResponder]; ODismiss(wo); }] forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:OStack(@[cancel, save], UILayoutConstraintAxisHorizontal, 8)];
+    OPresent(overlay, card, NO);
+    [field becomeFirstResponder];
+}
+
+- (void)share:(NSDictionary *)e {
+    NSString *f = [[NSFileManager defaultManager] fileExistsAtPath:PinSrcFile(e[@"id"])] ? PinSrcFile(e[@"id"]) : PinFile(e[@"id"]);
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"BowlingPlus"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *out = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.png", e[@"name"]]];
+    [[NSFileManager defaultManager] removeItemAtPath:out error:nil];
+    [[NSFileManager defaultManager] copyItemAtPath:f toPath:out error:nil];
+    UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[ [NSURL fileURLWithPath:out] ] applicationActivities:nil];
+    avc.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *r, NSError *err) { ODonePresenting(); };
+    OPresentVC(avc);
+}
+
+- (void)remove:(NSDictionary *)e {
+    NSString *pid = e[@"id"];
+    NSMutableArray *lib = PinLibLoad();
+    [lib filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *x, NSDictionary *b) { return ![x[@"id"] isEqualToString:pid]; }]];
+    PinLibSave(lib);
+    [[NSFileManager defaultManager] removeItemAtPath:PinFile(pid) error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:PinSrcFile(pid) error:nil];
+    [self.thumbs removeObjectForKey:pid];
+    if ([pid isEqualToString:PinLastId()]) {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:kPinLastKey];
+        if (gBF.pinImage) PinUse(nil);
+    }
+    OToast([NSString stringWithFormat:@"Deleted \"%@\"", e[@"name"]]);
+    [self select:[self.selected isEqualToString:pid] ? (PinActiveId() ?: @"") : self.selected];
+}
+
+- (void)addFromPhotos { [self add:NO]; }
+- (void)addFromFiles { [self add:YES]; }
+- (void)add:(BOOL)files {
+    __weak BFPinLibrary *weak = self;
+    BFPinImagePick(files, ^(NSString *m) { OToast(m); [weak reload]; });
+}
+- (void)guide { BFPinImageShareGuide(); }
+@end
+
+void BFPinShowLibrary(void) { [[BFPinLibrary shared] show]; }
+
+#pragma mark - alley background (1.6.9)
+
+// Your own picture behind the lanes (Game.mm "your own alley background" puts it on the wall's three panels).
+// The picture as picked is kept (bg_source.png) and fitted here, the way you choose, to the wall's 2820:850 shape
+// (bg_image.png, 2048 x 617), which is the file the game side watches.
+static NSString *const kBgFitKey = @"BowlingPlus.bgFit";   // 0 fill, 1 fit, 2 stretch, 3 tile
+static const CGFloat kBgW = 2048, kBgH = 617;
+static NSString *BgSourcePath(void) { return [[BFBgImagePath() stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"bg_source.png"]; }
+static NSInteger BgFitMode(void) { return [[NSUserDefaults standardUserDefaults] integerForKey:kBgFitKey]; }
+static NSArray<NSString *> *BgFitNames(void) { return @[ @"Fill", @"Fit", @"Stretch", @"Tile" ]; }
+
+static UIImage *BgFitted(UIImage *src, NSInteger mode) {
+    CGSize out = CGSizeMake(kBgW, kBgH);
+    CGFloat sw = MAX(1, src.size.width), sh = MAX(1, src.size.height);
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
+    fmt.scale = 1;
+    fmt.opaque = YES;
+    UIImage *soft = nil;
+    if (mode == 1) {                                  // Fit: the picture over a soft, darker blur of itself
+        CGSize tiny = CGSizeMake(40, 12);
+        CGFloat s = MAX(tiny.width / sw, tiny.height / sh);
+        soft = [[[UIGraphicsImageRenderer alloc] initWithSize:tiny format:fmt] imageWithActions:^(UIGraphicsImageRendererContext *c) {
+            [src drawInRect:CGRectMake((tiny.width - sw * s) / 2, (tiny.height - sh * s) / 2, sw * s, sh * s)];
+        }];
+    }
+    return [[[UIGraphicsImageRenderer alloc] initWithSize:out format:fmt] imageWithActions:^(UIGraphicsImageRendererContext *c) {
+        CGContextSetInterpolationQuality(c.CGContext, kCGInterpolationHigh);
+        [UIColor.blackColor setFill];
+        UIRectFill(CGRectMake(0, 0, out.width, out.height));
+        if (mode == 2) { [src drawInRect:CGRectMake(0, 0, out.width, out.height)]; return; }
+        if (mode == 3) {                              // Tile: full height, repeated from the middle outwards
+            CGFloat tw = sw * out.height / sh;
+            CGFloat x = (out.width - tw) / 2;
+            while (x > 0) x -= tw;
+            for (; x < out.width; x += tw) [src drawInRect:CGRectMake(x, 0, tw, out.height)];
+            return;
+        }
+        if (mode == 1) {
+            [soft drawInRect:CGRectMake(0, 0, out.width, out.height)];
+            [[UIColor colorWithWhite:0 alpha:0.35] setFill];
+            UIRectFillUsingBlendMode(CGRectMake(0, 0, out.width, out.height), kCGBlendModeNormal);
+        }
+        CGFloat s = mode == 1 ? MIN(out.width / sw, out.height / sh) : MAX(out.width / sw, out.height / sh);
+        [src drawInRect:CGRectMake((out.width - sw * s) / 2, (out.height - sh * s) / 2, sw * s, sh * s)];
+    }];
+}
+
+static NSString *BgSave(NSInteger mode) {             // bg_source.png -> bg_image.png
+    UIImage *src = [UIImage imageWithContentsOfFile:BgSourcePath()];
+    if (!src) return @"Pick a picture first.";
+    NSData *png = UIImagePNGRepresentation(BgFitted(src, mode));
+    [[NSFileManager defaultManager] createDirectoryAtPath:BFBgImagePath().stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+    if (!png || ![png writeToFile:BFBgImagePath() atomically:YES]) return @"Couldn't save the picture.";
+    return [NSString stringWithFormat:@"Alley background: %@", BgFitNames()[MIN(MAX(mode, 0), 3)]];
+}
+
+NSString *BFBgStatus(void) {
+    BOOL have = [[NSFileManager defaultManager] fileExistsAtPath:BFBgImagePath()];
+    if (!gBF.bgImage || !have) return have ? @"Your picture is saved. Turn the switch on to use it." : @"The room's own picture.";
+    return [NSString stringWithFormat:@"Your picture (%@)%@", BgFitNames()[MIN(MAX(BgFitMode(), 0), 3)], gBF.bgTitle ? @", with the alley name" : @""];
+}
+
+@interface BFBgSheet : NSObject
+@property (nonatomic, strong) UIView *overlay, *card;
+@property (nonatomic, strong) UIImageView *preview;
+@property (nonatomic, strong) UILabel *status, *empty;
+@property (nonatomic, strong) UISwitch *onSwitch, *titleSwitch;
+@property (nonatomic, strong) UISegmentedControl *fit;
+@property (nonatomic) BOOL showing;
+@end
+
+@implementation BFBgSheet
++ (instancetype)shared { static BFBgSheet *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [BFBgSheet new]; }); return s; }
+
+static UIView *BgRow(NSString *title, NSString *help, UIView *control) {
+    UILabel *t = OLabel(title, 15, UIFontWeightBold, UIColor.whiteColor);
+    UILabel *h = OLabel(help, 11, UIFontWeightRegular, ODim(0.5));
+    UIStackView *texts = OStack(@[t, h], UILayoutConstraintAxisVertical, 2);
+    UIStackView *row = OStack(@[texts, control], UILayoutConstraintAxisHorizontal, 10);
+    row.alignment = UIStackViewAlignmentCenter;
+    return row;
+}
+
+- (void)show {
+    if (self.showing) return;
+    UIView *overlay, *card;
+    UIStackView *stack = OSheet(&overlay, &card, YES);
+    self.overlay = overlay;
+    self.card = card;
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    [close setTitle:@"\u2715" forState:UIControlStateNormal];
+    [close setTitleColor:ODim(0.7) forState:UIControlStateNormal];
+    close.titleLabel.font = OFont(20, UIFontWeightBold);
+    [close addTarget:self action:@selector(hide) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:OStack(@[OLabel(@"Alley background", 22, UIFontWeightHeavy, UIColor.whiteColor), [UIView new], close], UILayoutConstraintAxisHorizontal, 8)];
+    self.status = OLabel(@"", 13, UIFontWeightSemibold, OYellow());
+    [stack addArrangedSubview:self.status];
+    UIView *frame = [UIView new];
+    frame.backgroundColor = ODim(0.06);
+    frame.layer.cornerRadius = 12;
+    frame.clipsToBounds = YES;
+    self.preview = [UIImageView new];
+    self.preview.contentMode = UIViewContentModeScaleAspectFill;
+    self.preview.translatesAutoresizingMaskIntoConstraints = NO;
+    [frame addSubview:self.preview];
+    self.empty = OLabel(@"The room's own picture", 13, UIFontWeightSemibold, ODim(0.5));
+    self.empty.textAlignment = NSTextAlignmentCenter;
+    self.empty.translatesAutoresizingMaskIntoConstraints = NO;
+    [frame addSubview:self.empty];
+    [NSLayoutConstraint activateConstraints:@[
+        [frame.heightAnchor constraintEqualToAnchor:frame.widthAnchor multiplier:850.0 / 2820.0],
+        [self.preview.topAnchor constraintEqualToAnchor:frame.topAnchor],
+        [self.preview.bottomAnchor constraintEqualToAnchor:frame.bottomAnchor],
+        [self.preview.leadingAnchor constraintEqualToAnchor:frame.leadingAnchor],
+        [self.preview.trailingAnchor constraintEqualToAnchor:frame.trailingAnchor],
+        [self.empty.centerXAnchor constraintEqualToAnchor:frame.centerXAnchor],
+        [self.empty.centerYAnchor constraintEqualToAnchor:frame.centerYAnchor],
+    ]];
+    [stack addArrangedSubview:frame];
+    self.onSwitch = [UISwitch new];
+    self.onSwitch.onTintColor = OYellow();
+    [self.onSwitch addTarget:self action:@selector(onChanged) forControlEvents:UIControlEventValueChanged];
+    [stack addArrangedSubview:BgRow(@"Use my picture", @"Behind the lanes, on every lane. Looks only.", self.onSwitch)];
+    self.fit = [[UISegmentedControl alloc] initWithItems:BgFitNames()];
+    self.fit.selectedSegmentIndex = BgFitMode();
+    self.fit.selectedSegmentTintColor = OYellow();
+    [self.fit setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.blackColor } forState:UIControlStateSelected];
+    [self.fit setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor } forState:UIControlStateNormal];
+    [self.fit addTarget:self action:@selector(fitChanged) forControlEvents:UIControlEventValueChanged];
+    [stack addArrangedSubview:self.fit];
+    [stack addArrangedSubview:OLabel(@"Fill: covers the wall, cutting the edges off. Fit: all of it, on a soft blur of itself. Stretch: all of it, squeezed to the wall. Tile: repeated across.", 11, UIFontWeightRegular, ODim(0.45))];
+    self.titleSwitch = [UISwitch new];
+    self.titleSwitch.onTintColor = OYellow();
+    [self.titleSwitch addTarget:self action:@selector(titleChanged) forControlEvents:UIControlEventValueChanged];
+    [stack addArrangedSubview:BgRow(@"Show the alley name", @"Keeps the room's name (Orange Tenpin Bowl...) on top of your picture.", self.titleSwitch)];
+    UIStackView *adds = OStack(@[OButton(@"+ From Photos", NO, self, @selector(fromPhotos)), OButton(@"+ From Files", NO, self, @selector(fromFiles))], UILayoutConstraintAxisHorizontal, 8);
+    adds.distribution = UIStackViewDistributionFillEqually;
+    [stack addArrangedSubview:adds];
+    [stack addArrangedSubview:OLabel(@"Best: a wide picture, about 3.3 : 1 (for example 2820 x 850).", 11, UIFontWeightRegular, ODim(0.45))];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(outside:)];
+    tap.cancelsTouchesInView = NO;
+    [overlay addGestureRecognizer:tap];
+    self.showing = YES;
+    [self refresh];
+    OPresent(overlay, card, YES);
+}
+- (void)outside:(UITapGestureRecognizer *)g { if (![self.card pointInside:[g locationInView:self.card] withEvent:nil]) [self hide]; }
+- (void)hide { if (!self.showing) return; self.showing = NO; ODismiss(self.overlay); }
+- (void)refresh {
+    UIImage *img = [UIImage imageWithContentsOfFile:BFBgImagePath()];
+    self.preview.image = img;
+    self.preview.alpha = gBF.bgImage ? 1 : 0.35;
+    self.empty.hidden = img != nil;
+    self.onSwitch.on = gBF.bgImage;
+    self.titleSwitch.on = gBF.bgTitle;
+    self.fit.selectedSegmentIndex = BgFitMode();
+    self.status.text = BFBgStatus();
+}
+- (void)onChanged {
+    if (self.onSwitch.on && ![[NSFileManager defaultManager] fileExistsAtPath:BFBgImagePath()]) { self.onSwitch.on = NO; [self fromPhotos]; return; }
+    gBF.bgImage = self.onSwitch.on;
+    BFSaveConfig();
+    [self refresh];
+}
+- (void)titleChanged { gBF.bgTitle = self.titleSwitch.on; BFSaveConfig(); [self refresh]; }
+- (void)fitChanged {
+    [[NSUserDefaults standardUserDefaults] setInteger:self.fit.selectedSegmentIndex forKey:kBgFitKey];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:BgSourcePath()]) OToast(BgSave(self.fit.selectedSegmentIndex));
+    [self refresh];
+}
+- (void)picked:(UIImage *)img {
+    NSData *d = UIImagePNGRepresentation(img);
+    [[NSFileManager defaultManager] createDirectoryAtPath:BgSourcePath().stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+    if (!d || ![d writeToFile:BgSourcePath() atomically:YES]) { OToast(@"Couldn't save the picture."); return; }
+    NSString *msg = BgSave(BgFitMode());
+    gBF.bgImage = YES;
+    BFSaveConfig();
+    OToast(msg);
+    [self refresh];
+}
+- (void)fromPhotos { __weak BFBgSheet *w = self; PickPicture(NO, ^(NSString *m) { OToast(m); }, ^(UIImage *img) { [w picked:img]; }); }
+- (void)fromFiles { __weak BFBgSheet *w = self; PickPicture(YES, ^(NSString *m) { OToast(m); }, ^(UIImage *img) { [w picked:img]; }); }
+@end
+
+void BFBgShowSheet(void) { [[BFBgSheet shared] show]; }
