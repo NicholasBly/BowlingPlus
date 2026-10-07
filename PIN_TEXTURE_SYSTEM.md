@@ -197,3 +197,11 @@ The output starts all zero. Pixels no triangle touches are filled in the next st
 - **A new pin model** in a game update: re-export its mesh and redo the UV analysis. If the layout changed, rebuild `PinMesh.h` and `PinMask.h`, and run §6.
 - **A different wrap mapping** (e.g. arc length instead of height): change it in **both** `PinWrap.h` and the page, then run §6.1. Keep `u = ¼` = side A so existing pictures don't move.
 - **Different pictures per pin, or a randomized pin picture:** the material is shared, so you would need per-renderer material instances (`renderer.material`), which multiplies the per-frame checks.
+
+---
+
+## Since 1.6.8: the pin library and its 3D preview
+
+- **Several pictures, one file for the game.** The library keeps each picture already converted to the game's layout (`pins/<id>.png`, plus the original as `<id>_src.png`); choosing one copies it to `pin_image.png`, which is still the only file the game side reads. Conversion is unchanged (`PinProcess` / `Oil.processPin`, the steps above).
+- **Built-in pictures** come from `src/PinPresets.h` (made by `tools/dev/make_pin_presets.py` from `pins/`) and are converted the first time they're needed.
+- **The preview** (`src/PinPreview.h`) draws the same mesh (`PinMesh.h`) with the converted picture, so what it shows is what the game shows. It follows the conventions above (right-handed positions, v = 1 at the top row); `tools/dev/pinpreview/run.py` renders it on a computer, and a text test reads correctly there.

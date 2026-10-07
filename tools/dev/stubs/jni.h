@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <stdarg.h>
 typedef uint8_t jboolean; typedef int8_t jbyte; typedef uint16_t jchar; typedef int16_t jshort; typedef int32_t jint; typedef int64_t jlong; typedef float jfloat; typedef double jdouble; typedef jint jsize;
-class _jobject {}; class _jclass : public _jobject {}; class _jstring : public _jobject {}; class _jarray : public _jobject {}; class _jbyteArray : public _jarray {}; class _jthrowable : public _jobject {};
-typedef _jobject* jobject; typedef _jclass* jclass; typedef _jstring* jstring; typedef _jarray* jarray; typedef _jbyteArray* jbyteArray; typedef _jthrowable* jthrowable;
+class _jobject {}; class _jclass : public _jobject {}; class _jstring : public _jobject {}; class _jarray : public _jobject {}; class _jbyteArray : public _jarray {}; class _jintArray : public _jarray {}; class _jthrowable : public _jobject {};
+typedef _jobject* jobject; typedef _jclass* jclass; typedef _jstring* jstring; typedef _jarray* jarray; typedef _jbyteArray* jbyteArray; typedef _jintArray* jintArray; typedef _jthrowable* jthrowable;
 struct _jmethodID; typedef _jmethodID* jmethodID; struct _jfieldID; typedef _jfieldID* jfieldID;
 typedef struct { const char* name; const char* signature; void* fnPtr; } JNINativeMethod;
 #define JNI_OK 0
@@ -27,6 +27,7 @@ struct _JNIEnv {
   jstring NewStringUTF(const char*); const char* GetStringUTFChars(jstring, jboolean*); void ReleaseStringUTFChars(jstring, const char*); jsize GetStringUTFLength(jstring);
   jsize GetArrayLength(jarray); jbyteArray NewByteArray(jsize);
   void SetByteArrayRegion(jbyteArray, jsize, jsize, const jbyte*); void GetByteArrayRegion(jbyteArray, jsize, jsize, jbyte*);
+  void SetIntArrayRegion(jintArray, jsize, jsize, const jint*);
   jbyte* GetByteArrayElements(jbyteArray, jboolean*); void ReleaseByteArrayElements(jbyteArray, jbyte*, jint);
   jint RegisterNatives(jclass, const JNINativeMethod*, jint);
 };

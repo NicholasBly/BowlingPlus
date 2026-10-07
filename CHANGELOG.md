@@ -2,6 +2,39 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.6.9] - 2026-10-07
+
+### Added
+- **Alley background.** "Alley background" in the menu (Pins & display) puts your own picture behind the lanes instead of the room's (Orange Tenpin Bowl and the others), from Photos or Files. Choose how it fits the wall: **Fill** (covers it, cutting the edges off), **Fit** (all of it, on a soft, darker blur of itself instead of black bars), **Stretch** or **Tile**. The room's name is hidden while it's on; **Show the alley name** keeps it. Read from the game's scene: the background is three panels side by side on a world-space canvas (2820 x 850), plus a copy for the floor reflection; BowlingPlus puts a third of your picture on each as the panel's override sprite, so the game's own picture is untouched underneath and comes straight back when you turn it off. Everywhere (looks only).
+
+### Fixed
+- **Pin library, "Off": the preview showed the plain white pin with red stripes even when the game's own pins are something else (Gold...).** It now shows the game's current pins. Their pictures are compressed and not readable, and this build of the game has no `Graphics.Blit`, so BowlingPlus draws the picture into a small render texture itself (GL immediate mode) and reads it back. If that fails it still shows the plain pin (Copy debug info says why).
+- **The sweeper's banner still had both ends cut off (the B and the O).** Measured from the device screenshots: the banner already spans the whole bar, but both ends were hidden by the same straight lines in 1.6.7 and 1.6.8, although 1.6.8 had moved it. Nothing in the scene explains it (no mask, clip material, camera viewport, other mesh or animation), and the bar is drawn before the banner, so it can only hide it through the depth test. So while the sweeper is down in front of the pins (the banner at 0.10 m above the lane; raised it's at 0.77 m), the banner draws without the depth test (a copy of the UI material with `unity_GUIZTestMode` = Always). Raised, it goes back to the game's own material.
+
+### Changed
+- **The built-in pin is now called "Brunswick Max Crown"** (it was "Brunswick Crown Max").
+- **Copy debug info** adds an `alley background:` line (on, picture size, panels and title canvases found, applied, fails, and how reading the game's pin picture went).
+
+### Not tested on a device when this was written
+All of it. Checked without a device: both platforms compile (iOS with Theos, Android Java against API 35, native with clang 18 and on the host); the two shared native blocks are byte-identical on both platforms; the 37-check simulation and the pin-hook checks still pass; the engine methods used were checked against the game's code (all present: `RenderTexture(int, int, int, RenderTextureFormat)`, `GL` immediate mode, `Material.SetPass`, `Texture2D.ReadPixels`, `ImageConversion.EncodeToPNG`, `Sprite.Create`, `Image.overrideSprite`, `Material(Material)`, `Material.SetInt`); the banner heights were read from the sweeper's clips. Not checked anywhere: that GL drawing outside Unity's own rendering produces the pin picture on these phones, and that the banner's depth test is really what hides its ends.
+
+## [1.6.8] - 2026-10-06
+
+### Added
+- **Pin library.** "Custom pins" in the menu now opens a library, like Custom oil: **Off** (the game's own pins), the **BowlingPlus collection** (Brunswick Crown Max, built in) and **My pins** (as many of your own pictures as you like, from Photos or Files; rename, share or delete them with the ⋯ button). Tap one to see it, then **Use this pin**. The switch still turns custom pins on and off and remembers the last one. The picture you already had becomes "My pin".
+- **3D preview.** The pin you tap turns at the top of the library (drag it to turn it yourself). It's the game's own pin mesh with the exact picture the game will get, drawn by a small renderer shared by iOS and Android (`src/PinPreview.h`), so it matches the lane.
+- **Brunswick Crown Max** (`pins/BrunswickCrownMax.png`, 4096 x 2048 wrap) is built in and converted the first time it's needed. More can be added with `tools/dev/make_pin_presets.py`.
+
+### Fixed
+- **The sweeper's blue "BELMO" banner going black at the back of the lane, and its ends cut off.** Read from the game's scene: the banner is a world-space canvas with layers at different depths, sitting recessed inside the sweeper bar, a hollow frame with a dark back panel that bends during the sweep (two bones). On a device the bar covered both ends of the banner (B and O cut by straight lines, letters and blue alike), and at the back of the lane the back panel covered the whole blue layer while the letters, a little further forward, stayed. BowlingPlus now moves the banner (and the head-to-head timer bar) in front of every part of the bar and sizes it to the bar's window. Everywhere (looks only).
+
+### Changed
+- **Copy debug info** adds `sweeper banner: found= moved= fails=` to the `pin turns:` line.
+- **`HANDOFF.md` removed** from the source.
+
+### Not tested on a device when this was written
+All of it. Checked without a device: both platforms compile (iOS with Theos, Android Java against API 35 and native with clang 18); the preview renderer was run on the host with the app's own conversion code (Crown Max and a text test sheet: text reads correctly, seams meet, 15 ms a frame at 540 x 900 on one core); the banner's new position was checked against the sweeper mesh posed through its animation and rendered from three viewpoints. Whether the banner fix covers everything seen on the device can only be told there: the cause of the cut-off ends isn't fully reproduced by the mesh model, so the fix puts the banner in front of all of it.
+
 ## [1.6.7] - 2026-10-06
 
 ### Fixed

@@ -127,6 +127,11 @@ static void SetupGame() {
     }
     At<Il2CppArray *>(gInvObj, 0xC8) = gSetterArr;
     At<Il2CppArray *>(gSetterMgrObj, 0x50) = gMirrorArr;
+    N.Tr_getLocalPos = &gMethGetPos; N.Tr_setLocalPos = &gMethSetPos; N.Tr_setLocalScale = &gMethSetScale; N.Comp_getTransform = &gMethCompTr;
+    At<void *>(gPanelObj, 0x20) = gLogoGo;
+    At<void *>(gPanelObj, 0x28) = gBarImg;
+    gPanelList = NewArr(1, sizeof(void *));
+    ((void **)Data(gPanelList))[0] = gPanelObj;
     gMgrList = NewArr(1, sizeof(void *));
     ((void **)Data(gMgrList))[0] = gSetterMgrObj;
     gKegelsArr = NewArr(kPins, sizeof(void *));

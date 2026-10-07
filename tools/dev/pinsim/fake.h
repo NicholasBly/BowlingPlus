@@ -32,18 +32,27 @@ static Kegel gKegel[kPins];
 static Kegel gSetter[kPins], gMirror[kPins];   // InventaryData.pinseterKegelRenderer, PinSetterManager.mirrorOnPinsetter
 static int gClassInv, gClassShot, gClassShotData, gClassRandom, gFieldInst, gFieldCur;
 static int gMethGetTr, gMethGetRot, gMethGetLocal, gMethSetLocal, gMethActiveH, gClassSetterMgr;
+static int gMethCompTr, gMethGetPos, gMethSetPos, gMethSetScale, gClassPanel;
+struct FakeV3 { float x, y, z; };
+struct FakeTr { FakeV3 pos = { 0, 0, 0 }, scale = { 1, 1, 1 }; int posSets = 0; };
+static FakeTr gLogoTr, gBarTr;                    // the banner's Logo (a GameObject) and Bar (an Image) transforms
+static char gPanelObj[0x40], gLogoGo[8], gBarImg[8];
+static Il2CppArray *gPanelList;
+static bool gPanelPresent = true;
 static Il2CppArray *NewArr(size_t n, size_t elem) { Il2CppArray *a = (Il2CppArray *)calloc(1, sizeof(Il2CppArray) + n * elem); a->max_length = n; return a; }
 static char gInvObj[0x200];                     // InventaryData: kegels at 0x88
 static char gShotObj[0x40];                     // mdl_ShootData: Before at 0x20
 static char gSetterMgrObj[0x100];                // PinSetterManager: mirrorOnPinsetter at 0x50
 static Il2CppArray *gKegelsArr, *gBefore, *gSetterArr, *gMirrorArr;
 static bool gStaticLookupWorks = true, gLeanReadWorks = true;
-static struct { FieldInfo *invd_instance; Il2CppClass *InventaryData; const MethodInfo *GO_getTransform, *Tr_getRot, *RPT_UpdatePinPositions, *GO_activeH, *Tr_getLocalRot, *Tr_setLocalRot; } N;
+static struct { FieldInfo *invd_instance; Il2CppClass *InventaryData; const MethodInfo *GO_getTransform, *Tr_getRot, *RPT_UpdatePinPositions, *GO_activeH, *Tr_getLocalRot, *Tr_setLocalRot,
+    *Tr_getLocalPos, *Tr_setLocalPos, *Tr_setLocalScale, *Comp_getTransform; } N;
 static Il2CppClass *FindClass(const char *, const char *name) {
     if (!strcmp(name, "mdl_ShootCurrentData")) return gStaticLookupWorks ? &gClassShot : nullptr;
     if (!strcmp(name, "mdl_ShootData")) return &gClassShotData;
     if (!strcmp(name, "Random")) return &gClassRandom;
     if (!strcmp(name, "PinSetterManager")) return &gClassSetterMgr;
+    if (!strcmp(name, "PinSpotterInfoPannel")) return gPanelPresent ? &gClassPanel : nullptr;
     return nullptr;
 }
 static const MethodInfo *FindMethod(Il2CppClass *, const char *, int, const char * = nullptr, const char * = nullptr) { return nullptr; }
@@ -52,6 +61,8 @@ static bool FieldTypeName(Il2CppClass *k, const char *name, char *out, size_t si
     if (k == &gClassShotData && !strcmp(name, "Before")) { snprintf(out, size, "System.Boolean[]"); return true; }
     if (k == &gClassInv && !strcmp(name, "pinseterKegelRenderer")) { snprintf(out, size, "UnityEngine.GameObject[]"); return true; }
     if (k == &gClassSetterMgr && !strcmp(name, "mirrorOnPinsetter")) { snprintf(out, size, "UnityEngine.GameObject[]"); return true; }
+    if (k == &gClassPanel && !strcmp(name, "jasonLogo")) { snprintf(out, size, "UnityEngine.GameObject"); return true; }
+    if (k == &gClassPanel && !strcmp(name, "bar")) { snprintf(out, size, "UnityEngine.UI.Image"); return true; }
     return false;
 }
 static int FieldOffset(Il2CppClass *k, const char *name) {
@@ -59,6 +70,8 @@ static int FieldOffset(Il2CppClass *k, const char *name) {
     if (k == &gClassShotData && !strcmp(name, "Before")) return 0x20;
     if (k == &gClassInv && !strcmp(name, "pinseterKegelRenderer")) return 0xC8;
     if (k == &gClassSetterMgr && !strcmp(name, "mirrorOnPinsetter")) return 0x50;
+    if (k == &gClassPanel && !strcmp(name, "jasonLogo")) return 0x20;
+    if (k == &gClassPanel && !strcmp(name, "bar")) return 0x28;
     return -1;
 }
 static FieldInfo *StaticField(Il2CppClass *k, const char *name) { return (k == &gClassShot && !strcmp(name, "CurrentData")) ? &gFieldCur : nullptr; }
@@ -67,6 +80,11 @@ static void *ReadStaticObj(FieldInfo *&f, Il2CppClass *, const char *) { f = &gF
 static FakeQuat gBoxed;
 static Il2CppObject *Invoke(const MethodInfo *m, void *obj, void **args, bool *ok = nullptr) {
     if (ok) *ok = false;
+    if (m == &gMethGetTr && obj == gLogoGo) { if (ok) *ok = true; return (Il2CppObject *)&gLogoTr; }
+    if (m == &gMethCompTr && obj == gBarImg) { if (ok) *ok = true; return (Il2CppObject *)&gBarTr; }
+    if (m == &gMethGetPos) { static FakeV3 b; b = ((FakeTr *)obj)->pos; if (ok) *ok = true; return (Il2CppObject *)&b; }
+    if (m == &gMethSetPos) { ((FakeTr *)obj)->pos = *(FakeV3 *)((void **)args)[0]; ((FakeTr *)obj)->posSets++; if (ok) *ok = true; return nullptr; }
+    if (m == &gMethSetScale) { ((FakeTr *)obj)->scale = *(FakeV3 *)((void **)args)[0]; if (ok) *ok = true; return nullptr; }
     if (m == &gMethGetTr) {                                     // GameObject.get_transform: the transform is the kegel itself
         Kegel *k = (Kegel *)obj;
         if (!k->goAlive) return nullptr;                         // (a destroyed object throws: runtime_invoke reports !ok)
@@ -95,6 +113,7 @@ static void *Unbox(Il2CppObject *b) { return b; }
 static bool InvokeBool(const MethodInfo *m, void *obj, void **, bool def) { return m == &gMethActiveH ? ((Kegel *)obj)->active : def; }
 static Il2CppObject *TypeOf(Il2CppClass *k) { return (Il2CppObject *)k; }
 static Il2CppArray *gMgrList;
-static Il2CppArray *FindAll(Il2CppObject *type) { return type == (Il2CppObject *)&gClassSetterMgr ? gMgrList : nullptr; }
+static Il2CppArray *FindAll(Il2CppObject *type) { return type == (Il2CppObject *)&gClassSetterMgr ? gMgrList : type == (Il2CppObject *)&gClassPanel ? gPanelList : nullptr; }
+static bool Alive(void *o) { return o != nullptr; }
 static void *FirstAlive(Il2CppArray *a) { return a && Len(a) ? Elem(a, 0) : nullptr; }
 static void *Api(const char *) { return nullptr; }

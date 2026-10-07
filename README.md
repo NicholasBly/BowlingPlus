@@ -29,7 +29,9 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Kegel pattern import | Pick a pattern downloaded from the Kegel Pattern Library app or website (the .pdf data sheet, or a .zip / .Pattern / .txt) and it's added: steps, distances and drop brush | Practice |
 | BowlingPlus collection | Real Kegel patterns ready to play: Baton Rouge (2012 USBC Open), PBA Regional 37 (2026) | Practice |
 | Oil color | Pick the color the lane shows oil in, or keep the game's | Everywhere (looks only) |
-| Your own pin image | Put your own picture on the pins (all lanes). Draw on the 2:1 wrap template: one sheet that wraps around the pin like paper, so no seams | Everywhere (looks only) |
+| Custom pins | A library of pin pictures: Brunswick Max Crown built in, plus as many of your own as you like (draw on the 2:1 wrap template: one sheet that wraps around the pin, so no seams). Each one turns in 3D before you choose it | Everywhere (looks only) |
+| Alley background | Your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): fill, fit, stretch or tile, with or without the alley name | Everywhere (looks only) |
+| Sweeper banner fix | The blue banner on the pin sweeper no longer goes black at the back of the lane or gets its ends cut off | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
 
 The Practice-only stuff turns itself off in online matches, tournaments, and the tutorial, so it never messes with other players.
@@ -66,7 +68,7 @@ Use an IPA that already has the tweak inside (see "Make a patched IPA" below), t
 - **Ball speed:** drag the slider. The boost kicks in right after you let go of the ball. **Reset to 1x** turns it off.
 - **Ball spin (RPM):** same idea for spin. 17x takes a 600 rpm throw to about 10,000 rpm, and the extra revs add grip, so expect big hook.
 - **Preview a pin picture on your PC:** open `pins/BowlingPlus-pin-preview.html` in a browser and drop the picture on it.
-- **Your own pin image:** in the menu, tap **Get the wrap template + guide**, draw your design on the 2048 x 1024 template (left to right = once around the pin; the left and right edges meet), then tap **From Photos** or **From Files** and pick it.
+- **Custom pins:** in the menu, tap **Choose pins…**. Tap a pin to see it turn, then **Use this pin**. To add your own, tap **Get the wrap template + guide**, draw your design on the 2048 x 1024 template (left to right = once around the pin; the left and right edges meet), then **+ From Photos** or **+ From Files**. The switch turns custom pins on and off.
 - **Spare shooting mode:** turn it on and start a Practice game. At the start of each frame a pin picker pops up. Tap pins on/off (or use a preset like 7-10), then hit **Rack 'em**. **Full rack** skips it for that frame.
 - **Pick pins for one shot:** in Practice, tap the pin layout in the top right while you hold the ball, or the little screen under the ball return in the overhead view. The pin picker opens, starting from the pins that are standing now. Tap pins, hit **Rack 'em**, and they're set up right now. It only lasts until you throw: the next frame is a normal full rack unless Spare shooting mode is on. The **X** closes the picker without changing anything (this works in Spare mode too).
 - **Auto-rack:** in the pin picker, tap **Auto (every frame)** instead of Rack 'em. Those pins get set up every frame without asking. Shake for the menu and turn off **Auto-rack** to get the picker back.
@@ -119,6 +121,8 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.6.9:** your own alley background; the pin library's "Off" shows the game's own pins (Gold...); the sweeper's banner shows its B and O.
+- **1.6.8:** a pin library with Brunswick Max Crown built in, your own pictures, and a 3D preview of each; the sweeper's banner no longer goes black or gets cut off.
 - **1.6.7:** the pinsetter now lifts and sets pins showing their own turns (in 1.6.6 every lifted pin showed the same face).
 - **1.6.6:** pins no longer turn when you pick up or switch balls: BowlingPlus now decides each pin's turn inside the game's own rack (a standing pin keeps its turn; pins that fell get new ones), instead of turning pins back afterwards.
 - **1.6.5:** a re-racked pin's turn is put back within a frame (it twitched for up to 50 ms on iOS); the experimental other-lane switch is gone again (the game doesn't set that lane up in Practice).

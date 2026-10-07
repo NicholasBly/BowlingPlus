@@ -131,6 +131,17 @@ int main() {
     Check("... and a strike still gives the 9 fallen pins new turns, matched by the pinsetter", sTurnNew - new5 == 9 && PinsetterMatched());
     gStaticLookupWorks = true; sShotBefore = -2;
 
+    // the sweeper's banner: moved once, to the front of the bar, sized to its window
+    for (int k = 0; k < 130; k++) { sFrame++; PinTurnTick(); }
+    Check("sweeper banner: Logo moved in front of the bar (z -12) and sized to the window",
+          fabsf(gLogoTr.pos.z + 12.0f) < 1e-4f && fabsf(gLogoTr.scale.x - 244.4f / 256.0f) < 1e-4f && fabsf(gLogoTr.scale.y - 21.3f / 22.0f) < 1e-4f);
+    Check("sweeper banner: the timer Bar too (its own height, 23)", fabsf(gBarTr.pos.z + 12.0f) < 1e-4f && fabsf(gBarTr.scale.y - 21.3f / 23.0f) < 1e-4f);
+    int sets = gLogoTr.posSets;
+    for (int k = 0; k < 600; k++) { sFrame++; PinTurnTick(); }
+    Check("sweeper banner: not set again while it stays there", gLogoTr.posSets == sets);
+    gLogoTr.pos.z = 0;                                   // as if the scene loaded again
+    for (int k = 0; k < 130; k++) { sFrame++; PinTurnTick(); }
+    Check("sweeper banner: put back after the scene reloads", fabsf(gLogoTr.pos.z + 12.0f) < 1e-4f && gLogoTr.posSets == sets + 1);
     Check("the engine drew exactly one number per call (sequence unchanged)", (int)gDraws.size() == gCallsByRacks + 1 /*OtherRange*/);
     char dbg[1024]; TurnDebug(dbg, sizeof(dbg));
     printf("\nworst pinsetter / reflection mismatch seen: %.3f / %.3f degrees\n%s\n", gWorstSetter, gWorstMirror, dbg);
