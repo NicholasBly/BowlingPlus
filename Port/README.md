@@ -5,8 +5,8 @@ Everything here is for porting features from BowlingPlus into Bowling by Jason B
 Read in this order:
 
 1. **`PORTING_GUIDE.md`**: every feature, its effort and gate, Practice gating, and how to avoid applying a fix twice.
-2. **`features/120-fps.md`**: 120 FPS mode, iOS and Android.
-3. **`features/ipv6-loading-fix.md`**: the IPv6 loading fix and the loading watchdogs.
+2. **`features/120-fps.md`**: 120 FPS mode. This describes how BowlingPlus does it at runtime; the guide has the native version.
+3. **`features/ipv6-loading-fix.md`**: the IPv6 loading fix and the loading watchdogs, as BowlingPlus runs them. The guide has the native version.
 4. **`pin-physics/`**: the pin physics study. Start with `BOWLSCORE_REFERENCE.md`, which says what the 25 % and 42-44 % figures measure.
 
 ## Folder layout
