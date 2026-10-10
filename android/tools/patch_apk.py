@@ -44,7 +44,9 @@ DROP = {"stamp-cert-sha256"}   # Play's source stamp: it would no longer match
 
 
 def run(cmd, **kw):
-    print("+ " + " ".join(cmd), flush=True)
+    # never echo signing passwords ("pass:<secret>" arguments to apksigner)
+    shown = ["pass:****" if str(c).startswith("pass:") else str(c) for c in cmd]
+    print("+ " + " ".join(shown), flush=True)
     subprocess.run(cmd, check=True, **kw)
 
 

@@ -44,7 +44,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UILabel *statusLabel, *ballLabel, *speedLabel, *arsenalLabel;
 @property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch;
 @property (nonatomic, strong) UILabel *autoLabel, *fpsLabel, *oilLabel;
-@property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch;
+@property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch, *realOilSwitch;
 @property (nonatomic, strong) UIButton *updateButton, *helpButton;
 @property (nonatomic, strong) UISwitch *pinImageSwitch;
 @property (nonatomic, strong) UILabel *pinImageLabel;
@@ -532,14 +532,13 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilBreakSwitch = [self switchOn:gBF.oilBreakdown action:@selector(oilBreakChanged:)];
     self.oilInvisSwitch = [self switchOn:gBF.oilInvisible action:@selector(oilInvisChanged:)];
     self.oilMirrorSwitch = [self switchOn:gBF.oilMirrorFix action:@selector(oilMirrorChanged:)];
-    UILabel *always = [self label:@"ALWAYS ON" size:10 weight:UIFontWeightBold color:Accent()];
-    always.numberOfLines = 1;
+    self.realOilSwitch = [self switchOn:gBF.realOil action:@selector(realOilChanged:)];
     self.oilLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIStackView *libStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self button:@"\U0001F6E2  Custom oil patterns" filled:NO small:NO action:@selector(oilLibraryTapped)], self.oilLabel]];
     libStack.axis = UILayoutConstraintAxisVertical;
     libStack.spacing = 8;
     [stack addArrangedSubview:[self group:@"Oil (practice)" icon:@"\U0001F6E2" key:@"oil" open:YES cells:@[
-        [self cell:[self row:@"Real-life oil" help:@"In Practice, the game's own patterns and yours are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Online matches, tournaments and the tutorial always use the game's own oil." control:always]],
+        [self cell:[self row:@"Real-life oil" help:@"In Practice, the game's own patterns (Big Ben, Statue of Liberty...) are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Off: Practice uses the game's own drawing of them, the same oil as online play. Your custom patterns always use the real-life drawing. Online matches, tournaments and the tutorial always use the game's own oil." control:self.realOilSwitch]],
         [self cell:[self row:@"Oil color" help:@"Pick the color the lane shows oil in, or keep the game's." control:self.oilColorButton]],
         [self cell:[self row:@"Show oil thickness" help:@"Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same." control:self.oilThickSwitch]],
         [self cell:[self row:@"Show oil breakdown" help:@"Redraws the lane oil after every shot so you can watch it break down over the game." control:self.oilBreakSwitch]],
@@ -756,6 +755,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 - (void)oilMirrorChanged:(UISwitch *)s { gBF.oilMirrorFix = s.on; BFSaveConfig(); }
 - (void)oilBreakChanged:(UISwitch *)s  { gBF.oilBreakdown = s.on; BFSaveConfig(); }
 - (void)oilThickChanged:(UISwitch *)s  { gBF.oilThickness = s.on; BFSaveConfig(); }
+- (void)realOilChanged:(UISwitch *)s { gBF.realOil = s.on; BFSaveConfig(); }
 - (void)pinImageChanged:(UISwitch *)s {
     if (s.on) {
         BFPinUseLast();
@@ -910,6 +910,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilInvisSwitch.on = gBF.oilInvisible;
     self.noTapSwitch.on = gBF.noTap9;
     self.oilThickSwitch.on = gBF.oilThickness;
+    self.realOilSwitch.on = gBF.realOil;
     self.pinImageSwitch.on = gBF.pinImage;
     self.bgSwitch.on = gBF.bgImage;
     self.bgLabel.text = BFBgStatus();

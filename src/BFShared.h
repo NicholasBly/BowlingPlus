@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.7.2"
+#define BF_VERSION @"1.7.4"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 
@@ -39,6 +39,7 @@ typedef struct {
     bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
     int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
     bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
+    bool     realOil;      // Practice: the game's own patterns drawn from their Kegel files (off: the game's own drawing, as online); on by default, set in BFLoadConfig
 } BFConfig;
 
 // Live game status for the menu

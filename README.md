@@ -24,7 +24,7 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Show oil breakdown | Redraws the lane oil after every shot | Practice |
 | Invisible oil | Hidden oil, random unlocked game pattern each game | Practice |
 | Custom oil patterns | Real Kegel-style forward/reverse steps, drawn by BowlingPlus's copy of the game's oil engine; share via QR | Practice |
-| Real-life oil (always on) | In Practice the game's own 48 patterns and yours are drawn from their real Kegel data, not the game's simplified engine: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane (details below). The game's own oil is back whenever you're not in Practice | Practice |
+| Real-life oil | In Practice the game's own 48 patterns are drawn from their real Kegel data, not the game's simplified engine: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane (details below). On by default; turn it off to practice on the game's own drawing, the same oil as online. Custom patterns always use the real-life drawing | Practice |
 | (how it works) | Custom patterns lay oil like the sheet: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane. Checked against four Kegel charts (99.9% of cells). On by default | Practice |
 | Kegel pattern import | Pick a pattern downloaded from the Kegel Pattern Library app or website (the .pdf data sheet, or a .zip / .Pattern / .txt) and it's added: steps, distances and drop brush | Practice |
 | BowlingPlus collection | Real Kegel patterns ready to play: Baton Rouge (2012 USBC Open), PBA Regional 37 (2026) | Practice |
@@ -123,6 +123,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.7.4:** Real-life oil can be turned off, so Practice can use the same oil as online play; a `Port/` folder for the game's team.
 - **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.
 - **1.7.1:** double physics rate (experimental); pattern and pin library rows line up; the Android APK is signed with BowlingPlus's own key from now on.
 - **1.7.0:** a new Pin physics category: realistic pin physics (pin friction 0.25, tested in a PhysX copy of the game against real-pin data), with first-ball counts on and off; the old pin fix (which never reached the lane pins) is gone.

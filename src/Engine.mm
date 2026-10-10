@@ -32,6 +32,7 @@ void BFLog(NSString *fmt, ...) {
 static NSString *const kCfgKey = @"BowlingPlus.config.v1";
 
 void BFLoadConfig(void) {
+    gBF.realOil = true;   // default on (the positional initializer above leaves new fields false)
     NSDictionary *d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kCfgKey]
         ?: [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"BowlingFix.config.v1"];   // saved before the rename
     if (![d isKindOfClass:[NSDictionary class]]) return;
@@ -62,6 +63,7 @@ void BFLoadConfig(void) {
     if (d[@"pinRate2x"]) gBF.pinRate2x = [d[@"pinRate2x"] boolValue];
     if (d[@"oilShowOrig"]) gBF.oilShowOrig = [d[@"oilShowOrig"] intValue];
     if (d[@"noTap9"])    gBF.noTap9 = [d[@"noTap9"] boolValue];
+    if (d[@"realOil"])   gBF.realOil = [d[@"realOil"] boolValue];
     if (d[@"privacyOK"]) gBF.privacyOK = [d[@"privacyOK"] boolValue];
     else if ([d[@"privacy"] boolValue]) gBF.privacyOK = true;     // auto-accept was on: you had accepted before
     if (isnan(gBF.speedMult) || gBF.speedMult < 1.f) gBF.speedMult = 1.f;
@@ -78,7 +80,7 @@ void BFSaveConfig(void) {
                          @"auto": @(gBF.spareAuto),
                          @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
                          @"unstick": @(gBF.unstick), @"ipv4": @(gBF.gameIPv4),
-                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle), @"pinPhys": @(gBF.pinPhys), @"pinFric": @(gBF.pinFric), @"pinRate2x": @(gBF.pinRate2x), @"oilShowOrig": @(gBF.oilShowOrig), @"noTap9": @(gBF.noTap9) };
+                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle), @"pinPhys": @(gBF.pinPhys), @"pinFric": @(gBF.pinFric), @"pinRate2x": @(gBF.pinRate2x), @"oilShowOrig": @(gBF.oilShowOrig), @"noTap9": @(gBF.noTap9), @"realOil": @(gBF.realOil) };
     [[NSUserDefaults standardUserDefaults] setObject:d forKey:kCfgKey];
 }
 

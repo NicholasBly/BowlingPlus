@@ -4073,7 +4073,7 @@ static void BuiltinRestoreAll() {
         sBI[i] = BuiltinState();
     }
     sBuiltinPatched = 0;
-    BFLog(@"the game's own oil patterns are back (not in Practice)");
+    BFLog(@"the game's own oil patterns are back (not in Practice, or Real-life oil off)");
 }
 
 static void BuiltinApplyAll() {
@@ -4118,7 +4118,7 @@ static void BuiltinRedrawStep() {                 // lane pictures: the selected
 }
 
 static void OilBuiltinTick() {
-    bool want = InPracticeOil();
+    bool want = InPracticeOil() && gBF.realOil;    // off: Practice keeps the game's own drawing of its patterns, as online
     if (!want) { if (sBuiltinPatched) BuiltinRestoreAll(); }
     else if (sFrame % 15 == 0 || !sBuiltinPatched) BuiltinApplyAll();
     if (sFrame % 3 == 0) BuiltinRedrawStep();

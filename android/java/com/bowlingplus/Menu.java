@@ -172,14 +172,13 @@ public final class Menu {
         oilColorButton.setLayoutParams(UiKit.lp(UiKit.dp(c, 44), UiKit.dp(c, 30)));
         oilColorButton.setOnClickListener(v -> { hide(); Oil.showColorPicker(act); });
         oilLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
-        TextView always = UiKit.label(c, "ALWAYS ON", 10, UiKit.ACCENT, true);
         LinearLayout libStack = UiKit.row(c, false);
         Button libBtn = UiKit.button(c, "\uD83D\uDEE2  Custom oil patterns", false, false);
         libBtn.setOnClickListener(v -> { hide(); Oil.showLibrary(act); });
         libStack.addView(libBtn);
         libStack.addView(oilLabel, mt(c, 8));
         stack.addView(group(c, "\uD83D\uDEE2", "Oil (practice)", "oil", true, new View[]{
-                cell(c, rowView(c, "Real-life oil", "In Practice, the game's own patterns and yours are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Online matches, tournaments and the tutorial always use the game's own oil.", always)),
+                cell(c, rowView(c, "Real-life oil", "In Practice, the game's own patterns (Big Ben, Statue of Liberty...) are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Off: Practice uses the game's own drawing of them, the same oil as online play. Your custom patterns always use the real-life drawing. Online matches, tournaments and the tutorial always use the game's own oil.", toggle(c, "realOil", null))),
                 cell(c, rowView(c, "Oil color", "Pick the color the lane shows oil in, or keep the game's.", oilColorButton)),
                 cell(c, rowView(c, "Show oil thickness", "Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same.", toggle(c, "oilThick2", null))),
                 cell(c, rowView(c, "Show oil breakdown", "Redraws the lane oil after every shot so you can watch it break down over the game.", toggle(c, "oilBreak", null))),

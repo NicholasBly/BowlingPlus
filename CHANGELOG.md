@@ -2,6 +2,24 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.7.4] - 2026-10-10
+
+(1.7.3 was a test build and isn't part of the releases: its error-reporter stop, DNS warm-up and startup timeline were left out.)
+
+### Added
+- **Real-life oil can be turned off** (Oil, on by default). The game's own patterns (Big Ben, Statue of Liberty...) are drawn differently in online play, where the game's own engine draws them, so practicing on the Kegel-accurate drawing can throw off your game. Off: Practice uses the game's own drawing of its patterns, the same oil as online. Your custom patterns always use the real-life drawing. Turning it off during a game puts the game's patterns back right away (a custom pattern on the lane goes back on once you're holding the ball or at the ball return).
+
+### Changed
+- `android/tools/patch_apk.py` no longer prints signing passwords when it echoes the `apksigner` command (`pass:****`).
+- `tools/dev/pinlab/build_physx.sh` exports the PhysX CMake paths as environment variables (CMake reads them from the environment; the build failed without them).
+- **`Port/`**: a folder for the game's team: native (Unity) instructions for each feature, Practice gating, the IPv6 loading fix, startup and connection (with timings and findings from an iPhone 17 Pro log), and the pin physics study with a rerun of the Bowlscore grid.
+
+### Removed
+- The stray `CHANGES.txt` at the repo root.
+
+### Not tested on a device when this was written
+The switch. Checked without a device: both platforms compile (iOS with Theos and the iPhoneOS 16.5 SDK, Android with the offline build); the changed oil code is identical on both platforms; the pin simulation passes all 41 checks; the APK is signed with the BowlingPlus key and the IPA has the 120 Hz key.
+
 ## [1.7.2] - 2026-10-07
 
 ### Added

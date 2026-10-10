@@ -373,6 +373,40 @@ To find the current ball, read `Managers.InventoryHelper._currentBall` (static `
 - The pages are `Data/Raw/MRGSGdpr/WPSmrgsgdpr.html` (WannaPlay Studio) and `GGmrgsgdpr.html`. The first-time page says "By clicking Sign up", and its button calls `clickButton()` → `document.forms["form"].submit()`. The `_update.html` pages say "By clicking I agree".
 - BowlingPlus 1.2.0's opt-in auto-accept calls `clickButton()` in that WKWebView only when the page text contains "By clicking Sign up".
 
+## 7c. The loading sequence, the loading bar and the error reporter [files + device, 1.7.4]
+
+Read in the Android build (`libil2cpp.so` + 1.907 metadata v31, method addresses from the `Assembly-CSharp.dll` code-generation module). Addresses below are Android RVAs.
+
+- **Scenes** (`globalgamemanagers` BuildSettings): `Assets/Scenes/Loading.unity` (level0: 19 GameObjects, 27 scripts), `Assets/Scenes/Game3.unity` (level1: 7,969 GameObjects, 7,261 active, 7,310 MonoBehaviours, 116 Canvases, 5,016 CanvasRenderers), `Assets/Scenes/Cheats.unity`. `Game3` is the whole game in one scene; `Connector`, `ClientSideManager` and `DLCClientManager` are in it.
+- **`InitState.InitAfterSceneLoaded`** (coroutine `<InitAfterSceneLoaded>d__5.MoveNext` `0x167da74`) runs strictly in order, one step per resume: 0 `InitUnityServices` (waits for `UnityServices.InitializeAsync`, no time limit) - 1 `ItemBuyHelper.Init` - 2 `FirebaseIntegration.Init` - 3 AppsFlyer, `Migration.TryMakeMigration`, debug reporter, `CDNDownloadTest.StartTest`, IronSource pre-init, MRGS init, then `WaitGDRPCallback` (no time limit) - 4 IronSource init - 5 local notifications - 6 notification check - 7 `InitResourceSystem` - 8 `Loading.LoadGameScene`. Each step logs with `Debug.Log` first.
+- **The loading bar** (`Loading`: `loadingLabel` `0x20`, `operation` `0x40`, `_resourceLoadProgress` `0x48`, `state` `0x4C`; static float `0x0` = 0.9):
+  - `Update` (`0x1802b9c`): on the first frame sets `state = 2` and subscribes `OnResourceSystemLoadPing`.
+  - `OnResourceSystemLoadPing(count)` (`0x1802cdc`): while `_resourceLoadProgress < 0.45`, sets it to `count x 0.01`.
+  - `<LoadGameScene>d__16.MoveNext` (`0x1802d74`): unsubscribes the ping, `state = 1`, `operation = SceneManager.LoadSceneAsync(levelID)`. It never sets `allowSceneActivation`.
+  - `FixedUpdate` (`0x1802a80`, every physics step, while `state` is 1 or 2): label = `(r + p x (1 - r)) x 100 x 0.9` with `r = _resourceLoadProgress`, `p = operation.progress` (0 while there's no operation), through `String.Format`.
+  - So: 0 % through the SDK steps, up to about 40 % while asset bundles load (`r` up to 0.45, `p` = 0), then the scene. Unity holds `progress` at 0.9 while it activates the new scene, which gives (0.45 + 0.9 x 0.55) x 90 = about 84-85 %: the stall is `Game3` being switched on. The Loading scene goes away with it, so the bar never shows 100 %.
+- **Resource system** (`ResourceSystem.Init` `0x1674f60`): `ResourceInitData` = { `URL`, `SimulateBundles`, `CopyLocalBundles`, `LocalBundles` } picks the remote loader (also used for the bundled `StreamingAssets` folder), the simulation loader or the local loader. The APK ships 48 MB of bundles in `assets/AssetBundles` (balls, shoes, pins, gloves...). `ResourceBundleHolder.LoadAllBundles` exists; whether startup runs it wasn't confirmed (it's called through delegates). The game reports `ClientAnalitics.LoadingTime` after the resource system and after the bundles load.
+- **When the connection starts:** `MainMenuState.OnEnter` (`0x167eb98`) runs `ClientSideManager.OnClientSideManagerAwake`, `Connector.OnConnectorAwake` (`DontDestroyOnLoad`, avatar/replay managers, cached queries), `ConfigManager.Init`, `FriendsManager.Init`, `RunPsycsTestAwake`. `ClientSideManager.Start` -> `startConnectionSequence` -> `Connector.RunConnectSequence` -> `TryConnect` (new `PhotonPeer`, CRC on, `Connect`). Then `ConfigManager.RequestConfig` (a Photon operation) -> `LoadingWindow.HandleAllConfigParsed` -> `ConnectPlayer` / `RequestEnabledAuthenticationMethod` -> login -> `OnPlayerLoggedIn` -> `GoToMainMenu`. No timed waits on that path.
+- **Photon's socket** (`SocketTcp.Connect` `0x288f348`) starts its own background thread for the DNS lookup and connect (`DnsAndConnect`), and receives on another (`ReceiveLoop`).
+- **`Application.backgroundLoadingPriority`**: stripped from the scripts and not registered in `libunity.so` (no icall name), so it can't be set at runtime.
+- **The error reporter** (`CloudReporter`): created and started by `InitState.OnEnter` (`0x167cd70`/`0x167cd90`, not in the editor) and kept in `CoreLoopStateMachine.CloudReporter` (`0xA0`).
+  - `Start` (`0x17e4b68`): `Application.add_logMessageReceivedThreaded(CaptureLogThread)` and `Scheduler.ScheduleUpdate(Update)`.
+  - `CaptureLogThread` (`0x17e4d94`): skips `LogType` 2 and 3 (Warning, Log); errors, asserts and exceptions are added to `threadedLogs` under `Monitor.Enter`.
+  - `Update` (`0x17e4f44`): for each queued entry builds the player id, device id, project config and type strings and calls `SendLogToServer` (`0x17e51bc`), which formats a URL from the literal `https://clickhouse.wannaplay.studio/error/` and starts `Upload` as a coroutine.
+  - `Stop` (`0x17e4c80`): removes the log callback and `Scheduler.Unschedule(Update)`; `Unschedule` returns quietly when it isn't scheduled. Its only caller is `CoreLoopStateMachine.OnApplicationQuit`.
+  - `clickhouse.wannaplay.studio` doesn't resolve (NXDOMAIN, device test in 7a).
+- **Plain-HTTP literals**: `http://api.wannaplay.studio/scripts` is read by many managers, but those requests go through `Connector.Sender` (Photon), not HTTP. `replays.spareball.com` (getinfo / show / upload) is used by `NetworkShareReplayManager` and `Connector`.
+
+- **Device log, iPhone 17 Pro (iPhone18,1), iOS 27.0.1, BowlingPlus 1.7.3 test build** [device] (seconds since launch):
+  - About 1.3 s: the privacy page appears (accepted by BowlingPlus).
+  - About 4.3 s: the game's first lookup of `w1.wannaplay.studio` (connecting).
+  - About 4.97 s: `CONFIG LOADING TIME: 0.642`, then 83 store products. The game prints each product id dozens of times here, enough to push every earlier line out of BowlingPlus's 400-line console capture.
+  - 5.56-5.58 s: the game's `LoadingTime_*` events (`InitResourceSystem` 0.936, `BundlesLoaded` 1.432, `SceneLoaded` 0.936; sent once logged in), "Logged in success", `cc_main_menu`. Startup is done at about 5.6 s; BowlingPlus reached the game at 6.2 s.
+  - The login handler throws: `NullReferenceException` in `Facebook.Unity.FacebookBase.API` from `FacebookManager.RequestFriends` <- `ClientSideManager.placeListenersOnLogin` <- `HandlePlayerLoginSuccessfully` (sideloaded copy; may not happen in the App Store build).
+  - `CloudReporter` never reaches the network: every report fails with "Malformed URL" (stack traces with unescaped characters, and a `&log...` parameter with no `=`).
+  - The console prints "Logged in success user id ... psw <hash> saved psw <hash> HASH <hash>": the password hash is in every launch's log.
+  - Ball skin 413 (`black_pearl2_dif_x512.jpg`, not shipped): the game tries the cache, the app's files and a download ("Cannot connect to destination host", 404) before BowlingPlus's skin fix replaces it.
+
 ## 8. Arsenal list [files]
 
 - `Bowling.GUI.ArsenalBallManager` has `_ballsData` (`List<mdl_Item_Ball>`, `0x90`) and `_ballsScroll` (`UISystem.UIDynamicScrollView`, `0x88`).

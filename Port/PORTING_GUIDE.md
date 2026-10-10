@@ -1,7 +1,7 @@
 # BowlingPlus: implementing these features natively in the official game
 
 For: the Bowling by Jason Belmonte team, who have the Unity project and source.
-Covers: BowlingPlus 1.7.2. Engine: Unity 6000.0.67f1, IL2CPP (the version the shipped game uses).
+Covers: BowlingPlus 1.7.4. Engine: Unity 6000.0.67f1, IL2CPP (the version the shipped game uses).
 
 BowlingPlus adds these features to the finished app at runtime, by changing values in memory. That was the only option without the source. You have the source, so each feature below is written as a change to your project: a setting, a prefab, a material, a Project Setting, or a line of C#. Appendix A describes how BowlingPlus does it at runtime. You can skip it.
 
@@ -36,6 +36,15 @@ Items marked **(confirm)** are things we haven't verified in your project or in 
 | 14 | `bp.replayRate` | Replays at the recorded rate | 1 | Any | Replay recording and playback |
 | 15 | `bp.pinFric` | Realistic pin physics (friction 0.25) | 2 | Decision | Pin physics materials |
 | 16 | `bp.doubleRate` | Double physics rate (3.75 ms step) | 3 | Decision | Project Settings > Time, plus per-step code |
+
+Startup and connection (details in `features/startup-and-connection.md`):
+
+| # | ID | Feature | Effort | Gate | Where in your project |
+|---|----|---------|--------|------|-----------------------|
+| 17 | `bp.errReporter` | Error reporter that never delivers: fix its URL and host, or remove it | 1 | Any | `CloudReporter`, created in `InitState.OnEnter` |
+| 18 | `bp.startupSdk` | Start the SDKs together, with time limits | 2 | Any | `InitState.InitAfterSceneLoaded` |
+| 19 | `bp.connectEarly` | Connect during the loading bar | 3 | Any | `Connector`, `ClientSideManager`, `LoadingWindow` |
+| 20 | `bp.splitScene` | Split the `Game3` scene (removes the 84 % stall) | 4 | Any | Scene setup, additive scenes or Addressables |
 
 ## 3. Native implementation, feature by feature
 
@@ -141,6 +150,8 @@ Items marked **(confirm)** are things we haven't verified in your project or in 
 
 **Gate:** Practice only, since the pattern decides the difficulty.
 
+**Real-life drawing of the built-in patterns:** BowlingPlus can also redraw the game's 48 built-in patterns in Practice from their own Kegel files (exact distances, microliters, the brushed film). Because online play uses the game's simpler drawing, players practicing for online matches need it switchable; BowlingPlus 1.7.4 has it as a switch, on by default. If you port it, make it a Practice option and keep online on one drawing.
+
 **Test:** import a known data sheet and check the oil is laid out as printed.
 
 ### 11. Oil breakdown across shots (`bp.oilBreak`)
@@ -205,6 +216,10 @@ Items marked **(confirm)** are things we haven't verified in your project or in 
 
 **Test:** the review above, then play on a device.
 
+### 17-20. Startup and connection
+
+See `features/startup-and-connection.md`. In short: the loading bar's 84 % stall is Unity switching on the whole game scene (`Game3`, 7,310 scripts), and the server connection only starts after that, because the `Connector` lives in `Game3` and is woken in `MainMenuState.OnEnter`. Start connecting during loading, split `Game3`, start the SDKs together with time limits, and fix or remove the error reporter, which has never delivered a report (its URLs are malformed and its host doesn't exist).
+
 ## 4. Practice gating in your code
 
 BowlingPlus only changes gameplay in offline Practice. In your code:
@@ -235,6 +250,7 @@ Tell us which IDs you ship, and when. We'd then stand BowlingPlus down on builds
 - **120 FPS:** the iOS flag was confirmed on a phone (BowlingPlus 1.6.1). Smoothness has only been reported by users. Android compiles and passes CI; no phone test is recorded.
 - **IPv6 fix:** confirmed on an iPhone with NextDNS after BowlingPlus 1.2.3. The Android port compiles and passes CI; no phone test is recorded.
 - **Pin physics:** the percentages come from our PhysX 4.1 model of the game, not from the game itself. A few phone games on the double rate were played; that's too few to measure a strike rate.
+- **Startup:** the sequence was read from the Android build; the timings and log findings come from one iPhone 17 Pro log.
 - **Everything else:** compiled and checked by our simulators where a simulator exists. Not yet tested on a phone: 9-pin no-tap, the replay-rate fix and the invisible-oil fix (1.7.2), and the library row layout (1.7.1).
 
 ## 7. Keys
