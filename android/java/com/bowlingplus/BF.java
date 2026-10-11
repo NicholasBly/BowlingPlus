@@ -3,9 +3,10 @@ package com.bowlingplus;
 // Constants shared with the native BFShared.h.
 final class BF {
     static final int ALL_PINS = 0x3FF;
-    static final String VERSION = "1.7.4";
+    static final String VERSION = "1.7.5";
     static final float MAX_SPEED = 5.0f;
     static final float MAX_SPIN = 17.0f;
+    static final int MAX_LOFT = 16;           // feet (BF_MAX_LOFT)
 
     private BF() {}
 

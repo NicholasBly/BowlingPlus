@@ -1,0 +1,4 @@
+cfg,maxDrift_mm,maxTilt_deg
+stock,0.026,0.746
+ref,0.010,0.000
+dt375,0.007,0.283

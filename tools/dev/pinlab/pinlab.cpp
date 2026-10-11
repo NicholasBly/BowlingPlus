@@ -1,8 +1,8 @@
 // pinlab: the game's pin physics rebuilt on PhysX 4.1 (the engine Unity 6 embeds), with the game's own data:
 // pin colliders (5 convex hulls + 2 capsules, from level1/sharedassets1), masses, centre of mass and inertia
-// (RunPsycsTest), materials and combine modes (Minimum), the deck/lane/kickback/gutter/pit boxes, the rack
+// (RunPsycsTest), materials and combine modes (Multiply), the deck/lane/kickback/gutter/pit boxes, the rack
 // (Constants: 12-inch triangle, head pin at y 18.263), and the scene settings from PhysicsManager/TimeManager.
-// Experiments (argv[1]): ballpin, pinpin, rack, rest. Output: CSV on stdout.
+// Experiments (argv[1]): ballpin, pinpin, rack, bowlscore, rest, ramp, gutter. Output: CSV on stdout.
 #include "PxPhysicsAPI.h"
 #include <cstdio>
 #include <cstdlib>
@@ -27,7 +27,7 @@ static PxDefaultCpuDispatcher *gDisp;
 struct Hull { std::string mat; std::vector<PxVec3> v; PxConvexMesh *mesh = nullptr; };
 struct Cap { std::string mat; float r, h; PxVec3 c; int dir; };
 struct Box { std::string name, mat; PxVec3 c, half; PxQuat q; };
-struct Mat { float sf, df, e; };
+struct Mat { float sf, df, e; int fc = 1, bc = 1; };   // fc/bc: Unity PhysicsMaterialCombine (0 Average, 1 Multiply, 2 Minimum, 3 Maximum)
 static std::vector<Hull> gHulls;
 static std::vector<Cap> gCaps;
 static std::vector<Box> gBoxes;
@@ -54,8 +54,8 @@ static void LoadScene(const char *path) {
             s >> b.name >> b.mat >> b.c.x >> b.c.y >> b.c.z >> b.half.x >> b.half.y >> b.half.z >> b.q.x >> b.q.y >> b.q.z >> b.q.w;
             gBoxes.push_back(b);
         } else if (kind == "material") {
-            std::string n; Mat m; int fc, bc;
-            s >> n >> m.sf >> m.df >> m.e >> fc >> bc;
+            std::string n; Mat m;
+            s >> n >> m.sf >> m.df >> m.e >> m.fc >> m.bc;
             gMatData[n] = m;
         }
     }
@@ -83,14 +83,19 @@ static PxMaterial *GetMat(const std::string &n, const Cfg &c) {
     std::string key = n + "|" + std::to_string(c.pinRestitution) + "|" + std::to_string(c.pinPinFriction) + "|" + std::to_string(c.deckFriction);
     auto it = gMats.find(key);
     if (it != gMats.end()) return it->second;
-    Mat m = gMatData.count(n) ? gMatData[n] : Mat{ 0.3f, 0.3f, 0.65f };
+    Mat m = gMatData.count(n) ? gMatData[n] : Mat{ 0.3f, 0.3f, 0.65f, 1, 1 };
     bool pin = n == "Pin" || n == "PinButtom";
     if (pin && c.pinRestitution >= 0) m.e = c.pinRestitution * (n == "PinButtom" ? 0.4f / 0.65f : 1.0f);
     if (pin && c.pinPinFriction >= 0) { m.df = c.pinPinFriction; m.sf = c.pinPinFriction; }
     if (n == "Pindeck" && c.deckFriction >= 0) { m.df = c.deckFriction; m.sf = c.deckFriction; }
     PxMaterial *mat = gPhys->createMaterial(m.sf, m.df, m.e);
-    mat->setFrictionCombineMode(PxCombineMode::eMIN);       // Unity "Minimum" (all the game's materials)
-    mat->setRestitutionCombineMode(PxCombineMode::eMIN);
+    // Unity's PhysicsMaterialCombine is Average 0, Multiply 1, Minimum 2, Maximum 3 (the game's metadata); PhysX's
+    // enum is ordered by priority instead (average, min, multiply, max), and the higher of a pair's two modes wins.
+    // The game's own materials are Multiply (1), except the cushions' and pit floor's bounce (Minimum) and the
+    // kickbacks' bounce (Maximum). (Before 1.7.5 this harness used Minimum for all of them, which was wrong.)
+    static const PxCombineMode::Enum kMode[4] = { PxCombineMode::eAVERAGE, PxCombineMode::eMULTIPLY, PxCombineMode::eMIN, PxCombineMode::eMAX };
+    mat->setFrictionCombineMode(kMode[m.fc & 3]);
+    mat->setRestitutionCombineMode(kMode[m.bc & 3]);
     gMats[key] = mat;
     return mat;
 }
@@ -235,6 +240,10 @@ static Cfg Named(const std::string &n) {
     else if (n == "stock_pf025") { c.name = "stock_pf025"; c.ballCdm = 2; c.pinPinFriction = 0.25f; }
     else if (n == "stock_pf03") { c.name = "stock_pf03"; c.ballCdm = 2; c.pinPinFriction = 0.3f; }
     else if (n == "ref") { c.name = "ref"; c.dt = 0.0005f; c.posIters = 20; c.velIters = 10; c.ballCdm = 2; c.pinCdm = 2; }   // converged reference
+    else if ((n.rfind("stock_pf", 0) == 0 || n.rfind("dt375_pf", 0) == 0) && n.size() > 9 && n[8] == '0') {   // e.g. stock_pf045: pin material friction 0.45
+        c = Named(n.substr(0, 5)); c.ballCdm = 2; c.pinPinFriction = (float)atof(("0." + n.substr(9)).c_str());
+        static std::vector<std::string> names; names.push_back(n); c.name = names.back().c_str();
+    }
     else { fprintf(stderr, "unknown cfg %s\n", n.c_str()); exit(1); }
     return c;
 }
@@ -390,6 +399,63 @@ static void ExpRest(const Cfg &cfg, float &maxDrift, float &maxTilt) {
     }
 }
 
+// ---------------- experiment 6: ramps (BowlingPlus 1.7.5 "Ramps & obstacles") ----------------
+// A ramp is a box (w x L x t) tilted up `deg` about x: its front top edge 2 mm under the lane at y0, its back top edge h
+// above it (L = h / sin(deg)), and t deep enough that its back face goes into the lane (a solid wedge). Its material is Unity's default for a primitive's collider (0.6 / 0.6, bounce 0,
+// Average), which the ball's Multiply overrides: friction 0.18, no bounce. The ball rolls straight up the lane at the
+// ramp's centre (pure roll, from y 0.6), and BowlingPlus's landing damper runs once per 60 Hz frame (a ball that comes
+// down on the lane after flying has its upward speed removed instead of hopping). Records: did it climb (highest point),
+// where it came down, where it was at the pins (y 17.6), and whether it stayed on the lane.
+struct RampSpec { float x, y0, w, h, deg; };
+
+static void AddRamp(World &w, const RampSpec &r) {
+    static PxMaterial *mat = nullptr;
+    if (!mat) mat = gPhys->createMaterial(0.6f, 0.6f, 0.0f);   // Average combine (PhysX default)
+    // thick enough that its back face reaches under the lane: it shows as a solid wedge (BowlingPlus builds it the same way)
+    float th = r.deg * 0.0174533f, L = r.h / sinf(th), t = r.h / cosf(th) + 0.25f, z0 = -0.002f;
+    PxVec3 c(r.x, r.y0 + 0.5f * L * cosf(th) + 0.5f * t * sinf(th), z0 + 0.5f * L * sinf(th) - 0.5f * t * cosf(th));
+    PxRigidStatic *s = gPhys->createRigidStatic(PxTransform(c, PxQuat(th, PxVec3(1, 0, 0))));
+    PxShape *sh = PxRigidActorExt::createExclusiveShape(*s, PxBoxGeometry(0.5f * r.w, 0.5f * L, 0.5f * t), *mat);
+    sh->setContactOffset(w.cfg.contactOffset); sh->setRestOffset(0);
+    w.scene->addActor(*s);
+}
+
+struct RampResult { float apex, landY, hopZ, xAtPins, zAtPins, vAtPins; int hops, climbed, onLane, reached; };
+
+static RampResult ExpRamp(const Cfg &cfg, const RampSpec &r, float v, float aimOff, bool damper) {
+    World w; w.cfg = cfg; MakeScene(w);
+    AddRamp(w, r);
+    const float R = 0.108f, rest = R;
+    PxRigidDynamic *ball = AddBall(w, PxVec3(r.x + aimOff, 0.6f, rest), 6.80f);
+    ball->setLinearVelocity(PxVec3(0, v, 0));
+    float side = getenv("PINLAB_SIDESPIN") ? (float)atof(getenv("PINLAB_SIDESPIN")) : 0.0f;   // rad/s about the direction of travel (hook spin)
+    ball->setAngularVelocity(PxVec3(-v / R, side, 0));
+    RampResult o{};
+    o.apex = rest; o.landY = -1; o.xAtPins = 99; o.zAtPins = 99; o.onLane = 1;
+    bool air = false, landed = false, rising = false;
+    int perFrame = std::max(1, (int)(1.0f / 60.0f / cfg.dt + 0.5f));
+    for (int s = 0; s < (int)(6.0f / cfg.dt); s++) {
+        Step(w);
+        PxVec3 p = ball->getGlobalPose().p, lv = ball->getLinearVelocity();
+        o.apex = std::max(o.apex, p.z);
+        if (p.z > rest + 0.03f) air = true;
+        if (air && p.z < rest + 0.01f && p.y > r.y0 + 0.5f) {
+            if (!landed) { landed = true; o.landY = p.y; }
+            if (lv.z > 0.25f && !rising) { o.hops++; rising = true; }
+        }
+        if (lv.z <= 0) rising = false;
+        if (landed) o.hopZ = std::max(o.hopZ, p.z - rest);
+        if (damper && s % perFrame == 0 && air && p.z < rest + 0.02f && lv.z > 0.25f) {
+            lv.z = 0; ball->setLinearVelocity(lv);
+        }
+        if (fabsf(p.x) > 0.527f + 0.02f && p.z < 0.1f) o.onLane = 0;
+        if (!o.reached && p.y >= 17.6f) { o.reached = 1; o.xAtPins = p.x; o.zAtPins = p.z; o.vAtPins = lv.magnitude(); }
+        if (p.y > 18.0f || p.z < -0.5f) break;
+    }
+    o.climbed = o.apex > rest + 0.5f * r.h;
+    return o;
+}
+
 int main(int argc, char **argv) {
     gFound = PxCreateFoundation(PX_PHYSICS_VERSION, gAlloc, gErr);
     PxTolerancesScale sc;
@@ -460,6 +526,55 @@ int main(int argc, char **argv) {
                         printf("%s,%.2f,%d,%d,%d,%u\n", c.name, oi * 0.25f, ang, sh, down, leave);
                     }
             fflush(stdout);
+        }
+    } else if (exp == "ramp") {
+        // PINLAB_RAMPS="id,x,y0,w,h,deg;..."  PINLAB_SPEEDS="6,8,10"  PINLAB_AIM="0" (ball centre offset from the ramp's centre)
+        printf("cfg,id,x,y0,w,h,deg,v,aim,damper,apex,climbed,landY,hops,hopZ,onLane,reached,xAtPins,zAtPins,vAtPins\n");
+        std::vector<float> speeds, aims;
+        { std::stringstream ss(getenv("PINLAB_SPEEDS") ? getenv("PINLAB_SPEEDS") : "6,8,10"); std::string t; while (std::getline(ss, t, ',')) speeds.push_back(atof(t.c_str())); }
+        { std::stringstream ss(getenv("PINLAB_AIM") ? getenv("PINLAB_AIM") : "0"); std::string t; while (std::getline(ss, t, ',')) aims.push_back(atof(t.c_str())); }
+        int damp = getenv("PINLAB_DAMPER") ? atoi(getenv("PINLAB_DAMPER")) : 1;
+        std::stringstream rs(getenv("PINLAB_RAMPS") ? getenv("PINLAB_RAMPS") : "0,0,6,0.5,0.2,15");
+        std::string item;
+        for (auto &cn : cfgs) {
+            Cfg c = Named(cn);
+            rs.clear(); rs.seekg(0);
+            while (std::getline(rs, item, ';')) {
+                int id; RampSpec r;
+                if (sscanf(item.c_str(), "%d,%f,%f,%f,%f,%f", &id, &r.x, &r.y0, &r.w, &r.h, &r.deg) != 6) continue;
+                for (float v : speeds)
+                    for (float aim : aims) {
+                        RampResult o = ExpRamp(c, r, v, aim, damp != 0);
+                        printf("%s,%d,%.3f,%.2f,%.2f,%.2f,%.1f,%.1f,%.3f,%d,%.3f,%d,%.2f,%d,%.3f,%d,%d,%.3f,%.3f,%.2f\n", c.name, id, r.x, r.y0, r.w, r.h, r.deg, v, aim, damp,
+                               o.apex, o.climbed, o.landY, o.hops, o.hopZ, o.onLane, o.reached, o.xAtPins, o.zAtPins, o.vAtPins);
+                    }
+                fflush(stdout);
+            }
+        }
+    } else if (exp == "gutter") {
+        // BowlingPlus's "0 for this shot": the ball put just above a gutter's middle with its speed down the lane.
+        // Records the fastest it moves (a ball put inside something gets pushed out fast) and where it ends up.
+        printf("cfg,side,v,maxSpeed,minAbsX,maxZ,yAt4s,pinsDown\n");
+        for (auto &cn : cfgs) {
+            Cfg c = Named(cn);
+            for (float side : { -1.0f, 1.0f })
+                for (float v : { 3.0f, 6.0f, 9.0f }) {
+                    World w; w.cfg = c; MakeScene(w);
+                    for (int i = 0; i < 10; i++) AddPin(w, PxTransform(PinSpot(i)));
+                    PxRigidDynamic *b = AddBall(w, PxVec3(side * 0.649f, 12.0f, 0.115f), 6.8f);
+                    b->setLinearVelocity(PxVec3(0, v, 0));
+                    float maxSp = 0, minX = 9, maxZ = -9;
+                    for (int s2 = 0; s2 < (int)(4.0f / c.dt); s2++) {
+                        Step(w);
+                        PxVec3 p = b->getGlobalPose().p;
+                        maxSp = std::max(maxSp, b->getLinearVelocity().magnitude());
+                        if (p.y < 18.0f) minX = std::min(minX, fabsf(p.x));
+                        maxZ = std::max(maxZ, p.z);
+                    }
+                    int down = 0;
+                    for (int i = 0; i < 10; i++) if (Tilt(w.pins[i]) > 15.0f || fabsf(w.pins[i]->getGlobalPose().p.z) > 0.03f) down++;
+                    printf("%s,%.0f,%.1f,%.2f,%.3f,%.3f,%.2f,%d\n", c.name, side, v, maxSp, minX, maxZ, b->getGlobalPose().p.y, down);
+                }
         }
     } else if (exp == "rest") {
         printf("cfg,maxDrift_mm,maxTilt_deg\n");

@@ -31,7 +31,9 @@ public final class Menu {
     static Activity act;
     static final List<TextView> helpLabels = new ArrayList<>();
     static TextView statusLabel, ballLabel, arsenalLabel, fpsLabel, oilLabel, autoLabel, pinImageLabel, bgLabel, speedLabel, spinLabel, pinFricLabel, pinPhysStats;
-    static SeekBar pinFricSlider;
+    static SeekBar pinFricSlider, loftSlider;
+    static TextView loftLabel, rampsLabel;
+    static Button arsSortButton;
     static Switch spareSwitch, autoSwitch;
     static Button resumeButton, updateButton, skipButton;
     static SeekBar speedSlider, spinSlider;
@@ -134,7 +136,12 @@ public final class Menu {
         LinearLayout searchCell = UiKit.row(c, false);
         searchCell.addView(searchRow);
         searchCell.addView(arsenalLabel, mt(c, 8));
-        stack.addView(group(c, "\uD83D\uDD0E", "Arsenal search", "search", true, new View[]{ cell(c, searchCell) }));
+        arsSortButton = UiKit.button(c, "", false, true);
+        arsSortButton.setOnClickListener(v -> pickArsenalOrder(a));
+        syncArsSortButton();
+        stack.addView(group(c, "\uD83D\uDD0E", "Arsenal", "search", true, new View[]{ cell(c, searchCell),
+                cell(c, rowView(c, "Arsenal order", "Every time you open the Arsenal, your balls are sorted this way: by name, or by a stat (power, hook, length, RPM, condition), high to low or low to high. Works with the search too.", arsSortButton)),
+                cell(c, rowView(c, "Hide ball stats", "Hides the stat circles and numbers on the ball in your hand and on the balls in the ball rack. Looks only.", toggle(c, "hideBallStats", null))) }));
 
         // ---- Practice fun
         speedLabel = UiKit.label(c, "", 16, UiKit.ACCENT, true);
@@ -156,6 +163,18 @@ public final class Menu {
                 "Multiplies your throw's spin right after release (the game caps it near 600 rpm). 17x takes a 600 rpm throw to about 10,000. The extra revs also add grip on the lane, so the ball hooks more. Very fast spin can look slow or backwards on screen (like car wheels in videos).",
                 () -> { Config.set("spin", 1.0); spinSlider.setProgress(0); updateSpeedLabels(); });
 
+        loftLabel = UiKit.label(c, "", 16, UiKit.ACCENT, true);
+        loftSlider = slider(c, BF.MAX_LOFT * 2);                       // 0..16 ft step 0.5
+        loftSlider.setOnSeekBarChangeListener(sliderListener(() -> {
+            Config.set("loftFt", loftSlider.getProgress() / 2.0);
+            updateLoftLabel();
+        }));
+        View loftCell = sliderCell(c, "Loft", loftLabel, loftSlider,
+                "Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the left of the screen sets it too (double-tap it for Off). Kept until you change it.",
+                () -> { Config.set("loftFt", 0.0); loftSlider.setProgress(0); updateLoftLabel(); });
+        loftSlider.setProgress((int) Math.round(Config.d("loftFt", 0) * 2));
+        updateLoftLabel();
+        View loftHudCell = cell(c, rowView(c, "Loft slider on screen", "Shows the LOFT slider while you hold the ball in Practice.", toggle(c, "loftHud", null)));
         spareSwitch = toggle(c, "spare", null);
         autoSwitch = toggle(c, "auto", () -> tickRefresh());
         autoLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
@@ -165,7 +184,7 @@ public final class Menu {
         LinearLayout autoStack = UiKit.row(c, false);
         autoStack.addView(rowView(c, "Auto-rack", "Sets up the same pins every frame without asking. Tip: pick your pins once and tap Auto in the pin picker.", autoSwitch));
         autoStack.addView(autoLabel, mt(c, 6));
-        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, spareCell, cell(c, autoStack) }));
+        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, loftCell, loftHudCell, spareCell, cell(c, autoStack) }));
 
         // ---- Oil
         oilColorButton = UiKit.button(c, "", false, true);
@@ -188,7 +207,8 @@ public final class Menu {
         // ---- Game modes (1.7.2)
         stack.addView(group(c, "\uD83C\uDFB2", "Game modes", "modes", true, new View[]{
                 cell(c, rowView(c, "Invisible oil", "Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball.", toggle(c, "oilInvis", () -> tickRefresh()))),
-                cell(c, rowView(c, "9-pin no-tap", "9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only.", toggle(c, "noTap9", null))) }));
+                cell(c, rowView(c, "9-pin no-tap", "9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only.", toggle(c, "noTap9", null))),
+                cell(c, rampsStack(c)) }));
 
         // ---- Pin physics (1.7.0)
         pinPhysStats = UiKit.label(c, "", 12, UiKit.ACCENT, true);
@@ -199,27 +219,26 @@ public final class Menu {
             updatePinFricLabel();
         }));
         Switch ppSwitch = toggle(c, "pinPhys", () -> {
-            if (Config.b("pinPhys", false)) { Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); }   // the recommended values
-            updatePinFricLabel();
+            if (Config.b("pinPhys", false)) Config.set("pinFric", 0.0);   // the recommended value (0 = recommended)
+            syncPinFric();
             tickRefresh();
         });
         LinearLayout ppStack = UiKit.row(c, false);
-        ppStack.addView(rowView(c, "Realistic pin physics", "Retunes the pins so they carry like real ones. Tested in a copy of the game's own physics (PhysX 4.1, the game's pins and lane) against the bowling congress's Bowlscore test of real pins: the game strikes 25% of the time where real pins strike 42-44%, and entry angle doesn't matter. With these settings it strikes 37%, angle matters again, and the 10 pin is the most common leave. Turning it on sets the recommended values. Practice only.", ppSwitch));
+        ppStack.addView(rowView(c, "Realistic pin physics", "Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. (Up to 1.7.4 this said 25% and 37%: the copy combined the materials the wrong way. Fixed in 1.7.5, see the changelog.) Turning it on uses the recommended value. Practice only.", ppSwitch));
         ppStack.addView(pinPhysStats, mt(c, 6));
         View fricCell = sliderCell(c, "Pin friction", pinFricLabel, pinFricSlider,
-                "How much the pins grip each other, the ball and the deck. The game's own pins use 0.50 (sliding) / 0.30 (starting). Lower lets pins slide off each other and keep moving, like real plastic-coated pins: 0.25 is recommended. Tap Reset for it.",
-                () -> { Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); updatePinFricLabel(); });
-        double fr = Config.d("pinFric", 0);
-        pinFricSlider.setProgress((int) Math.round(((fr >= 0.05 ? fr : 0.25) - 0.10) * 100));
-        updatePinFricLabel();
+                "How much the pins grip each other, the ball and the deck (the game multiplies it by what they touch). The game's own pins use 0.50 (sliding) / 0.30 (starting). In the model, lower friction knocks down fewer pins. Recommended (\u2605): 0.40, or 0.25 with Double physics rate. Tap Reset for it.",
+                () -> { Config.set("pinFric", 0.0); syncPinFric(); });
+        syncPinFric();
         Switch rateSwitch = toggle(c, "pinRate2x", () -> {
             if (Config.b("pinRate2x", false) && !Config.b("pinPhys", false)) {   // it needs realistic pin physics
-                Config.set("pinPhys", true); Config.set("pinFric", 0.25); pinFricSlider.setProgress(15); updatePinFricLabel();
+                Config.set("pinPhys", true); Config.set("pinFric", 0.0);
                 syncAll();
             }
+            syncPinFric();                                                     // the recommended friction follows this switch
             tickRefresh();
         });
-        View rateCell = cell(c, rowView(c, "Double physics rate (experimental)", "Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model: Bowlscore 37.5% to 40.5%, pocket hits 37% to 46% strikes, entry angle matters more, and the 10 pin is still the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on.", rateSwitch));
+        View rateCell = cell(c, rowView(c, "Double physics rate (experimental)", "Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model's Bowlscore test it raises strikes (the game's own pins 47% to 50%), so the recommended friction drops to 0.25 with it (44%); the 10 pin stays the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on.", rateSwitch));
         stack.addView(group(c, "\uD83C\uDFB3", "Pin physics", "pinphys", true, new View[]{ cell(c, ppStack), fricCell, rateCell }));
 
         // ---- Fixes
@@ -464,6 +483,8 @@ public final class Menu {
         setText(pinImageLabel, pinName != null ? pinName + " \u00B7 " + lastState.optString("pinImage") : lastState.optString("pinImage"));
         setText(bgLabel, Bg.status());
         setText(pinPhysStats, lastState.optString("pinPhys"));
+        int best = Config.i("rampsBest", 0), last = lastState.optInt("rampsLast", -1);
+        setTextOrHide(rampsLabel, best > 0 ? "Best game: " + best + (last >= 0 ? " \u00B7 last: " + last : "") : "");
         boolean safe = lastState.optBoolean("safe", false);
         int safeVis = safe ? View.VISIBLE : View.GONE;
         if (resumeButton.getVisibility() != safeVis) resumeButton.setVisibility(safeVis);
@@ -484,6 +505,10 @@ public final class Menu {
         speedSlider.setProgress((int) Math.round((Config.d("speed", 1) - 1) * 10));
         spinSlider.setProgress((int) Math.round((Config.d("spin", 1) - 1) * 2));
         updateSpeedLabels();
+        if (loftSlider != null) loftSlider.setProgress((int) Math.round(Config.d("loftFt", 0) * 2));
+        updateLoftLabel();
+        syncPinFric();
+        syncArsSortButton();
         syncColorButton();
     }
 
@@ -497,11 +522,71 @@ public final class Menu {
         }
     }
 
+    static double recommendedPinFric() { return Config.b("pinRate2x", false) ? 0.25 : 0.40; }   // Game.cpp PinFriction()
+
     static void updatePinFricLabel() {
         if (pinFricLabel == null) return;
         double f = Config.d("pinFric", 0);
-        if (f < 0.05) f = 0.25;
-        pinFricLabel.setText(Math.abs(f - 0.25) < 0.001 ? "0.25 \u2605" : String.format(java.util.Locale.US, "%.2f", f));
+        boolean rec = f < 0.05;
+        if (rec) f = recommendedPinFric();
+        pinFricLabel.setText(String.format(java.util.Locale.US, rec ? "%.2f \u2605" : "%.2f", f));
+    }
+
+    static void syncPinFric() {
+        if (pinFricSlider == null) return;
+        double f = Config.d("pinFric", 0);
+        pinFricSlider.setProgress((int) Math.round(((f >= 0.05 ? f : recommendedPinFric()) - 0.10) * 100));
+        updatePinFricLabel();
+    }
+
+    static void updateLoftLabel() {
+        if (loftLabel == null) return;
+        double ft = Config.d("loftFt", 0);
+        loftLabel.setText(ft < 0.25 ? "Off" : (ft == Math.floor(ft) ? String.format(java.util.Locale.US, "%.0f ft", ft) : String.format(java.util.Locale.US, "%.1f ft", ft)));
+    }
+
+    static final String[] ARS_KEYS = { "The game's order", "Name", "Power", "Hook", "Length", "RPM", "Condition" };
+
+    static void syncArsSortButton() {
+        if (arsSortButton == null) return;
+        int k = Config.i("arsSort", 0);
+        if (k < 0 || k >= ARS_KEYS.length) k = 0;
+        boolean desc = Config.b("arsDesc", false);
+        String dir = k == 0 ? "" : k == 1 ? (desc ? " Z\u2192A" : " A\u2192Z") : (desc ? " \u2193" : " \u2191");
+        arsSortButton.setText(ARS_KEYS[k] + dir);
+    }
+
+    static void pickArsenalOrder(Activity a) {
+        final List<String> names = new ArrayList<>();
+        final List<int[]> opts = new ArrayList<>();                      // {key, desc}
+        names.add("The game's order"); opts.add(new int[]{ 0, 0 });
+        names.add("Name A\u2192Z"); opts.add(new int[]{ 1, 0 });
+        names.add("Name Z\u2192A"); opts.add(new int[]{ 1, 1 });
+        for (int k = 2; k < ARS_KEYS.length; k++) {
+            names.add(ARS_KEYS[k] + ": high to low"); opts.add(new int[]{ k, 1 });
+            names.add(ARS_KEYS[k] + ": low to high"); opts.add(new int[]{ k, 0 });
+        }
+        int cur = 0, k0 = Config.i("arsSort", 0);
+        boolean d0 = Config.b("arsDesc", false);
+        for (int i = 0; i < opts.size(); i++) if (opts.get(i)[0] == k0 && (k0 == 0 || (opts.get(i)[1] == 1) == d0)) cur = i;
+        new AlertDialog.Builder(a, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Sort the Arsenal by")
+                .setSingleChoiceItems(names.toArray(new String[0]), cur, (dlg, which) -> {
+                    Config.set("arsSort", (double) opts.get(which)[0]);
+                    Config.set("arsDesc", opts.get(which)[1] == 1);
+                    syncArsSortButton();
+                    dlg.dismiss();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    static View rampsStack(Context c) {
+        rampsLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
+        LinearLayout col = UiKit.row(c, false);
+        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or barstools to miss (14). Miss the ramp or hit a stool and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
+        col.addView(rampsLabel, mt(c, 6));
+        return col;
     }
 
     static void updateSpeedLabels() {

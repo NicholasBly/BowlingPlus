@@ -2,6 +2,24 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.7.5] - 2026-10-11
+
+### Added
+- **Game mode button** on the practice pattern screen, under Custom oil: **Normal**, **Invisible oil**, **9-pin no-tap** or **Ramps & obstacles**. Picking one starts the game again at frame 1, the way the game does when you apply a pattern (the session's AddMode, `RunPsycsTest.restartGame(true)`, `StartFun(true, true, false)`, then the window closes). The menu's switches still work on their own, without a restart.
+- **Ramps & obstacles** (game mode, Practice). Every new rack gets a random lane: 28 ramp layouts (1 to 3 ramps, 0.26-1.0 m wide, 8-32 cm high, 8-22 degrees, 1.9-11.5 m from the foul line) or 14 barstool layouts (1 to 4 stools), never both. Roll over a ramp, or the shot scores 0; touch a barstool and it scores 0 (the ball is put in the gutter). In the 10th frame a ramp has a 45 % chance of sliding slowly across the lane. Your best game in the mode (played from frame 1) is kept and shown in the mode picker and the menu. The ramps and stools are built from Unity primitives with a copy of the pins' material and BowlingPlus's own textures, on the lane's layer (Default). Every ramp was simulated in the PhysX model (`tools/dev/ramps/make_ramps.py`, pinlab's new `ramp` experiment) at 5.5 to 10 m/s, aimed at its centre and near both edges: the ball climbs it, stays on the lane and is rolling again before the pins.
+- **Loft** (Practice): a LOFT slider on the left of the screen while you hold the ball, 0 to 16 ft in half feet (double-tap for Off), kept until you change it; also in the menu (Practice fun), with a switch to hide the on-screen slider. At release the ball gets the upward speed that brings it down that far on: vz = g d / (2 v). The lane is bouncy for a falling ball (0.65 x 0.65), so after a loft or a ramp BowlingPlus takes away the ball's upward speed when it touches the lane again (before the pins only).
+- **Hide ball stats** (Arsenal in the menu, and a STATS button under the LOFT slider): hides the stat circles and numbers on the ball in your hand (`BallManager/Canvas/Hook`) and on the balls in the ball rack (`ball1..ball10/OBJ_arc_all_120x90`). Looks only, everywhere.
+- **Arsenal order** (menu, Arsenal): name A-Z or Z-A, or power, hook, length, RPM or condition, high to low or low to high. Applied every time the Arsenal builds its list, together with the search. Everywhere (it only orders the list).
+- `tools/dev/ramps/make_ramps.py` (the layouts, their checks, `src/RampLayouts.h`); pinlab's `ramp` and `gutter` experiments; pin friction configurations by name (`stock_pf04`, `dt375_pf025`...).
+
+### Changed
+- **Pin physics study corrected, and the recommended pin friction with it.** The game's physics materials combine by **Multiply**, not Minimum: Unity's `PhysicsMaterialCombine` value 1 is Multiply (the game's metadata: Average 0, Multiply 1, Minimum 2, Maximum 3). The study and pinlab used Minimum. Rerun with each material's own mode (1,012 Bowlscore shots each, real pins 41.9-44.3 %): the game as shipped strikes **46.5 %** (not 25 %); 1.7.0-1.7.4's friction 0.25 at the game's physics rate gave **38.4 %**, fewer strikes than real pins; **0.40** gives 44.0 %, and **0.25 with the double physics rate** also 44.0 % (the double rate alone: 50.0 %). Entry angle makes little difference in any of them, and restitution does matter (not settable). So **Realistic pin physics now uses 0.40, or 0.25 with Double physics rate**, and follows that switch. If you had 0.25 (the old recommended value), you're moved to the recommended value; any other value you chose is kept. The menu's descriptions say what the model now shows. `PIN_PHYSICS_STUDY.md`, the charts and `Port/pin-physics` were redone (`Port/pin-physics/results/CORRECTION.md` lists old against new).
+- `Port/`: the porting guide covers 1.7.5 (items 21-25: ball stats, Arsenal order, the mode button and its restart, loft, ramps & obstacles) and the corrected pin friction.
+- The Arsenal search box's menu group is now "Arsenal" (search, order, hide ball stats).
+
+### Not tested on a device when this was written
+All of 1.7.5. Checked without a device: both platforms compile (iOS with Theos and the iPhoneOS 16.5 SDK, Android with the offline build and the host check); the shared native blocks are identical on both platforms; the pin simulation passes all 41 checks; the ramp layouts pass the PhysX model, and a ball put in the gutter stays there without knocking pins; the Unity calls the ramps use (`CreatePrimitive`, `AddComponent`, `set_layer`, `set_material`, `BoxCollider.set_size`, `Rigidbody.set_position`...) are registered in both libunity.so and UnityFramework; the APK is signed with the BowlingPlus key and the IPA has the 120 Hz key.
+
 ## [1.7.4] - 2026-10-10
 
 (1.7.3 was a test build and isn't part of the releases: its error-reporter stop, DNS warm-up and startup timeline were left out.)

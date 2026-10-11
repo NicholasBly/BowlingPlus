@@ -58,6 +58,10 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
 @property (nonatomic, strong) UISlider *speedSlider, *spinSlider;
 @property (nonatomic, strong) UILabel *spinLabel;
+@property (nonatomic, strong) UISwitch *hideStatsSwitch, *loftHudSwitch, *rampsSwitch;
+@property (nonatomic, strong) UISlider *loftSlider;
+@property (nonatomic, strong) UILabel *loftLabel, *rampsLabel;
+@property (nonatomic, strong) UIButton *arsSortButton;
 @property (nonatomic, strong) UITextField *searchField;
 @property (nonatomic, strong) NSTimer *refreshTimer;
 @property (nonatomic, strong) NSMutableArray<UILabel *> *helpLabels;
@@ -484,7 +488,12 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     UIStackView *searchCell = [[UIStackView alloc] initWithArrangedSubviews:@[[self hstack:@[f, go, clear] spacing:8], self.arsenalLabel]];
     searchCell.axis = UILayoutConstraintAxisVertical;
     searchCell.spacing = 8;
-    [stack addArrangedSubview:[self group:@"Arsenal search" icon:@"\U0001F50E" key:@"search" open:YES cells:@[[self cell:searchCell]]]];
+    self.arsSortButton = [self button:@"" filled:NO small:YES action:@selector(arsSortTapped)];
+    [self syncArsSortButton];
+    self.hideStatsSwitch = [self switchOn:gBF.hideBallStats action:@selector(hideStatsChanged:)];
+    [stack addArrangedSubview:[self group:@"Arsenal" icon:@"\U0001F50E" key:@"search" open:YES cells:@[[self cell:searchCell],
+        [self cell:[self row:@"Arsenal order" help:@"Every time you open the Arsenal, your balls are sorted this way: by name, or by a stat (power, hook, length, RPM, condition), high to low or low to high. Works with the search too." control:self.arsSortButton]],
+        [self cell:[self row:@"Hide ball stats" help:@"Hides the stat circles and numbers on the ball in your hand and on the balls in the ball rack. Looks only." control:self.hideStatsSwitch]]]]];
 
     // ---- Practice fun
     self.speedLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
@@ -509,6 +518,18 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     UIView *spinCell = [self sliderCell:@"Ball spin (RPM)" value:self.spinLabel reset:@selector(spinReset) slider:spin
                                    help:@"Multiplies your throw's spin right after release (the game caps it near 600 rpm). 17x takes a 600 rpm throw to about 10,000. The extra revs also add grip on the lane, so the ball hooks more. Very fast spin can look slow or backwards on screen (like car wheels in videos)."];
 
+    self.loftLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
+    UISlider *loft = [UISlider new];
+    loft.minimumValue = 0;
+    loft.maximumValue = BF_MAX_LOFT;
+    loft.minimumTrackTintColor = Accent();
+    [loft addTarget:self action:@selector(loftChanged:) forControlEvents:UIControlEventValueChanged];
+    [loft addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    self.loftSlider = loft;
+    UIView *loftCell = [self sliderCell:@"Loft" value:self.loftLabel reset:@selector(loftReset) slider:loft
+                                   help:@"Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the left of the screen sets it too (double-tap it for Off). Kept until you change it."];
+    self.loftHudSwitch = [self switchOn:gBF.loftHud action:@selector(loftHudChanged:)];
+    UIView *loftHudCell = [self cell:[self row:@"Loft slider on screen" help:@"Shows the LOFT slider while you hold the ball in Practice." control:self.loftHudSwitch]];
     self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];
     self.autoSwitch = [self switchOn:gBF.spareAuto action:@selector(autoChanged:)];
     self.autoLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
@@ -518,7 +539,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     autoStack.axis = UILayoutConstraintAxisVertical;
     autoStack.spacing = 6;
     [stack addArrangedSubview:[self group:@"Practice fun" icon:@"\U0001F3AF" key:@"fun" open:YES
-                                    cells:@[speedCell, spinCell, spareCell, [self cell:autoStack]]]];
+                                    cells:@[speedCell, spinCell, loftCell, loftHudCell, spareCell, [self cell:autoStack]]]];
 
     // ---- Oil
     self.oilColorButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -548,9 +569,17 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 
     // ---- Game modes (1.7.2)
     self.noTapSwitch = [self switchOn:gBF.noTap9 action:@selector(noTapChanged:)];
+    self.rampsSwitch = [self switchOn:gBF.rampsMode action:@selector(rampsChanged:)];
+    self.rampsLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    UIStackView *rampsStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or barstools to miss (14). Miss the ramp or hit a stool and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
+        self.rampsLabel]];
+    rampsStack.axis = UILayoutConstraintAxisVertical;
+    rampsStack.spacing = 6;
     [stack addArrangedSubview:[self group:@"Game modes" icon:@"\U0001F3B2" key:@"modes" open:YES cells:@[
         [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball." control:self.oilInvisSwitch]],
         [self cell:[self row:@"9-pin no-tap" help:@"9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only." control:self.noTapSwitch]],
+        [self cell:rampsStack],
     ]]];
 
     // ---- Pin physics (1.7.0)
@@ -564,16 +593,16 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [fric addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     self.pinFricSlider = fric;
     UIView *fricCell = [self sliderCell:@"Pin friction" value:self.pinFricLabel reset:@selector(pinFricReset) slider:fric
-                                   help:@"How much the pins grip each other, the ball and the deck. The game's own pins use 0.50 (sliding) / 0.30 (starting). Lower lets pins slide off each other and keep moving, like real plastic-coated pins: 0.25 is recommended. Tap Reset for it."];
+                                   help:@"How much the pins grip each other, the ball and the deck (the game multiplies it by what they touch). The game's own pins use 0.50 (sliding) / 0.30 (starting). In the model, lower friction knocks down fewer pins. Recommended (\u2605): 0.40, or 0.25 with Double physics rate. Tap Reset for it."];
     self.pinPhysStats = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     self.pinPhysStats.numberOfLines = 0;
     UIStackView *ppStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Realistic pin physics" help:@"Retunes the pins so they carry like real ones. Tested in a copy of the game's own physics (PhysX 4.1, the game's pins and lane) against the bowling congress's Bowlscore test of real pins: the game strikes 25% of the time where real pins strike 42-44%, and entry angle doesn't matter. With these settings it strikes 37%, angle matters again, and the 10 pin is the most common leave. Turning it on sets the recommended values. Practice only." control:self.pinPhysSwitch],
+        [self row:@"Realistic pin physics" help:@"Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. (Up to 1.7.4 this said 25% and 37%: the copy combined the materials the wrong way. Fixed in 1.7.5, see the changelog.) Turning it on uses the recommended value. Practice only." control:self.pinPhysSwitch],
         self.pinPhysStats]];
     ppStack.axis = UILayoutConstraintAxisVertical;
     ppStack.spacing = 6;
     self.pinRateSwitch = [self switchOn:gBF.pinRate2x action:@selector(pinRateChanged:)];
-    UIView *rateCell = [self cell:[self row:@"Double physics rate (experimental)" help:@"Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model: Bowlscore 37.5% to 40.5%, pocket hits 37% to 46% strikes, entry angle matters more, and the 10 pin is still the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on." control:self.pinRateSwitch]];
+    UIView *rateCell = [self cell:[self row:@"Double physics rate (experimental)" help:@"Runs the game's physics twice as often (every 3.75 ms instead of 7.5), so hits are worked out in smaller steps. In the model's Bowlscore test it raises strikes (the game's own pins 47% to 50%), so the recommended friction drops to 0.25 with it (44%); the 10 pin stays the most common leave. Unity doesn't let apps change this, so BowlingPlus changes the engine's own setting, checks the game sees it, and checks every throw that the ball moves at its real speed; if not, it switches itself off. Practice only, with Realistic pin physics on." control:self.pinRateSwitch]];
     [stack addArrangedSubview:[self group:@"Pin physics" icon:@"\U0001F3B3" key:@"pinphys" open:YES cells:@[[self cell:ppStack], fricCell, rateCell]]];
 
     // ---- Fixes
@@ -721,16 +750,19 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
 }
 
 - (void)skinChanged:(UISwitch *)s  { gBF.textureFix = s.on; BFSaveConfig(); }
+static float RecommendedPinFric(void) { return gBF.pinRate2x ? 0.25f : 0.40f; }   // see Game.mm PinFriction()
 - (void)pinPhysChanged:(UISwitch *)s {
     gBF.pinPhys = s.on;
-    if (s.on) gBF.pinFric = 0.25f;                 // turning it on sets the recommended values
+    if (s.on) gBF.pinFric = 0;                     // turning it on uses the recommended value (0 = recommended)
     BFSaveConfig();
+    [self syncControls];
     [self refresh];
 }
 - (void)pinRateChanged:(UISwitch *)s {
     gBF.pinRate2x = s.on;
-    if (s.on && !gBF.pinPhys) { gBF.pinPhys = YES; gBF.pinFric = 0.25f; }   // it needs realistic pin physics
+    if (s.on && !gBF.pinPhys) { gBF.pinPhys = YES; gBF.pinFric = 0; }   // it needs realistic pin physics
     BFSaveConfig();
+    [self syncControls];                           // the recommended friction follows this switch
     [self refresh];
 }
 - (void)pinFricChanged:(UISlider *)s {          // 0.10 ... 0.50 in 0.01 steps
@@ -738,15 +770,52 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [self updatePinFricLabel];
 }
 - (void)pinFricReset {
-    gBF.pinFric = 0.25f;
-    self.pinFricSlider.value = 0.25f;
+    gBF.pinFric = 0;                               // 0: the recommended value, which follows Double physics rate
+    self.pinFricSlider.value = RecommendedPinFric();
     [self updatePinFricLabel];
     BFSaveConfig();
 }
 - (void)updatePinFricLabel {
-    float f = gBF.pinFric >= 0.05f ? gBF.pinFric : 0.25f;
-    self.pinFricLabel.text = fabsf(f - 0.25f) < 0.001f ? @"0.25 \u2605" : [NSString stringWithFormat:@"%.2f", f];
+    BOOL rec = !(gBF.pinFric >= 0.05f);
+    float f = rec ? RecommendedPinFric() : gBF.pinFric;
+    self.pinFricLabel.text = rec ? [NSString stringWithFormat:@"%.2f \u2605", f] : [NSString stringWithFormat:@"%.2f", f];
 }
+static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @"Hook", @"Length", @"RPM", @"Condition" };
+- (void)syncArsSortButton {
+    int k = gBF.arsSort >= 0 && gBF.arsSort < 7 ? gBF.arsSort : 0;
+    NSString *dir = k == 0 ? @"" : k == 1 ? (gBF.arsDesc ? @" Z\u2192A" : @" A\u2192Z") : (gBF.arsDesc ? @" \u2193" : @" \u2191");
+    [self.arsSortButton setTitle:[NSString stringWithFormat:@"%@%@ \u25BE", kArsKeys[k], dir] forState:UIControlStateNormal];
+}
+- (void)arsSortTapped {                         // our own panel: iOS pop-up menus don't open inside the game
+    NSMutableArray<NSString *> *titles = [NSMutableArray array];
+    NSMutableArray<NSArray *> *opts = [NSMutableArray array];   // @[key, desc]
+    [titles addObject:@"The game's order"]; [opts addObject:@[@0, @NO]];
+    [titles addObject:@"Name A\u2192Z"]; [opts addObject:@[@1, @NO]];
+    [titles addObject:@"Name Z\u2192A"]; [opts addObject:@[@1, @YES]];
+    for (int key = 2; key < 7; key++) {
+        [titles addObject:[NSString stringWithFormat:@"%@: high to low", kArsKeys[key]]]; [opts addObject:@[@(key), @YES]];
+        [titles addObject:[NSString stringWithFormat:@"%@: low to high", kArsKeys[key]]]; [opts addObject:@[@(key), @NO]];
+    }
+    NSInteger cur = 0;
+    for (NSInteger i = 0; i < (NSInteger)opts.count; i++)
+        if ([opts[i][0] intValue] == gBF.arsSort && (gBF.arsSort == 0 || [opts[i][1] boolValue] == gBF.arsDesc)) cur = i;
+    __weak BFMenu *weak = self;
+    BFShowChoices(@"Sort the Arsenal by", @"Every time you open the Arsenal.", titles, cur, ^(NSInteger i) {
+        gBF.arsSort = [opts[i][0] intValue];
+        gBF.arsDesc = [opts[i][1] boolValue];
+        BFSaveConfig();
+        [weak syncArsSortButton];
+    });
+}
+- (void)hideStatsChanged:(UISwitch *)s { gBF.hideBallStats = s.on; BFSaveConfig(); }
+- (void)loftHudChanged:(UISwitch *)s { gBF.loftHud = s.on; BFSaveConfig(); }
+- (void)rampsChanged:(UISwitch *)s { gBF.rampsMode = s.on; BFSaveConfig(); [self syncControls]; }
+- (void)loftChanged:(UISlider *)s {            // 0 ... BF_MAX_LOFT ft in half-foot steps
+    gBF.loftFt = roundf(s.value * 2) / 2;
+    [self updateLoftLabel];
+}
+- (void)loftReset { gBF.loftFt = 0; self.loftSlider.value = 0; [self updateLoftLabel]; BFSaveConfig(); }
+- (void)updateLoftLabel { self.loftLabel.text = gBF.loftFt < 0.25f ? @"Off" : [NSString stringWithFormat:@"%g ft", gBF.loftFt]; }
 - (void)unstickChanged:(UISwitch *)s { gBF.unstick = s.on; BFSaveConfig(); }
 - (void)ipv4Changed:(UISwitch *)s  { gBF.gameIPv4 = s.on; BFSaveConfig(); }
 - (void)menuButtonChanged:(UISwitch *)s { gBF.menuButton = s.on; BFSaveConfig(); BFMenuButtonRefresh(); }
@@ -898,7 +967,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.skinSwitch.on = gBF.textureFix;
     self.pinPhysSwitch.on = gBF.pinPhys;
     self.pinRateSwitch.on = gBF.pinRate2x;
-    if (!self.pinFricSlider.isTracking) self.pinFricSlider.value = gBF.pinFric >= 0.05f ? gBF.pinFric : 0.25f;
+    if (!self.pinFricSlider.isTracking) self.pinFricSlider.value = gBF.pinFric >= 0.05f ? gBF.pinFric : RecommendedPinFric();
     [self updatePinFricLabel];
     self.pinPhysStats.text = BFPinPhysStatus();
     self.unstickSwitch.on = gBF.unstick;
@@ -909,6 +978,15 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilBreakSwitch.on = gBF.oilBreakdown;
     self.oilInvisSwitch.on = gBF.oilInvisible;
     self.noTapSwitch.on = gBF.noTap9;
+    self.rampsSwitch.on = gBF.rampsMode;
+    int lastRamps = BFRampsLastScore();
+    self.rampsLabel.text = gBF.rampsBest > 0 ? [NSString stringWithFormat:@"Best game: %d%@", gBF.rampsBest, lastRamps >= 0 ? [NSString stringWithFormat:@" \u00B7 last: %d", lastRamps] : @""] : @"";
+    self.rampsLabel.hidden = self.rampsLabel.text.length == 0;
+    self.hideStatsSwitch.on = gBF.hideBallStats;
+    self.loftHudSwitch.on = gBF.loftHud;
+    if (!self.loftSlider.isTracking) self.loftSlider.value = fminf(fmaxf(gBF.loftFt, 0), BF_MAX_LOFT);
+    [self updateLoftLabel];
+    [self syncArsSortButton];
     self.oilThickSwitch.on = gBF.oilThickness;
     self.realOilSwitch.on = gBF.realOil;
     self.pinImageSwitch.on = gBF.pinImage;

@@ -1,7 +1,7 @@
 # BowlingPlus: implementing these features natively in the official game
 
 For: the Bowling by Jason Belmonte team, who have the Unity project and source.
-Covers: BowlingPlus 1.7.4. Engine: Unity 6000.0.67f1, IL2CPP (the version the shipped game uses).
+Covers: BowlingPlus 1.7.5. Engine: Unity 6000.0.67f1, IL2CPP (the version the shipped game uses).
 
 BowlingPlus adds these features to the finished app at runtime, by changing values in memory. That was the only option without the source. You have the source, so each feature below is written as a change to your project: a setting, a prefab, a material, a Project Setting, or a line of C#. Appendix A describes how BowlingPlus does it at runtime. You can skip it.
 
@@ -34,7 +34,7 @@ Items marked **(confirm)** are things we haven't verified in your project or in 
 | 12 | `bp.spare` | Spare mode and pin picker | 3 | Practice | Pinsetter setup and a pin-picking UI |
 | 13 | `bp.speed` | Ball speed and spin tools | 3 | Practice | Throw code, at launch |
 | 14 | `bp.replayRate` | Replays at the recorded rate | 1 | Any | Replay recording and playback |
-| 15 | `bp.pinFric` | Realistic pin physics (friction 0.25) | 2 | Decision | Pin physics materials |
+| 15 | `bp.pinFric` | Pin friction (0.40, or 0.25 with item 16) | 2 | Decision | Pin physics materials |
 | 16 | `bp.doubleRate` | Double physics rate (3.75 ms step) | 3 | Decision | Project Settings > Time, plus per-step code |
 
 Startup and connection (details in `features/startup-and-connection.md`):
@@ -45,6 +45,16 @@ Startup and connection (details in `features/startup-and-connection.md`):
 | 18 | `bp.startupSdk` | Start the SDKs together, with time limits | 2 | Any | `InitState.InitAfterSceneLoaded` |
 | 19 | `bp.connectEarly` | Connect during the loading bar | 3 | Any | `Connector`, `ClientSideManager`, `LoadingWindow` |
 | 20 | `bp.splitScene` | Split the `Game3` scene (removes the 84 % stall) | 4 | Any | Scene setup, additive scenes or Addressables |
+
+New in 1.7.5:
+
+| # | ID | Feature | Effort | Gate | Where in your project |
+|---|----|---------|--------|------|-----------------------|
+| 21 | `bp.hideStats` | Hide the ball stats (in hand and on the rack) | 1 | Any | `Ball_Description` and `BallOnReturnerInfo` prefabs, one setting |
+| 22 | `bp.arsSort` | Arsenal order (name or stat, either way) | 1 | Any | `ArsenalBallManager.InitScrollData` |
+| 23 | `bp.modePicker` | Game mode button that restarts at frame 1 | 1-2 | Practice | The practice pattern window (`PracticeOil`) |
+| 24 | `bp.loft` | Loft slider | 2 | Practice | Throw code at launch, ball landing |
+| 25 | `bp.ramps` | Ramps & obstacles mode, with a best score | 3-4 | Practice | A new Practice mode: prefabs, layouts, a scoring rule |
 
 ## 3. Native implementation, feature by feature
 
@@ -188,13 +198,23 @@ Startup and connection (details in `features/startup-and-connection.md`):
 
 **Test:** record a throw and play it back; the replay should last as long as the throw.
 
-### 15. Realistic pin physics: friction 0.25 (`bp.pinFric`)
+### 15. Pin friction (`bp.pinFric`)
 
-**What it does:** lowers the friction on the pins so they glide more on the deck and against each other.
+**Read first:** BowlingPlus 1.7.0-1.7.4 and the first version of the pin study modelled the game's materials with the combine mode **Minimum**. Your materials store 1, which is **Multiply** (Unity's enum: Average 0, Multiply 1, Minimum 2, Maximum 3). Rerun with Multiply, the game as shipped already strikes about as often as real pins on Bowlscore. If you read an earlier copy of this folder, its pin numbers (25 %, 37 %) are wrong: see `pin-physics/results/CORRECTION.md`.
 
-**Native implementation:** set the dynamic and static friction on the pin physics material (the `Pin` material on the colliders, and `PinButtom` on the base) to 0.25 in the asset, not at runtime. The game's values are 0.5 sliding and 0.3 starting, with the combine mode set to Minimum.
+**What it does:** sets the pins' friction (the `Pin` material on the colliders, and `PinButtom` on the base). Because the materials multiply, a pin material at 0.40 gives pin on pin 0.16, pin on deck 0.24 sliding, pin on ball 0.12.
 
-**Evidence:** in our PhysX 4.1 model of the game's pins (see `pin-physics/`), this is about 35 to 37 % strikes on the USBC Bowlscore grid at the game's step. The game as shipped is about 25 to 27 %, and real pins are 41.9 to 44.3 %.
+**Evidence** (PhysX 4.1 model of the game's pins, `pin-physics/`, 1,012 Bowlscore shots each, ±3 points; real pins 41.9-44.3 %):
+
+| Setup | Bowlscore strikes |
+|---|---|
+| The game as shipped (0.5 sliding / 0.3 starting, 7.5 ms step) | 46.5 % |
+| Pin material friction 0.40, 7.5 ms step | 44.0 % |
+| Pin material friction 0.25, 7.5 ms step (BowlingPlus 1.7.0-1.7.4) | 38.4 % |
+| 3.75 ms step (item 16), stock friction | 50.0 % |
+| 3.75 ms step, pin material friction 0.25 | 44.0 % |
+
+**Native implementation:** if you change nothing else, the stock pins are already close (a little above the real range). To land inside it: set the `Pin` and `PinButtom` materials' static and dynamic friction to **0.40** in the asset; or, if you adopt the 3.75 ms step (item 16), to **0.25**. Keep the combine mode at Multiply (the numbers above assume it).
 
 **Gate:** Decision. It changes scores for everyone, so decide per mode. A safe path: Practice first, then compare leaderboards before any wider change.
 
@@ -210,11 +230,66 @@ Startup and connection (details in `features/startup-and-connection.md`):
 - replay recording and playback (item 14),
 - anything that assumes 7.5 ms.
 
-**Evidence:** in the model, the double rate with friction 0.25 strikes about 40 % (rerun 40.4 %, study 40.5 %), against about 35 to 37 % at the game's step. The step change was tested only in that model.
+**Evidence:** in the model, halving the step roughly halves the numerical error of every hit (the ball sinks 10 mm into a pin before the hit is resolved instead of 25 mm; pin-on-pin outcomes that differ from a converged run drop from 22 to 11 of 360). It also raises Bowlscore strikes from 46.5 % to 50.0 %, so pair it with pin friction 0.25 (item 15: 44.0 %). The step change was tested only in that model.
 
 **Gate:** Decision. As with item 15, and it also changes replays and oil behaviour, so test those first.
 
 **Test:** the review above, then play on a device.
+
+### 21. Hide the ball stats (`bp.hideStats`)
+
+**What it does:** a setting that hides the stat panel on the ball in the player's hand and on the balls in the ball rack.
+
+**Native implementation:** the in-hand stats are all under the child `Hook` of `BallManager/Canvas` (`Ball_Description`); the rack's are the child `OBJ_arc_all_120x90` of each `ObjectsToShift/ObjectsOnBallSelect/ball1..ball10` (`BallOnReturnerInfo`). Gate those two objects' `SetActive` on the setting where the scripts already decide to show them (`Ball_Description.enableCanvas` / `CanShowBallInfo`, `BallOnReturnerInfo.Update`), and leave the rack's select button (`butt`) alone. Setting 10 (`G_SHOW_BALLINFO`) is the ball's shadow, not these.
+
+**Gate:** Any (display only).
+
+**Test:** pick a ball and open the overhead rack view with the setting on and off.
+
+### 22. Arsenal order (`bp.arsSort`)
+
+**What it does:** the Arsenal list is sorted the player's way every time it opens: by name (A-Z, Z-A) or by power, hook, length, RPM or condition (high to low, low to high).
+
+**Native implementation:** `ArsenalBallManager.InitScrollData` builds `_ballsData` and sorts it with `BallComparer`. Choose the comparer from the setting: name from the item's display name, power as `power + extraPower`, hook `hook`, length `lenght`, RPM `RPM`, condition `conditionCurrent` (fields of `mdl_Item_Ball`). Use a stable sort with your current order as the tie-break.
+
+**Gate:** Any (list order only).
+
+**Test:** each order, with and without a search filter, and after buying or drilling a ball.
+
+### 23. Game mode button with a restart (`bp.modePicker`)
+
+**What it does:** a button on the practice pattern screen (under the pattern list) picks a mode: Normal, Invisible oil (item 9), 9-pin no-tap (item 8) or Ramps & obstacles (item 25). Picking one starts the game again at frame 1.
+
+**Native implementation:** add the button to the `PracticeOil` window and restart the way its own Apply does (`HandlePlayPracticeUpdated`): the session's `AddMode = 1`, `RunPsycsTest.restartGame(true)`, `RunPsycsTest.StartFun(true, true, false)`, then `FloatingMenu.closeClick()`. Store the mode in Practice's settings.
+
+**Gate:** Practice.
+
+**Test:** pick each mode in the middle of a game; the score sheet should start empty at frame 1 with the mode on.
+
+### 24. Loft (`bp.loft`)
+
+**What it does:** a vertical LOFT slider on the left of the screen while the player holds the ball: 0 (the normal release) to 16 ft, in half feet, kept until changed. The ball is thrown out over the lane and comes down that far past the release.
+
+**Native implementation:** at launch (where item 13 scales the speed), add an upward speed so a flight of `d` metres at forward speed `v` lands at `d`: `vz = g d / (2 v)`. The lane bounces (0.65 x 0.65 = 0.42 with Multiply), so a ball dropping from the air hops; BowlingPlus removes the ball's upward speed when it touches the lane again after flying (before the pins only). Natively you could give the lane contact zero bounce for the ball while it's in loft flight instead.
+
+**Gate:** Practice (it changes shots).
+
+**Test:** 0, 4, 8 and 16 ft at slow and fast speeds; the ball should land where the slider says and not hop.
+
+### 25. Ramps & obstacles (`bp.ramps`)
+
+**What it does:** a Practice mode. Every new rack gets a random lane layout from 42: 28 with ramps (1 to 3 ramps, 0.26-1.0 m wide, 8-32 cm high, 8-22 degrees, 1.9-11.5 m from the foul line) and 14 with barstools (1 to 4). Ramps and barstools are never on the lane together. The ball has to roll over a ramp, and mustn't touch a barstool, or the shot scores 0. In the 10th frame a ramp has a 45 % chance of sliding slowly across the lane. The best game played in the mode from frame 1 is kept and shown on the mode button's screen.
+
+**Native implementation:**
+- Make ramp and barstool prefabs in your art style. A ramp's top must start flush with the lane (BowlingPlus sinks its front edge 2 mm) so the ball rolls on without a bump; its collider needs no bounce (a material with bounciness 0; Unity's default material meets the ball's Multiply as 0.18 friction, no bounce).
+- The layouts are in BowlingPlus's `src/RampLayouts.h` (generated by `tools/dev/ramps/make_ramps.py`, which also checks them). Every ramp was simulated in the PhysX model at 5.5 to 10 m/s, aimed at its centre and 5 cm inside each edge: the ball climbs it, stays on the lane and is rolling again by 17.6 m. Every row of stools leaves a gap of 27 cm or more.
+- Scoring: decide per shot whether the ball climbed a ramp (or touched a stool) and, if not (or if so), score 0. BowlingPlus does it by moving the ball into the gutter (just above the gutter's middle, so it isn't pushed out of a collider), which your scoring already counts as 0; natively you'd set the throw's result directly.
+- Landing: the same damping as item 24.
+- The best score: `Game.GetGameScore()` at `endOfGame`, only for games played in the mode from frame 1.
+
+**Gate:** Practice.
+
+**Test:** every layout once (BowlingPlus logs each one by name), slow and fast balls, a miss on purpose, a stool hit, and a 10th frame.
 
 ### 17-20. Startup and connection
 
@@ -229,6 +304,7 @@ BowlingPlus only changes gameplay in offline Practice. In your code:
 3. Keep cosmetic features and bug fixes (items 1 to 7 and 14) outside the check.
 4. Mark replays with the settings they were recorded under, or don't allow practice-modified shots into shareable replays.
 5. Items 15 and 16 are Decision items. Decide them per mode.
+6. Items 23 to 25 change outcomes, so they're Practice only; 21 and 22 are display only.
 
 BowlingPlus's own check is `gBFStatus.offline = (mode == Practice) && (not the replayer)`. The idea is the same. Use your own enum.
 
@@ -240,7 +316,11 @@ If BowlingPlus keeps shipping with the official game, it can apply a fix twice. 
 |----|------------------------------|------------|
 | `bp.fps120` | The same setting exists | Hide BowlingPlus's switch. Its code writes the same values, so running both is harmless. |
 | `bp.ipv4` | Your client or server fix is in | Hide BowlingPlus's switches. The DNS filter does nothing once lookups return IPv4. |
-| `bp.pinFric` | The materials are already 0.25 | Hide the switch. |
+| `bp.pinFric` | You've set the pin materials' friction | Hide the switch: BowlingPlus would set its own value on top of yours. |
+| `bp.hideStats` | Your setting exists | Hide BowlingPlus's switch. Both only switch the same objects off. |
+| `bp.arsSort` | Your sort exists | Hide BowlingPlus's order setting, or it re-sorts your list. |
+| `bp.modePicker`, `bp.ramps` | Your mode picker or mode exists | Hide BowlingPlus's button and mode. Its restart uses the game's own calls. |
+| `bp.loft` | Your loft exists | Hide BowlingPlus's slider, or a throw gets both. |
 | `bp.doubleRate` | **Known gap:** BowlingPlus halves whatever step it finds in the 2 to 50 ms range, not only 7.5 ms. | Don't run both until BowlingPlus checks for exactly 7.5 ms. |
 
 Tell us which IDs you ship, and when. We'd then stand BowlingPlus down on builds that already have a feature.
@@ -249,7 +329,8 @@ Tell us which IDs you ship, and when. We'd then stand BowlingPlus down on builds
 
 - **120 FPS:** the iOS flag was confirmed on a phone (BowlingPlus 1.6.1). Smoothness has only been reported by users. Android compiles and passes CI; no phone test is recorded.
 - **IPv6 fix:** confirmed on an iPhone with NextDNS after BowlingPlus 1.2.3. The Android port compiles and passes CI; no phone test is recorded.
-- **Pin physics:** the percentages come from our PhysX 4.1 model of the game, not from the game itself. A few phone games on the double rate were played; that's too few to measure a strike rate.
+- **Pin physics:** the percentages come from our PhysX 4.1 model of the game, not from the game itself, and were corrected in 1.7.5 (the materials' combine mode; `pin-physics/results/CORRECTION.md`). A few phone games on the double rate were played; that's too few to measure a strike rate.
+- **1.7.5 (items 21-25 and the new pin friction):** not yet tested on a phone. Both platforms compile, the ramp layouts pass the PhysX model, and the game's calls they use exist in both builds' engines.
 - **Startup:** the sequence was read from the Android build; the timings and log findings come from one iPhone 17 Pro log.
 - **Everything else:** compiled and checked by our simulators where a simulator exists. Not yet tested on a phone: 9-pin no-tap, the replay-rate fix and the invisible-oil fix (1.7.2), and the library row layout (1.7.1).
 

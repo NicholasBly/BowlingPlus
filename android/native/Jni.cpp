@@ -248,6 +248,8 @@ static Json StateJson() {          // everything the menu, the oil tab and the l
     s.set("oilReady", Json::Bool_(BFOilReady()));
     s.set("safe", Json::Bool_(gBFSafeMode));
     s.set("offline", Json::Bool_(gBFStatus.offline));
+    s.set("rampsLast", BFRampsLastScore());
+    s.set("mode", BFGameModeNow());
     s.set("cfg", BFConfigJson());
     return s;
 }
@@ -288,6 +290,11 @@ static bool GameCmd(const Str &cmd, const Str &arg, Str &out) {
     if (cmd == "state") { out = StateJson().Dump(); return true; }
     if (cmd == "debug") { out = BFDebugInfo(); return true; }
     if (cmd == "lobby") { out = BFPracticeLobbyOpen() ? "1" : "0"; return true; }   // the practice pattern screen is open
+    if (cmd == "hud") {          // two flags: the practice pattern screen is open, the loft slider should show (holding the ball)
+        out = Str(BFPracticeLobbyOpen() ? "1" : "0") + (BFLoftHudVisible() ? "1" : "0");
+        return true;
+    }
+    if (cmd == "mode") { BFGameModeSelect(atoi(arg.c_str())); out = Fmt("%d", BFGameModeNow()); return true; }   // game mode: set + restart
     if (cmd == "spare") { BFApplySpareSelection((uint16_t)atoi(arg.c_str())); return true; }
     if (cmd == "spareNow") { BFApplySpareSelectionNow((uint16_t)atoi(arg.c_str())); return true; }
     if (cmd == "spareDismissed") { BFSpareDismissed(); return true; }

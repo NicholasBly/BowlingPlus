@@ -10,7 +10,8 @@
 | `pinpreview/run.py` | Renders the pin library's 3D preview on the host from any picture, through the app's own conversion (`PinWrap.h`) and renderer (`PinPreview.h`): 8 frames side by side. |
 | `make_pin_presets.py` | Regenerates `src/PinPresets.h`, the built-in pin pictures (the library's BowlingPlus collection), from `pins/`. |
 | `physrate/check.py` | Checks the double physics rate's engine lookup (the native fixed-step getter, its TimeManager call and the step's layout) against the game's libunity.so and UnityFramework, including that it refuses a lookalike. Rerun when the game updates its engine. |
-| `pinlab/` | The game's pin physics on NVIDIA PhysX 4.1 with the game's own pins, lane and settings (`build_physx.sh` builds PhysX from GitHub). Experiments for `PIN_PHYSICS_STUDY.md`: ball into a pin, pin into pin, full racks, and USBC's Bowlscore grid. |
+| `pinlab/` | The game's pin physics on NVIDIA PhysX 4.1 with the game's own pins, lane and settings (`build_physx.sh` builds PhysX from GitHub). Experiments for `PIN_PHYSICS_STUDY.md`: ball into a pin, pin into pin, full racks, and USBC's Bowlscore grid; plus the 1.7.5 ramps and the gutter move. Each material uses its own combine mode (the game's are Multiply; 1.7.0-1.7.4 used Minimum, which was wrong). |
+| `ramps/make_ramps.py` | The Ramps & obstacles layouts (1.7.5): checks every ramp in pinlab (`ramp` experiment: 5.5-10 m/s, aimed at the centre and both edges) and every row of barstools for a ball-sized gap, then writes `src/RampLayouts.h` with the layouts and the pieces' PNG textures. `--pinlab PATH` for a pinlab built elsewhere, `--check-only` to only check. |
 | `il2cpp_meta.py` | Reads the game's `global-metadata.dat` (v31: types 88 bytes, methods 36, fields 12): class, field and method names. |
 | `dex_classes.py` | Reads the game's `classes*.dex`: which classes/methods/fields exist (to check Java reflection targets). |
 
