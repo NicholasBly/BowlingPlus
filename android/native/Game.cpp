@@ -4215,7 +4215,7 @@ static void BuiltinRestoreAll() {
         sBI[i] = BuiltinState();
     }
     sBuiltinPatched = 0;
-    BFLog("the game's own oil patterns are back (not in Practice, or Real-life oil off)");
+    BFLog("the game's own oil patterns are back");
 }
 
 static void BuiltinApplyAll() {
@@ -4260,7 +4260,7 @@ static void BuiltinRedrawStep() {                 // lane pictures: the selected
 }
 
 static void OilBuiltinTick() {
-    bool want = InPracticeOil() && gBF.realOil;    // off: Practice keeps the game's own drawing of its patterns, as online
+    bool want = InPracticeOil() && gBF.realOil;    // realOil is false: the game's own patterns keep the game's drawing, as online
     if (!want) { if (sBuiltinPatched) BuiltinRestoreAll(); }
     else if (sFrame % 15 == 0 || !sBuiltinPatched) BuiltinApplyAll();
     if (sFrame % 3 == 0) BuiltinRedrawStep();
@@ -4781,7 +4781,7 @@ static bool GmRestartGame() {
 // default, 0.18 against the ball, and a spinning ball turned hard as it climbed).
 #include "RampLayouts.h"
 
-static const int kRoMaxParts = 12;
+static const int kRoMaxParts = 100;                // up to 4 barstools of 22 pieces
 static Ref sRoPart[kRoMaxParts];
 static int sRoParts = 0;
 static int sRoKind = 0, sRoLayout = -1, sRoLastLayout = -1, sRoLastStool = -1;   // kind 1 ramps, 2 stools
@@ -4792,8 +4792,11 @@ static bool sRoThrew = true, sRoThrow = false, sRoDecided = false, sRoHit = fals
 static int sRoLastThrowFrame = -1000;
 static BFVec3 sRoPrev = { 0, 0, 0 };
 static int sRoHits = 0, sRoMisses = 0, sRoStoolHits = 0, sRoBuilds = 0, sRoFails = 0;
-static Ref sRoMat[3];                              // ramp, seat, metal
-static uintptr_t sRoTex[3] = { 0, 0, 0 };
+enum { RO_RAMP = 0, RO_BAND, RO_TOP, RO_CHROME, RO_PIN, RO_MATS };
+static Ref sRoMat[RO_MATS];                        // ramp, seat side, seat top, chrome, the stool's pin
+static uintptr_t sRoTex[RO_MATS] = { 0, 0, 0, 0, 0 };
+static int sRoStoolPins = 0, sRoBounces = 0, sRoLateGutters = 0;
+static bool sRoStoolHit = false, sRoLateDone = false;
 static Il2CppClass *sRoGO = nullptr, *sRoRenderer = nullptr, *sRoCollider = nullptr, *sRoBox = nullptr;
 static const MethodInfo *sRoCreate = nullptr, *sRoSetPos = nullptr, *sRoSetRot = nullptr, *sRoSetScale = nullptr, *sRoSetLayer = nullptr,
                         *sRoSetMat = nullptr, *sRoColEnable = nullptr, *sRoAddComp = nullptr, *sRoBoxSize = nullptr,
@@ -4846,8 +4849,10 @@ static void *RoTexture(int i) {
     void *t = sRoTex[i] ? Target(sRoTex[i]) : nullptr;
     if (Alive(t)) return t;
     if (!N.Texture2D || !N.T2D_ctor || !N.LoadImage || !N.Byte) return nullptr;
-    const unsigned char *png = i == 0 ? kRampPNG : i == 1 ? kSeatPNG : kMetalPNG;
-    size_t len = i == 0 ? sizeof(kRampPNG) : i == 1 ? sizeof(kSeatPNG) : sizeof(kMetalPNG);
+    static const unsigned char *const pngs[RO_MATS] = { kRampPNG, kSeatBandPNG, kSeatTopPNG, kChromePNG, kStoolPinPNG };
+    static const size_t lens[RO_MATS] = { sizeof(kRampPNG), sizeof(kSeatBandPNG), sizeof(kSeatTopPNG), sizeof(kChromePNG), sizeof(kStoolPinPNG) };
+    const unsigned char *png = pngs[i];
+    size_t len = lens[i];
     Il2CppObject *tex = NewObject(N.Texture2D);
     int w = 2, h = 2;
     bool ok = false;
@@ -4959,6 +4964,152 @@ static void RoRampPose(const BPRamp &r, float x, BFVec3 &pos, BPQuat &q, BFVec3 
     pos = { sLaneX + x, sFoulY + r.y0 + 0.5f * L * cosf(th) + 0.5f * t * sinf(th), sLaneZ - 0.002f + 0.5f * L * sinf(th) - 0.5f * t * cosf(th) };
 }
 
+// ---- the barstool: a Brunswick-style pin stool ----
+// Four chrome legs in an X from a hub, a bowling pin (the game's own pin model, wearing the pin library's Brunswick Max
+// Crown picture) standing on the hub as the post, a chrome foot ring round the pin, and a round seat on the pin's head:
+// blue sides with white crowns, a grey top. The pieces have no colliders: a ball that reaches a stool is bounced off it
+// by BowlingPlus (RoStoolBounce), so the legs never trip it up and the shot always ends in a gutter.
+static const float kStoolLegR = 0.17f;             // the legs' reach from the post (metres)
+static const float kStoolReach = 0.24f;            // ball centre to post when the ball meets a leg (the legs are low)
+static const float kStoolPinH = 0.44f;             // the post: a pin 1.15 x real size
+static const float kStoolPinBase = 0.10f;          // ...standing on the hub
+
+static BPQuat QMul(BPQuat a, BPQuat b) {
+    return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
+}
+static BPQuat QAxis(float ax, float ay, float az, float rad) {
+    float s = sinf(rad * 0.5f);
+    return { ax * s, ay * s, az * s, cosf(rad * 0.5f) };
+}
+
+// The game's own pin model: PinsRender/PinsRender/candlepin_graphicsN/pin_graphics/polySurface60 (the lane's visible
+// pins, "pin_diff" material). Taken from the one standing on the head pin's spot (its renderer's world box must be a
+// standing pin's), with where its model's origin sits relative to its foot, its turn, scale and height; cloned
+// (Object.Instantiate: just a MeshFilter and a MeshRenderer) and scaled up to kStoolPinH.
+static Ref sRoPinSrc;
+static BFVec3 sRoPinDelta = { 0, 0, 0 }, sRoPinScale = { 1, 1, 1 };
+static BPQuat sRoPinRot = { 0, 0, 0, 1 };
+static bool sRoPinKnown = false;
+static const MethodInfo *sRoFindGO = nullptr, *sRoInstantiate = nullptr, *sRoGetRot = nullptr, *sRoLossy = nullptr, *sRoBounds = nullptr;
+static float sRoPinTall = 0.381f;                 // the source pin's height on the lane (its renderer's bounds)
+
+static void RoFindPinModel() {
+    if (sRoPinKnown && sRoPinSrc.get()) return;
+    if (!sRoFindGO) {
+        sRoFindGO = XM(sRoGO, "Find", 1, "System.String");
+        sRoInstantiate = XM(X.Object, "Instantiate", 1, "UnityEngine.Object");
+        sRoGetRot = XM(X.Transform, "get_rotation", 0);
+        sRoLossy = XM(X.Transform, "get_lossyScale", 0);
+        sRoBounds = XM(sRoRenderer, "get_bounds", 0);
+    }
+    if (!sRoFindGO || !sRoInstantiate || !sRoGetRot || !sRoLossy || !sRoBounds || !X.tr_getPos || !sRoRenderer) return;
+    Il2CppArray *kegs = TurnKegels();
+    void *keg = kegs && Len(kegs) ? Elem(kegs, 0) : nullptr;
+    bool ok = false;
+    void *ktr = Alive(keg) ? (void *)Invoke(N.GO_getTransform, keg, nullptr, &ok) : nullptr;
+    Il2CppObject *kb = ok && ktr ? Invoke(X.tr_getPos, ktr, nullptr, &ok) : nullptr;
+    if (!ok || !kb) return;
+    BFVec3 kp = *(BFVec3 *)Unbox(kb);
+    float best = 0.5f;
+    for (int i = 1; i <= 10; i++) {
+        char path[96];
+        snprintf(path, sizeof(path), "PinsRender/PinsRender/candlepin_graphics%d/pin_graphics/polySurface60", i);
+        void *fa[] = { NewString(path) };
+        void *go = (void *)Invoke(sRoFindGO, nullptr, fa, &ok);
+        if (!ok || !Alive(go)) continue;
+        void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+        Il2CppObject *pb = ok && tr ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+        if (!ok || !pb) continue;
+        BFVec3 p = *(BFVec3 *)Unbox(pb);
+        float dx = p.x - kp.x, dy = p.y - kp.y, d = sqrtf(dx * dx + dy * dy);
+        if (d >= best) continue;
+        Il2CppObject *rb = Invoke(sRoGetRot, tr, nullptr, &ok);
+        Il2CppObject *sb = ok && rb ? Invoke(sRoLossy, tr, nullptr, &ok) : nullptr;
+        if (!ok || !sb) continue;
+        // where the model stands: its renderer's world box (centre, half size); the pin's foot is the box's bottom
+        void *ren = GetComp(go, TypeOf(sRoRenderer));
+        Il2CppObject *bb = ren ? Invoke(sRoBounds, ren, nullptr, &ok) : nullptr;
+        if (!ok || !bb) continue;
+        struct { BFVec3 c, e; } box = *(decltype(box) *)Unbox(bb);
+        if (box.e.z < 0.15f || box.e.z > 0.25f || box.e.x > 0.1f || box.e.y > 0.1f) continue;   // not standing
+        best = d;
+        sRoPinSrc.set(go);
+        sRoPinTall = 2 * box.e.z;
+        sRoPinDelta = { p.x - box.c.x, p.y - box.c.y, p.z - (box.c.z - box.e.z) };
+        sRoPinRot = *(BPQuat *)Unbox(rb);
+        sRoPinScale = *(BFVec3 *)Unbox(sb);
+        sRoPinKnown = true;
+    }
+}
+
+static void *RoStoolPin(float x, float y, float z, int layer) {   // the post: a clone of the game's pin, 1.15 x
+    RoFindPinModel();
+    void *src = sRoPinSrc.get();
+    if (!src || sRoParts >= kRoMaxParts) return nullptr;
+    void *a[] = { src };
+    bool ok = false;
+    void *go = (void *)Invoke(sRoInstantiate, nullptr, a, &ok);
+    if (!ok || !Alive(go)) return nullptr;
+    sRoPart[sRoParts++].set(go);
+    if (sRoSetName) { void *na[] = { NewString("BowlingPlus stool pin") }; Invoke(sRoSetName, go, na); }
+    void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+    if (!ok || !tr) return go;
+    const float k = kStoolPinH / sRoPinTall;
+    BFVec3 sc = { sRoPinScale.x * k, sRoPinScale.y * k, sRoPinScale.z * k };
+    BFVec3 pos = { x + sRoPinDelta.x * k, y + sRoPinDelta.y * k, z + sRoPinDelta.z * k };
+    void *sa[] = { &sc };
+    Invoke(sRoSetScale, tr, sa);
+    void *qa[] = { &sRoPinRot };
+    Invoke(sRoSetRot, tr, qa);
+    void *pa[] = { &pos };
+    Invoke(sRoSetPos, tr, pa);
+    if (layer >= 0 && sRoSetLayer) { void *la[] = { &layer }; Invoke(sRoSetLayer, go, la); }
+    void *m = RoMaterial(RO_PIN);
+    void *r = m && sRoRenderer ? GetComp(go, TypeOf(sRoRenderer)) : nullptr;
+    if (r) { void *ma[] = { m }; Invoke(sRoSetMat, r, ma); }
+    sRoStoolPins++;
+    return go;
+}
+
+static void RoStool(float x, float y, int layer) {
+    const float z = sLaneZ;
+    const BPQuat up = { 0.70710678f, 0, 0, 0.70710678f };   // a cylinder's own axis (local y) to world up (z)
+    // legs: four chrome bars in an X (diagonal to the lane), from the hub down to the lane
+    const float hubZ = z + 0.075f, legLen = 0.185f, drop = 0.06f;
+    float slope = atanf(drop / kStoolLegR);
+    for (int k = 0; k < 4; k++) {
+        float phi = 0.7853982f + k * 1.5707963f;
+        BPQuat q = QMul(QAxis(0, 0, 1, phi - 1.5707963f), QAxis(1, 0, 0, -slope));   // local y: outwards and down
+        float c = cosf(slope) * legLen * 0.5f;
+        BFVec3 pos = { x + cosf(phi) * c, y + sinf(phi) * c, hubZ - sinf(slope) * legLen * 0.5f };
+        RoPiece(3, pos, q, BFVec3{ 0.028f, legLen, 0.018f }, RO_CHROME, layer, 0, "BowlingPlus stool leg");
+    }
+    RoPiece(2, BFVec3{ x, y, z + 0.0825f }, up, BFVec3{ 0.065f, 0.0175f, 0.065f }, RO_CHROME, layer, 0, "BowlingPlus stool hub");
+    // the post
+    if (!RoStoolPin(x, y, z + kStoolPinBase, layer))
+        RoPiece(2, BFVec3{ x, y, z + kStoolPinBase + kStoolPinH * 0.5f }, up, BFVec3{ 0.07f, kStoolPinH * 0.5f, 0.07f }, RO_CHROME, layer, 0, "BowlingPlus stool post");
+    // foot ring round the pin's belly, on four rods from the legs
+    const float ringR = 0.15f, ringZ = z + 0.23f;
+    const int segs = 10;
+    for (int k = 0; k < segs; k++) {
+        float th = k * 6.2831853f / segs;
+        BPQuat q = QAxis(0, 0, 1, th);                // local y along the ring
+        BFVec3 pos = { x + ringR * cosf(th), y + ringR * sinf(th), ringZ };
+        RoPiece(2, pos, q, BFVec3{ 0.016f, ringR * 3.1415927f / segs * 1.08f, 0.016f }, RO_CHROME, layer, 0, "BowlingPlus stool ring");
+    }
+    for (int k = 0; k < 4; k++) {
+        float phi = 0.7853982f + k * 1.5707963f;
+        float legZ = hubZ - drop * (ringR / kStoolLegR);
+        float h = ringZ - legZ;
+        RoPiece(2, BFVec3{ x + ringR * cosf(phi), y + ringR * sinf(phi), legZ + h * 0.5f }, up, BFVec3{ 0.012f, h * 0.5f, 0.012f }, RO_CHROME, layer, 0, "BowlingPlus stool rod");
+    }
+    // the seat on the pin's head: blue sides with crowns, a grey top
+    const float seatZ = z + kStoolPinBase + kStoolPinH - 0.01f;
+    RoPiece(2, BFVec3{ x, y, seatZ + 0.04f }, up, BFVec3{ 0.34f, 0.04f, 0.34f }, RO_BAND, layer, 0, "BowlingPlus stool seat");
+    RoPiece(2, BFVec3{ x, y, seatZ + 0.086f }, up, BFVec3{ 0.325f, 0.008f, 0.325f }, RO_TOP, layer, 0, "BowlingPlus stool cushion");
+}
+
 static bool RoBuild(bool lastFrame) {
     RoClear(nullptr);
     if (!sLaneRef) { sRoWhy = "lane not found yet"; return false; }
@@ -4994,13 +5145,7 @@ static bool RoBuild(bool lastFrame) {
         int pick;
         for (int tries = 0; ; tries++) { pick = (int)(RoRand() % (uint32_t)kStoolLayoutCount); if (pick != sRoLastStool || tries > 20) break; }
         const BPStoolLayout &L = kStoolLayouts[pick];
-        BPQuat up = { 0.70710678f, 0, 0, 0.70710678f };   // the cylinder's own axis (local y) to world up (z)
-        for (int i = 0; i < L.n; i++) {
-            float x = sLaneX + L.s[i].x, y = sFoulY + L.s[i].y, z = sLaneZ;
-            RoPiece(2, BFVec3{ x, y, z + 0.015f }, up, BFVec3{ 0.30f, 0.015f, 0.30f }, 2, layer, 2, "BowlingPlus stool base");
-            RoPiece(2, BFVec3{ x, y, z + 0.03f + 0.32f }, up, BFVec3{ 0.05f, 0.32f, 0.05f }, 2, layer, 1, "BowlingPlus stool post");
-            RoPiece(2, BFVec3{ x, y, z + 0.67f + 0.035f }, up, BFVec3{ 0.38f, 0.035f, 0.38f }, 1, layer, 0, "BowlingPlus stool seat");
-        }
+        for (int i = 0; i < L.n; i++) RoStool(sLaneX + L.s[i].x, sFoulY + L.s[i].y, layer);
         sRoKind = 2; sRoLayout = pick; sRoLastStool = pick;
         Bp175Log("ramps: obstacles \"%s\" (%d barstool%s)", L.name, L.n, L.n == 1 ? "" : "s");
     }
@@ -5066,6 +5211,78 @@ static bool RoOnRamp(const BFVec3 &p) {           // over a ramp's footprint (or
     return false;
 }
 
+// the ball meets a barstool (it has no collider of its own): it bounces off the legs like off a heavy steel stand.
+// Put it where it touched (kStoolReach from the stool's middle), reflect its velocity off the contact normal with some
+// loss, scrub most of its spin (so the hook can't bring it back) and keep it going down the lane and off to the side the
+// contact points to, fast enough to reach the gutter before the pins: a shot that hits a barstool scores 0.
+static bool RoStoolBounce(const BFVec3 &p, int i) {
+    const BPStoolLayout &L = kStoolLayouts[sRoLayout];
+    void *rb = BallBody();
+    BFVec3 v = { 0, 0, 0 };
+    if (!rb || !BpBallVel(rb, v)) return false;
+    float sx = L.s[i].x, sy = L.s[i].y;
+    float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY, bx = p.x - sLaneX, by = p.y - sFoulY;
+    float R = kStoolReach, cx = bx, cy = by;
+    float fx = ax - sx, fy = ay - sy, dx = bx - ax, dy = by - ay;
+    float qa = dx * dx + dy * dy, qb = 2 * (fx * dx + fy * dy), qc = fx * fx + fy * fy - R * R;
+    if (qc <= 0) {                                  // already inside at the last frame: push straight out
+        float d = sqrtf(fx * fx + fy * fy);
+        if (d < 1e-4f) { fx = bx - ax; fy = 0.01f; d = sqrtf(fx * fx + fy * fy); }
+        if (d < 1e-4f) { fx = 1; fy = 0; d = 1; }
+        cx = sx + fx / d * R; cy = sy + fy / d * R;
+    } else if (qa > 1e-8f) {                        // first touch along the frame's path
+        float disc = qb * qb - 4 * qa * qc;
+        float t = disc > 0 ? (-qb - sqrtf(disc)) / (2 * qa) : 1;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        cx = ax + t * dx; cy = ay + t * dy;
+    }
+    float nx = cx - sx, ny = cy - sy, nl = sqrtf(nx * nx + ny * ny);
+    if (nl < 1e-4f) return false;
+    nx /= nl; ny /= nl;
+    float vn = v.x * nx + v.y * ny;
+    if (vn >= 0) return false;                      // moving away from it already
+    float speed = sqrtf(v.x * v.x + v.y * v.y);
+    if (speed < 0.3f) return false;
+    // reflect: restitution 0.45 along the normal, some friction along the leg
+    float e = 0.45f;
+    float tx = v.x - vn * nx, ty = v.y - vn * ny;
+    float vx = 0.85f * tx - e * vn * nx, vy = 0.85f * ty - e * vn * ny;
+    float side = fabsf(nx) > 0.05f ? (nx > 0 ? 1.0f : -1.0f) : (cx - sx >= 0 ? 1.0f : -1.0f);
+    if (fabsf(nx) <= 0.05f && fabsf(cx - sx) < 0.01f) side = (RoRand() & 1) ? 1.0f : -1.0f;
+    float out = 0.8f * speed;                       // what's left after the knock
+    vy = fmaxf(vy, 0.35f * speed);                  // never back up the lane
+    float pinsY = sLaneRef ? sHeadY - sFoulY : 18.263f;
+    float left = fmaxf(pinsY - 0.9f - cy, 0.3f);
+    float dist = 0.53f - side * cx + 0.05f;         // to just over the gutter's edge
+    float need = 1.2f * dist / (left / vy);
+    if (side * vx < need) vx = side * fmaxf(need, fabsf(vx));
+    vx = side * fabsf(vx);
+    if (sqrtf(vx * vx + vy * vy) > out) {
+        if (fabsf(vx) < out * 0.94f) vy = fmaxf(sqrtf(out * out - vx * vx), 0.34f * out);
+        else { vx = side * out * 0.94f; vy = out * 0.34f; }
+    }
+    BFVec3 to = { sLaneX + cx, sFoulY + cy, p.z };
+    BFVec3 nv = { vx, vy, v.z };
+    if (sRoRbSetPos) { void *pa[] = { &to }; Invoke(sRoRbSetPos, rb, pa); }
+    void *va[] = { &nv };
+    Invoke(N.RB_setVel, rb, va);
+    if (N.RB_getAngVel && N.RB_setAngVel) {         // the knock takes most of the spin off
+        bool ok = false;
+        Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+        if (ok && bw) {
+            BFVec3 w = *(BFVec3 *)Unbox(bw);
+            BFVec3 nw = { w.x * 0.3f, w.y * 0.3f, w.z * 0.3f };
+            void *wa[] = { &nw };
+            Invoke(N.RB_setAngVel, rb, wa);
+        }
+    }
+    if (!sRoStoolHit) sRoStoolHits++;
+    sRoStoolHit = true;
+    sRoBounces++;
+    Bp175Log("ramps: bounced off barstool %d (%.2f, %.2f) -> (%.2f, %.2f), 0 for this shot", i + 1, v.x, v.y, vx, vy);
+    return true;
+}
+
 static void RoThrowTick() {
     BFVec3 p;
     if (!BpBallPos(p)) return;
@@ -5074,6 +5291,7 @@ static void RoThrowTick() {
         BFVec3 v;
         if (!rb || !BpBallVel(rb, v) || v.x * v.x + v.y * v.y < 1.0f) return;   // not launched yet
         sRoThrow = true; sRoThrew = true; sRoDecided = false; sRoHit = false; sRoAirEarly = false; sRoPrev = p;
+        sRoStoolHit = false; sRoLateDone = false;
         DampStart(8.0);
     }
     if (sRoDecided || sRoKind == 0 || sRoLayout < 0) { sRoPrev = p; return; }
@@ -5094,6 +5312,12 @@ static void RoThrowTick() {
                 float hs = (ly - r.y0) * tanf(th);              // the ramp's surface under the ball
                 on = hs > 0.025f && lz >= 0.108f + 0.5f * hs && lz <= 0.108f + hs + 0.15f;
             }
+            // riding the ramp's side edge: the ball's centre is just outside the ramp but the ball sits on its corner,
+            // lifted off the lane (it rolls off the side, still going for the pins)
+            if (!on && ly >= r.y0 && ly <= back && dx <= 0.5f * r.w + 0.10f) {
+                float hs = (ly - r.y0) * tanf(th);
+                on = hs > 0.03f && lz >= 0.108f + 0.02f && lz <= 0.108f + hs + 0.15f;
+            }
             // just past it and flying (a slow frame can skip the climb itself), unless it was lofted over everything
             if (!on && !sRoAirEarly && ly > back && ly < back + 2.5f && dx < 0.5f * r.w + 0.3f && lz > 0.19f) on = true;
             if (on) {
@@ -5111,18 +5335,21 @@ static void RoThrowTick() {
         }
     } else {
         const BPStoolLayout &L = kStoolLayouts[sRoLayout];
-        float lastY = 0, reach = 0.15f + 0.108f - 0.01f;
+        float lastY = 0;
         float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY;
         for (int i = 0; i < L.n; i++) {
             lastY = fmaxf(lastY, L.s[i].y);
-            if (lz < 0.70f && SegDist2(ax, ay, lx, ly, L.s[i].x, L.s[i].y) < reach * reach) {
-                sRoDecided = true;
-                sRoStoolHits++;
-                RoToGutter(p, "hit a barstool");
-                break;
-            }
+            if (lz < 0.70f && SegDist2(ax, ay, lx, ly, L.s[i].x, L.s[i].y) < kStoolReach * kStoolReach &&
+                RoStoolBounce(p, i)) break;
         }
-        if (!sRoDecided && ly > lastY + 0.5f) sRoDecided = true;          // cleared them
+        if (!sRoStoolHit && ly > lastY + 0.5f) sRoDecided = true;         // cleared them
+        // after a barstool the shot is 0: a ball that is somehow still on the lane near the pins goes in the gutter
+        float pinsY = sLaneRef ? sHeadY - sFoulY : 18.263f;
+        if (sRoStoolHit && !sRoDecided && ly > pinsY - 1.2f) {
+            sRoDecided = true;
+            sRoLateGutters++;
+            RoToGutter(p, "still on the lane after a barstool");
+        }
     }
     sRoPrev = p;
 }
@@ -5235,10 +5462,10 @@ static void Bp175Tick() {                         // after SpeedTick and SpinTic
 
 static void Bp175Debug(char *buf, size_t size) {
     snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
-                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d best %d last %d clean %d",
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d",
              sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
              BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
-             sRoHits, sRoMisses, sRoStoolHits, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0);
+             sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0);
 }
 
 static void OilTick() {

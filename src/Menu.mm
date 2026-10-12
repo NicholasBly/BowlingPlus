@@ -44,7 +44,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UILabel *statusLabel, *ballLabel, *speedLabel, *arsenalLabel;
 @property (nonatomic, strong) UISwitch *skinSwitch, *pinSwitch, *spareSwitch, *autoSwitch;
 @property (nonatomic, strong) UILabel *autoLabel, *fpsLabel, *oilLabel;
-@property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch, *realOilSwitch;
+@property (nonatomic, strong) UISwitch *oilMirrorSwitch, *oilBreakSwitch, *oilInvisSwitch, *oilThickSwitch;
 @property (nonatomic, strong) UIButton *updateButton, *helpButton;
 @property (nonatomic, strong) UISwitch *pinImageSwitch;
 @property (nonatomic, strong) UILabel *pinImageLabel;
@@ -493,7 +493,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.hideStatsSwitch = [self switchOn:gBF.hideBallStats action:@selector(hideStatsChanged:)];
     [stack addArrangedSubview:[self group:@"Arsenal" icon:@"\U0001F50E" key:@"search" open:YES cells:@[[self cell:searchCell],
         [self cell:[self row:@"Arsenal order" help:@"Every time you open the Arsenal, your balls are sorted this way: by name, or by a stat (power, hook, length, RPM, condition), high to low or low to high. Works with the search too." control:self.arsSortButton]],
-        [self cell:[self row:@"Hide ball stats" help:@"Hides the stat circles and numbers on the ball in your hand and on the balls in the ball rack. Looks only." control:self.hideStatsSwitch]]]]];
+        [self cell:[self row:@"Hide ball stats" help:@"Hides the ball's stats: the style name and the axis tilt, axis rotation and RPM arcs on the ball in your hand, and the stat arcs on the balls in the ball rack. The STATS button under the LOFT slider turns this on and off too. Looks only." control:self.hideStatsSwitch]]]]];
 
     // ---- Practice fun
     self.speedLabel = [self label:@"" size:16 weight:UIFontWeightBold color:Accent()];
@@ -553,17 +553,15 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.oilBreakSwitch = [self switchOn:gBF.oilBreakdown action:@selector(oilBreakChanged:)];
     self.oilInvisSwitch = [self switchOn:gBF.oilInvisible action:@selector(oilInvisChanged:)];
     self.oilMirrorSwitch = [self switchOn:gBF.oilMirrorFix action:@selector(oilMirrorChanged:)];
-    self.realOilSwitch = [self switchOn:gBF.realOil action:@selector(realOilChanged:)];
     self.oilLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIStackView *libStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self button:@"\U0001F6E2  Custom oil patterns" filled:NO small:NO action:@selector(oilLibraryTapped)], self.oilLabel]];
     libStack.axis = UILayoutConstraintAxisVertical;
     libStack.spacing = 8;
     [stack addArrangedSubview:[self group:@"Oil (practice)" icon:@"\U0001F6E2" key:@"oil" open:YES cells:@[
-        [self cell:[self row:@"Real-life oil" help:@"In Practice, the game's own patterns (Big Ben, Statue of Liberty...) are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Off: Practice uses the game's own drawing of them, the same oil as online play. Your custom patterns always use the real-life drawing. Online matches, tournaments and the tutorial always use the game's own oil." control:self.realOilSwitch]],
         [self cell:[self row:@"Oil color" help:@"Pick the color the lane shows oil in, or keep the game's." control:self.oilColorButton]],
         [self cell:[self row:@"Show oil thickness" help:@"Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same." control:self.oilThickSwitch]],
         [self cell:[self row:@"Show oil breakdown" help:@"Redraws the lane oil after every shot so you can watch it break down over the game." control:self.oilBreakSwitch]],
-        [self cell:[self row:@"Fix oil display side" help:@"The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went." control:self.oilMirrorSwitch]],
+        [self cell:[self row:@"Fix oil display side" help:@"Shows breakdown and carrydown on the side of the lane your ball actually went (the game's own display has them mirrored)." control:self.oilMirrorSwitch]],
         [self cell:libStack],
     ]]];
 
@@ -572,12 +570,12 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.rampsSwitch = [self switchOn:gBF.rampsMode action:@selector(rampsChanged:)];
     self.rampsLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIStackView *rampsStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or barstools to miss (14). Miss the ramp or hit a stool and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
+        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
         self.rampsLabel]];
     rampsStack.axis = UILayoutConstraintAxisVertical;
     rampsStack.spacing = 6;
     [stack addArrangedSubview:[self group:@"Game modes" icon:@"\U0001F3B2" key:@"modes" open:YES cells:@[
-        [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball." control:self.oilInvisSwitch]],
+        [self cell:[self row:@"Invisible oil" help:@"Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing." control:self.oilInvisSwitch]],
         [self cell:[self row:@"9-pin no-tap" help:@"9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only." control:self.noTapSwitch]],
         [self cell:rampsStack],
     ]]];
@@ -597,7 +595,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.pinPhysStats = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     self.pinPhysStats.numberOfLines = 0;
     UIStackView *ppStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Realistic pin physics" help:@"Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. (Up to 1.7.4 this said 25% and 37%: the copy combined the materials the wrong way. Fixed in 1.7.5, see the changelog.) Turning it on uses the recommended value. Practice only." control:self.pinPhysSwitch],
+        [self row:@"Realistic pin physics" help:@"Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. Turning it on uses the recommended value. Practice only." control:self.pinPhysSwitch],
         self.pinPhysStats]];
     ppStack.axis = UILayoutConstraintAxisVertical;
     ppStack.spacing = 6;
@@ -824,7 +822,6 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
 - (void)oilMirrorChanged:(UISwitch *)s { gBF.oilMirrorFix = s.on; BFSaveConfig(); }
 - (void)oilBreakChanged:(UISwitch *)s  { gBF.oilBreakdown = s.on; BFSaveConfig(); }
 - (void)oilThickChanged:(UISwitch *)s  { gBF.oilThickness = s.on; BFSaveConfig(); }
-- (void)realOilChanged:(UISwitch *)s { gBF.realOil = s.on; BFSaveConfig(); }
 - (void)pinImageChanged:(UISwitch *)s {
     if (s.on) {
         BFPinUseLast();
@@ -988,7 +985,6 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
     [self updateLoftLabel];
     [self syncArsSortButton];
     self.oilThickSwitch.on = gBF.oilThickness;
-    self.realOilSwitch.on = gBF.realOil;
     self.pinImageSwitch.on = gBF.pinImage;
     self.bgSwitch.on = gBF.bgImage;
     self.bgLabel.text = BFBgStatus();

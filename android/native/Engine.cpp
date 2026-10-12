@@ -56,7 +56,7 @@ Json BFConfigJson(void) {
     d.set("oilHue", gBF.oilHue); d.set("pinImage", Json::Bool_(gBF.pinImage));
     d.set("bgImage", Json::Bool_(gBF.bgImage)); d.set("bgTitle", Json::Bool_(gBF.bgTitle));
     d.set("pinPhys", Json::Bool_(gBF.pinPhys)); d.set("pinFric", gBF.pinFric); d.set("pinRate2x", Json::Bool_(gBF.pinRate2x));
-    d.set("oilShowOrig", gBF.oilShowOrig); d.set("noTap9", Json::Bool_(gBF.noTap9)); d.set("realOil", Json::Bool_(gBF.realOil));
+    d.set("oilShowOrig", gBF.oilShowOrig); d.set("noTap9", Json::Bool_(gBF.noTap9));
     d.set("logHosts", Json::Bool_(gBF.logHosts));
     d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
     d.set("laneOther", Json::Bool_(gBF.laneOther));
@@ -106,7 +106,7 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "pinRate2x") gBF.pinRate2x = on;
     else if (k == "oilShowOrig") gBF.oilShowOrig = (int)v;
     else if (k == "noTap9") gBF.noTap9 = on;
-    else if (k == "realOil") gBF.realOil = on;
+    else if (k == "realOil") {}                    // was a setting up to 1.7.4: now managed (see BFLoadConfig)
     else if (k == "logHosts") gBF.logHosts = on;
     else if (k == "menuButton") gBF.menuButton = on;
     else if (k == "fbWebLogin") gBF.fbWebLogin = on;
@@ -125,7 +125,7 @@ bool BFConfigSet(const Str &k, double v) {
 }
 
 void BFLoadConfig(void) {
-    gBF.realOil = true;   // default on (the positional initializer above leaves new fields false)
+    gBF.realOil = false;  // managed, not a setting: the game's own patterns keep the game's drawing (as online), custom patterns always get the real-life one
     gBF.loftHud = true;
     std::vector<uint8_t> raw;
     if (!ReadFile(sDataDir + "/config.json", raw)) return;

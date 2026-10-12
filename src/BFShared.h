@@ -40,7 +40,7 @@ typedef struct {
     bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
     int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
     bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
-    bool     realOil;      // Practice: the game's own patterns drawn from their Kegel files (off: the game's own drawing, as online); on by default, set in BFLoadConfig
+    bool     realOil;      // Practice: the game's own patterns drawn from their Kegel files. Always false (BFLoadConfig): they keep the game's drawing, as online; custom patterns always use the real-life drawing
     bool     hideBallStats; // hide the ball stats, in your hand and on the ball rack (looks only, everywhere)
     bool     loftHud;      // Practice: the loft slider while you hold the ball (on by default, set in BFLoadConfig)
     float    loftFt;       // ...loft in feet, 0 = the game's own release (0...BF_MAX_LOFT)

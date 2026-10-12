@@ -141,7 +141,7 @@ public final class Menu {
         syncArsSortButton();
         stack.addView(group(c, "\uD83D\uDD0E", "Arsenal", "search", true, new View[]{ cell(c, searchCell),
                 cell(c, rowView(c, "Arsenal order", "Every time you open the Arsenal, your balls are sorted this way: by name, or by a stat (power, hook, length, RPM, condition), high to low or low to high. Works with the search too.", arsSortButton)),
-                cell(c, rowView(c, "Hide ball stats", "Hides the stat circles and numbers on the ball in your hand and on the balls in the ball rack. Looks only.", toggle(c, "hideBallStats", null))) }));
+                cell(c, rowView(c, "Hide ball stats", "Hides the ball's stats: the style name and the axis tilt, axis rotation and RPM arcs on the ball in your hand, and the stat arcs on the balls in the ball rack. The STATS button under the LOFT slider turns this on and off too. Looks only.", toggle(c, "hideBallStats", null))) }));
 
         // ---- Practice fun
         speedLabel = UiKit.label(c, "", 16, UiKit.ACCENT, true);
@@ -197,16 +197,15 @@ public final class Menu {
         libStack.addView(libBtn);
         libStack.addView(oilLabel, mt(c, 8));
         stack.addView(group(c, "\uD83D\uDEE2", "Oil (practice)", "oil", true, new View[]{
-                cell(c, rowView(c, "Real-life oil", "In Practice, the game's own patterns (Big Ben, Statue of Liberty...) are drawn from their real Kegel data: exact distances, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane, with left on the left. Off: Practice uses the game's own drawing of them, the same oil as online play. Your custom patterns always use the real-life drawing. Online matches, tournaments and the tutorial always use the game's own oil.", toggle(c, "realOil", null))),
                 cell(c, rowView(c, "Oil color", "Pick the color the lane shows oil in, or keep the game's.", oilColorButton)),
                 cell(c, rowView(c, "Show oil thickness", "Stronger shading by oil thickness (darker = more oil) instead of the game's look. Looks only, the ball feels the same.", toggle(c, "oilThick2", null))),
                 cell(c, rowView(c, "Show oil breakdown", "Redraws the lane oil after every shot so you can watch it break down over the game.", toggle(c, "oilBreak", null))),
-                cell(c, rowView(c, "Fix oil display side", "The game drew the oil mirrored, so breakdown and carrydown showed up on the wrong side. Now they show where your ball went.", toggle(c, "oilMirror", null))),
+                cell(c, rowView(c, "Fix oil display side", "Shows breakdown and carrydown on the side of the lane your ball actually went (the game's own display has them mirrored).", toggle(c, "oilMirror", null))),
                 cell(c, libStack) }));
 
         // ---- Game modes (1.7.2)
         stack.addView(group(c, "\uD83C\uDFB2", "Game modes", "modes", true, new View[]{
-                cell(c, rowView(c, "Invisible oil", "Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing. The oil no longer flashes up when you pick a ball.", toggle(c, "oilInvis", () -> tickRefresh()))),
+                cell(c, rowView(c, "Invisible oil", "Hides the oil and plays a random unlocked game pattern each game. Read the lane like the real thing.", toggle(c, "oilInvis", () -> tickRefresh()))),
                 cell(c, rowView(c, "9-pin no-tap", "9 or more on a full rack counts as a strike: when the first ball leaves one pin, BowlingPlus knocks it over before the game counts, so the game scores its own strike and moves to the next frame. Practice only.", toggle(c, "noTap9", null))),
                 cell(c, rampsStack(c)) }));
 
@@ -224,7 +223,7 @@ public final class Menu {
             tickRefresh();
         });
         LinearLayout ppStack = UiKit.row(c, false);
-        ppStack.addView(rowView(c, "Realistic pin physics", "Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. (Up to 1.7.4 this said 25% and 37%: the copy combined the materials the wrong way. Fixed in 1.7.5, see the changelog.) Turning it on uses the recommended value. Practice only.", ppSwitch));
+        ppStack.addView(rowView(c, "Realistic pin physics", "Sets the pins' friction (below) and gives the ball continuous collision. Tested in a copy of the game's own physics (PhysX 4.1 with the game's pins, lane and materials) on the bowling congress's Bowlscore test, where real pins strike 42-44% of the time: the game as it comes strikes about 47%, and with the recommended friction about 44%. Turning it on uses the recommended value. Practice only.", ppSwitch));
         ppStack.addView(pinPhysStats, mt(c, 6));
         View fricCell = sliderCell(c, "Pin friction", pinFricLabel, pinFricSlider,
                 "How much the pins grip each other, the ball and the deck (the game multiplies it by what they touch). The game's own pins use 0.50 (sliding) / 0.30 (starting). In the model, lower friction knocks down fewer pins. Recommended (\u2605): 0.40, or 0.25 with Double physics rate. Tap Reset for it.",
@@ -584,7 +583,7 @@ public final class Menu {
     static View rampsStack(Context c) {
         rampsLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
         LinearLayout col = UiKit.row(c, false);
-        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or barstools to miss (14). Miss the ramp or hit a stool and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
+        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
         col.addView(rampsLabel, mt(c, 6));
         return col;
     }
