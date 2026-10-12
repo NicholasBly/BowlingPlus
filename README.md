@@ -36,7 +36,7 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Alley background | Your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): fill, fit, stretch or tile, with or without the alley name | Everywhere (looks only) |
 | Game mode button | A 🎲 Mode button on the practice pattern screen (under Custom oil): Normal, Invisible oil, 9-pin no-tap, or Ramps & obstacles. Picking one starts the game again at frame 1 | Practice only |
 | 9-pin no-tap | Game mode: 9 or more on a full rack is a strike; the game scores it itself | Practice only |
-| Ramps & obstacles | Game mode: every frame gets a random lane (42 layouts): roll over a ramp, or miss the Brunswick pin barstools (a ball that hits one bounces off into the gutter), or the shot scores 0. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game is kept | Practice only |
+| Ramps & obstacles | Game mode: every frame gets a random lane (42 layouts): roll over a ramp, miss the Brunswick pin barstools, or get through the gates (one or two barriers across the lane), or the shot scores 0 (a ball that hits a stool or a gate bounces off into the gutter). Switch ramps, barstools or gates off to leave them out. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game is kept | Practice only |
 | Double physics rate (experimental) | The game's physics runs every 3.75 ms instead of 7.5, with a speed check on every throw that undoes it if anything's off. In the model it halves the error of every hit; with pin friction 0.25 it strikes 44% on Bowlscore | Practice only |
 | Sweeper banner fix | The blue banner on the pin sweeper no longer goes black at the back of the lane or gets its ends cut off | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
@@ -128,7 +128,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
-- **1.7.5:** Ramps & obstacles mode (with Brunswick pin barstools the ball bounces off), a game mode button that restarts at frame 1, a loft slider, Arsenal order, hide ball stats; the pin physics study corrected (the game's materials multiply), so the recommended pin friction is now 0.40 (0.25 with the double rate); real-life oil is automatic (custom patterns only).
+- **1.7.5:** Ramps & obstacles mode (ramps, Brunswick pin barstools and gates, each can be switched off), a game mode button that restarts at frame 1, a loft slider, Arsenal order, hide ball stats; the pin physics study corrected (the game's materials multiply), so the recommended pin friction is now 0.40 (0.25 with the double rate); real-life oil is automatic (custom patterns only).
 - **1.7.4:** Real-life oil can be turned off, so Practice can use the same oil as online play; a `Port/` folder for the game's team.
 - **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.
 - **1.7.1:** double physics rate (experimental); pattern and pin library rows line up; the Android APK is signed with BowlingPlus's own key from now on.

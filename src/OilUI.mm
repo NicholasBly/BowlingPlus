@@ -1243,7 +1243,7 @@ static NSString *ModeHelp(int m) {
         case 2: return @"9 or more on a full rack counts as a strike.";
         case 3: {
             NSString *best = gBF.rampsBest > 0 ? [NSString stringWithFormat:@" Best game: %d.", gBF.rampsBest] : @"";
-            return [NSString stringWithFormat:@"Every frame gets a random lane: ramps you have to roll over, or barstools to miss. Miss the ramp or hit a stool and the shot scores 0. In the 10th frame a ramp may slide across the lane.%@", best];
+            return [NSString stringWithFormat:@"Every frame gets a random lane: ramps to roll over, barstools to miss or gates to get through. Miss the ramp, or hit a stool or a gate, and the shot scores 0. In the 10th frame a ramp may slide across the lane. Pick which ones you get in the menu (Game modes).%@", best];
         }
     }
     return @"The game as it comes, with your other BowlingPlus settings.";

@@ -583,7 +583,19 @@ public final class Menu {
     static View rampsStack(Context c) {
         rampsLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
         LinearLayout col = UiKit.row(c, false);
-        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
+        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts), Brunswick pin barstools to miss (14) or gates to get through (14: one or two barriers across the lane). Miss the ramp, or hit a barstool or a gate (the ball bounces off into the gutter), and the shot scores 0. Pick which ones you get below. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
+        final Switch[] kinds = new Switch[3];
+        final String[] keys = { "roRamps", "roStools", "roGates" }, names = { "Ramps", "Barstools", "Gates" };
+        for (int i = 0; i < 3; i++) {
+            final Switch sw = UiKit.sw(c, Config.b(keys[i], true));
+            final String key = keys[i];
+            kinds[i] = sw;
+            sw.setOnCheckedChangeListener((bv, on) -> {        // at least one stays on
+                if (!on && !kinds[0].isChecked() && !kinds[1].isChecked() && !kinds[2].isChecked()) { sw.setChecked(true); return; }
+                Config.set(key, on);
+            });
+            col.addView(rowView(c, names[i], null, sw), mt(c, 6));
+        }
         col.addView(rampsLabel, mt(c, 6));
         return col;
     }

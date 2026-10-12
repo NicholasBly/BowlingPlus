@@ -55,6 +55,7 @@ typedef struct {
     bool     arsDesc;      // ...high to low (Z to A for names)
     bool     rampsMode;    // game mode: ramps & obstacles (Practice)
     int      rampsBest;    // ...the best game played in it
+    bool     roRamps, roStools, roGates;   // ...which obstacles it uses (all on by default, set in BFLoadConfig)
 } BFConfig;
 
 // Live game status for the menu

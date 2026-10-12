@@ -58,7 +58,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
 @property (nonatomic, strong) UISlider *speedSlider, *spinSlider;
 @property (nonatomic, strong) UILabel *spinLabel;
-@property (nonatomic, strong) UISwitch *hideStatsSwitch, *loftHudSwitch, *rampsSwitch;
+@property (nonatomic, strong) UISwitch *hideStatsSwitch, *loftHudSwitch, *rampsSwitch, *roRampsSwitch, *roStoolsSwitch, *roGatesSwitch;
 @property (nonatomic, strong) UISlider *loftSlider;
 @property (nonatomic, strong) UILabel *loftLabel, *rampsLabel;
 @property (nonatomic, strong) UIButton *arsSortButton;
@@ -569,8 +569,14 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.noTapSwitch = [self switchOn:gBF.noTap9 action:@selector(noTapChanged:)];
     self.rampsSwitch = [self switchOn:gBF.rampsMode action:@selector(rampsChanged:)];
     self.rampsLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
+    self.roRampsSwitch = [self switchOn:gBF.roRamps action:@selector(roKindChanged:)];
+    self.roStoolsSwitch = [self switchOn:gBF.roStools action:@selector(roKindChanged:)];
+    self.roGatesSwitch = [self switchOn:gBF.roGates action:@selector(roKindChanged:)];
     UIStackView *rampsStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
+        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts), Brunswick pin barstools to miss (14) or gates to get through (14: one or two barriers across the lane). Miss the ramp, or hit a barstool or a gate (the ball bounces off into the gutter), and the shot scores 0. Pick which ones you get below. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
+        [self row:@"Ramps" help:nil control:self.roRampsSwitch],
+        [self row:@"Barstools" help:nil control:self.roStoolsSwitch],
+        [self row:@"Gates" help:nil control:self.roGatesSwitch],
         self.rampsLabel]];
     rampsStack.axis = UILayoutConstraintAxisVertical;
     rampsStack.spacing = 6;
@@ -808,6 +814,11 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
 - (void)hideStatsChanged:(UISwitch *)s { gBF.hideBallStats = s.on; BFSaveConfig(); }
 - (void)loftHudChanged:(UISwitch *)s { gBF.loftHud = s.on; BFSaveConfig(); }
 - (void)rampsChanged:(UISwitch *)s { gBF.rampsMode = s.on; BFSaveConfig(); [self syncControls]; }
+- (void)roKindChanged:(UISwitch *)s {             // ramps / barstools / gates: at least one stays on
+    if (!self.roRampsSwitch.on && !self.roStoolsSwitch.on && !self.roGatesSwitch.on) { [s setOn:YES animated:YES]; return; }
+    gBF.roRamps = self.roRampsSwitch.on; gBF.roStools = self.roStoolsSwitch.on; gBF.roGates = self.roGatesSwitch.on;
+    BFSaveConfig();
+}
 - (void)loftChanged:(UISlider *)s {            // 0 ... BF_MAX_LOFT ft in half-foot steps
     gBF.loftFt = roundf(s.value * 2) / 2;
     [self updateLoftLabel];
@@ -976,6 +987,7 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
     self.oilInvisSwitch.on = gBF.oilInvisible;
     self.noTapSwitch.on = gBF.noTap9;
     self.rampsSwitch.on = gBF.rampsMode;
+    self.roRampsSwitch.on = gBF.roRamps; self.roStoolsSwitch.on = gBF.roStools; self.roGatesSwitch.on = gBF.roGates;
     int lastRamps = BFRampsLastScore();
     self.rampsLabel.text = gBF.rampsBest > 0 ? [NSString stringWithFormat:@"Best game: %d%@", gBF.rampsBest, lastRamps >= 0 ? [NSString stringWithFormat:@" \u00B7 last: %d", lastRamps] : @""] : @"";
     self.rampsLabel.hidden = self.rampsLabel.text.length == 0;

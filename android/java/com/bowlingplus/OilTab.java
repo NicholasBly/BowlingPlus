@@ -116,7 +116,7 @@ final class OilTab {
             case 2: return "9 or more on a full rack counts as a strike.";
             case 3: {
                 int best = Config.i("rampsBest", 0);
-                return "Roll over the ramp or miss the barstools, or the shot scores 0." + (best > 0 ? " Best game: " + best + "." : "");
+                return "Roll over the ramp, miss the barstools, get through the gates, or the shot scores 0. Pick which ones you get in the menu (Game modes)." + (best > 0 ? " Best game: " + best + "." : "");
             }
         }
         return "The game as it comes.";
