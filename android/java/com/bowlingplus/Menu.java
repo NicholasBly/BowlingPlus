@@ -174,7 +174,9 @@ public final class Menu {
                 () -> { Config.set("loftFt", 0.0); loftSlider.setProgress(0); updateLoftLabel(); });
         loftSlider.setProgress((int) Math.round(Config.d("loftFt", 0) * 2));
         updateLoftLabel();
-        View loftHudCell = cell(c, rowView(c, "Loft slider on screen", "Shows the LOFT slider while you hold the ball in Practice.", toggle(c, "loftHud", null)));
+        View loftHudCell = cell(c, rowView(c, "Loft slider on screen", "Shows the LOFT slider on the right while you hold the ball in Practice, with the STATS button (shows or hides the ball's stats, as Hide ball stats does) and the BACKUP button (Backup ball) under it.", toggle(c, "loftHud", null)));
+        View loftSwipeCell = cell(c, rowView(c, "Swipe in from the right", "Keeps the LOFT panel tucked away at the right edge (a small grip shows where): swipe in from the right edge, or tap the grip, to bring it out, and swipe it back to the right to put it away. It also goes away when you throw.", toggle(c, "loftSwipe", null)));
+        View backupCell = cell(c, rowView(c, "Backup ball", "Spins the ball the other way while you still throw with the same hand: a right-hander's ball hooks to the right, like a backup ball. The spin is mirrored the moment the ball leaves your hand; speed, line and RPM stay as thrown. Also the BACKUP button under the LOFT slider. Practice only.", toggle(c, "backupBall", null)));
         spareSwitch = toggle(c, "spare", null);
         autoSwitch = toggle(c, "auto", () -> tickRefresh());
         autoLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
@@ -184,7 +186,7 @@ public final class Menu {
         LinearLayout autoStack = UiKit.row(c, false);
         autoStack.addView(rowView(c, "Auto-rack", "Sets up the same pins every frame without asking. Tip: pick your pins once and tap Auto in the pin picker.", autoSwitch));
         autoStack.addView(autoLabel, mt(c, 6));
-        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, loftCell, loftHudCell, spareCell, cell(c, autoStack) }));
+        stack.addView(group(c, "\uD83C\uDFAF", "Practice fun", "fun", true, new View[]{ speedCell, spinCell, loftCell, loftHudCell, loftSwipeCell, backupCell, spareCell, cell(c, autoStack) }));
 
         // ---- Oil
         oilColorButton = UiKit.button(c, "", false, true);

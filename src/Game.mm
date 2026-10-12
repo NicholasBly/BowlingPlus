@@ -4739,7 +4739,7 @@ static bool GmRestartGame() {
 // default, 0.18 against the ball, and a spinning ball turned hard as it climbed).
 #include "RampLayouts.h"
 
-static const int kRoMaxParts = 180;                // up to 4 barstools of 40 pieces
+static const int kRoMaxParts = 180;                // up to 2 barstools of 40 pieces (room for more)
 static Ref sRoPart[kRoMaxParts];
 static int sRoParts = 0;
 static int sRoKind = 0, sRoLayout = -1, sRoLastLayout = -1, sRoLastStool = -1, sRoLastGate = -1;   // kind 1 ramps, 2 stools, 3 gates
@@ -5765,10 +5765,41 @@ static void GameModeTick() {
     RampsScoreTick();
 }
 
+// ---- backup ball (Practice): the spin mirrored, so the ball hooks the other way from the same hand ----
+// Once per throw, as soon as the released ball spins (within a third of a second), its angular velocity is mirrored
+// across the lane's centre line: w -> (w.x, -w.y, -w.z). The forward roll (about x, across the lane) stays; the side
+// roll (about y, down the lane) and the spin (about z, up) change direction, so the friction that makes it hook pushes
+// the other way. Speed, launch angle and RPM stay as thrown.
+static bool sBkDone = false;
+static int sBkFrames = 0, sBkThrows = 0;
+static BFVec3 sBkLast = { 0, 0, 0 };
+
+static void BackupTick() {
+    if (!gBF.backupBall || !BpPractice() || sLoc != LOC_THROWING) { sBkDone = false; sBkFrames = 0; return; }
+    if (sBkDone || !N.RB_getAngVel || !N.RB_setAngVel || !N.RB_getVel) return;
+    void *rb = BallBody();
+    if (!rb || InvokeBool(N.RB_isKinematic, rb, nullptr, true)) return;
+    BFVec3 v;
+    if (!BpBallVel(rb, v) || v.x * v.x + v.y * v.y < 1.0f) return;   // not released yet
+    bool ok = false;
+    Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+    if (!ok || !bw) return;
+    BFVec3 w = *(BFVec3 *)Unbox(bw);
+    if (fabsf(w.y) + fabsf(w.z) < 0.5f && ++sBkFrames < 20) return;   // the spin may land a frame or two after the throw
+    sBkDone = true;
+    BFVec3 nw = { w.x, -w.y, -w.z };
+    void *a[] = { &nw };
+    Invoke(N.RB_setAngVel, rb, a);
+    sBkLast = w;
+    sBkThrows++;
+    Bp175Log("backup ball: spin (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f)", w.x, w.y, w.z, nw.x, nw.y, nw.z);
+}
+
 static void Bp175Tick() {                         // after SpeedTick and SpinTick
     LaneRefTick();
     BallStatsTick();
     LoftTick();
+    BackupTick();
     RampsTick();
     DampTick();
     GameModeTick();
@@ -5776,11 +5807,12 @@ static void Bp175Tick() {                         // after SpeedTick and SpinTic
 
 static void Bp175Debug(char *buf, size_t size) {
     snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
-                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d | gates hit %d | kinds r%d s%d g%d",
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d | gates hit %d | kinds r%d s%d g%d | backup ball %d throws %d last spin (%.1f, %.1f, %.1f) | loft swipe %d",
              sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
              BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
              sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0,
-             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown, sRoGateHits, gBF.roRamps ? 1 : 0, gBF.roStools ? 1 : 0, gBF.roGates ? 1 : 0);
+             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown, sRoGateHits, gBF.roRamps ? 1 : 0, gBF.roStools ? 1 : 0, gBF.roGates ? 1 : 0,
+             gBF.backupBall ? 1 : 0, sBkThrows, sBkLast.x, sBkLast.y, sBkLast.z, gBF.loftSwipe ? 1 : 0);
 }
 
 static void OilTick() {

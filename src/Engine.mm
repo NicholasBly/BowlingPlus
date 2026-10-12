@@ -77,6 +77,8 @@ void BFLoadConfig(void) {
     if (d[@"roRamps"])  gBF.roRamps = [d[@"roRamps"] boolValue];
     if (d[@"roStools"]) gBF.roStools = [d[@"roStools"] boolValue];
     if (d[@"roGates"])  gBF.roGates = [d[@"roGates"] boolValue];
+    if (d[@"backupBall"]) gBF.backupBall = [d[@"backupBall"] boolValue];
+    if (d[@"loftSwipe"]) gBF.loftSwipe = [d[@"loftSwipe"] boolValue];
     if (d[@"privacyOK"]) gBF.privacyOK = [d[@"privacyOK"] boolValue];
     else if ([d[@"privacy"] boolValue]) gBF.privacyOK = true;     // auto-accept was on: you had accepted before
     if (isnan(gBF.speedMult) || gBF.speedMult < 1.f) gBF.speedMult = 1.f;
@@ -97,7 +99,7 @@ void BFSaveConfig(void) {
                          @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
                          @"unstick": @(gBF.unstick), @"ipv4": @(gBF.gameIPv4),
                          @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle), @"pinPhys": @(gBF.pinPhys), @"pinFric": @(gBF.pinFric), @"pinRate2x": @(gBF.pinRate2x), @"oilShowOrig": @(gBF.oilShowOrig), @"noTap9": @(gBF.noTap9),
-                         @"hideBallStats": @(gBF.hideBallStats), @"loftHud": @(gBF.loftHud), @"loftFt": @(gBF.loftFt), @"arsSort": @(gBF.arsSort), @"arsDesc": @(gBF.arsDesc), @"rampsMode": @(gBF.rampsMode), @"rampsBest": @(gBF.rampsBest), @"roRamps": @(gBF.roRamps), @"roStools": @(gBF.roStools), @"roGates": @(gBF.roGates), @"pinFricV2": @1 };
+                         @"hideBallStats": @(gBF.hideBallStats), @"loftHud": @(gBF.loftHud), @"loftFt": @(gBF.loftFt), @"arsSort": @(gBF.arsSort), @"arsDesc": @(gBF.arsDesc), @"rampsMode": @(gBF.rampsMode), @"rampsBest": @(gBF.rampsBest), @"roRamps": @(gBF.roRamps), @"roStools": @(gBF.roStools), @"roGates": @(gBF.roGates), @"backupBall": @(gBF.backupBall), @"loftSwipe": @(gBF.loftSwipe), @"pinFricV2": @1 };
     [[NSUserDefaults standardUserDefaults] setObject:d forKey:kCfgKey];
 }
 

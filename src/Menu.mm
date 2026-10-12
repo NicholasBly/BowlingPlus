@@ -58,6 +58,7 @@ static UIWindow *HostWindow(void) {
 @property (nonatomic, strong) UIButton *autoButton, *skipButton, *debugButton, *logButton, *netButton;
 @property (nonatomic, strong) UISlider *speedSlider, *spinSlider;
 @property (nonatomic, strong) UILabel *spinLabel;
+@property (nonatomic, strong) UISwitch *loftSwipeSwitch, *backupSwitch;
 @property (nonatomic, strong) UISwitch *hideStatsSwitch, *loftHudSwitch, *rampsSwitch, *roRampsSwitch, *roStoolsSwitch, *roGatesSwitch;
 @property (nonatomic, strong) UISlider *loftSlider;
 @property (nonatomic, strong) UILabel *loftLabel, *rampsLabel;
@@ -529,7 +530,11 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     UIView *loftCell = [self sliderCell:@"Loft" value:self.loftLabel reset:@selector(loftReset) slider:loft
                                    help:@"Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the right of the screen sets it too (double-tap it for Off). Kept until you change it."];
     self.loftHudSwitch = [self switchOn:gBF.loftHud action:@selector(loftHudChanged:)];
-    UIView *loftHudCell = [self cell:[self row:@"Loft slider on screen" help:@"Shows the LOFT slider while you hold the ball in Practice." control:self.loftHudSwitch]];
+    UIView *loftHudCell = [self cell:[self row:@"Loft slider on screen" help:@"Shows the LOFT slider on the right while you hold the ball in Practice, with the STATS button (shows or hides the ball's stats, as Hide ball stats does) and the BACKUP button (Backup ball) under it." control:self.loftHudSwitch]];
+    self.loftSwipeSwitch = [self switchOn:gBF.loftSwipe action:@selector(loftSwipeChanged:)];
+    UIView *loftSwipeCell = [self cell:[self row:@"Swipe in from the right" help:@"Keeps the LOFT panel tucked away at the right edge (a small grip shows where): swipe in from the right edge, or tap the grip, to bring it out, and swipe it back to the right to put it away. It also goes away when you throw." control:self.loftSwipeSwitch]];
+    self.backupSwitch = [self switchOn:gBF.backupBall action:@selector(backupChanged:)];
+    UIView *backupCell = [self cell:[self row:@"Backup ball" help:@"Spins the ball the other way while you still throw with the same hand: a right-hander's ball hooks to the right, like a backup ball. The spin is mirrored the moment the ball leaves your hand; speed, line and RPM stay as thrown. Also the BACKUP button under the LOFT slider. Practice only." control:self.backupSwitch]];
     self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];
     self.autoSwitch = [self switchOn:gBF.spareAuto action:@selector(autoChanged:)];
     self.autoLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
@@ -539,7 +544,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     autoStack.axis = UILayoutConstraintAxisVertical;
     autoStack.spacing = 6;
     [stack addArrangedSubview:[self group:@"Practice fun" icon:@"\U0001F3AF" key:@"fun" open:YES
-                                    cells:@[speedCell, spinCell, loftCell, loftHudCell, spareCell, [self cell:autoStack]]]];
+                                    cells:@[speedCell, spinCell, loftCell, loftHudCell, loftSwipeCell, backupCell, spareCell, [self cell:autoStack]]]];
 
     // ---- Oil
     self.oilColorButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -813,6 +818,8 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
 }
 - (void)hideStatsChanged:(UISwitch *)s { gBF.hideBallStats = s.on; BFSaveConfig(); }
 - (void)loftHudChanged:(UISwitch *)s { gBF.loftHud = s.on; BFSaveConfig(); }
+- (void)loftSwipeChanged:(UISwitch *)s { gBF.loftSwipe = s.on; BFSaveConfig(); }
+- (void)backupChanged:(UISwitch *)s { gBF.backupBall = s.on; BFSaveConfig(); }
 - (void)rampsChanged:(UISwitch *)s { gBF.rampsMode = s.on; BFSaveConfig(); [self syncControls]; }
 - (void)roKindChanged:(UISwitch *)s {             // ramps / barstools / gates: at least one stays on
     if (!self.roRampsSwitch.on && !self.roStoolsSwitch.on && !self.roGatesSwitch.on) { [s setOn:YES animated:YES]; return; }
@@ -993,6 +1000,8 @@ static NSString *const kArsKeys[7] = { @"The game's order", @"Name", @"Power", @
     self.rampsLabel.hidden = self.rampsLabel.text.length == 0;
     self.hideStatsSwitch.on = gBF.hideBallStats;
     self.loftHudSwitch.on = gBF.loftHud;
+    self.loftSwipeSwitch.on = gBF.loftSwipe;
+    self.backupSwitch.on = gBF.backupBall;
     if (!self.loftSlider.isTracking) self.loftSlider.value = fminf(fmaxf(gBF.loftFt, 0), BF_MAX_LOFT);
     [self updateLoftLabel];
     [self syncArsSortButton];

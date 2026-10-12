@@ -20,7 +20,8 @@ import org.json.JSONObject;
 
 // The tabs on the practice pattern screen (BFOilTab in OilUI.mm): "Custom oil" at the top of the screen and, under
 // it, the game mode button (1.7.5), shown only while the game's practice oil-pattern picker (the "PracticeOil"
-// window) is open. Also the LOFT slider on the left edge while you hold the ball in Practice (BFLoftHud).
+// window) is open. Also the LOFT slider on the right edge while you hold the ball in Practice (BFLoftHud), with the
+// STATS and BACKUP buttons, tucked away at the edge until swiped in when "Swipe in from the right" is on.
 //
 // Asking the game what's on screen has to happen on Unity's thread, and N.call blocks until Unity answers, so a
 // background thread does the asking and only the views themselves are touched on the UI thread.
@@ -29,7 +30,9 @@ final class OilTab {
     private static LinearLayout loftBox;
     private static LoftSlider loftSlider;
     private static TextView loftValue;
-    private static Button statsBtn;
+    private static Button statsBtn, backupBtn;
+    private static Grip grip;                // "Swipe in from the right": the strip at the edge while the panel is tucked away
+    private static boolean loftOut;          // ...swiped in (until swiped away, or the ball is thrown)
     private static boolean lobby, holding;  // the last answers from the game
     private static boolean modeDialog;
     private static Thread poller;
@@ -153,10 +156,11 @@ final class OilTab {
     }
 
     private static void updateLoft(Activity a, FrameLayout root, boolean show) {
-        if (!show || !Config.b("loftHud", true)) { removeLoft(); return; }
-        if (loftBox != null && loftBox.getContext() != a) { removeLoft(); loftBox = null; }
+        if (!show || !Config.b("loftHud", true)) { removeLoft(); loftOut = false; return; }
+        if (loftBox != null && loftBox.getContext() != a) { removeLoft(); loftBox = null; grip = null; }
         if (loftBox == null) {
-            loftBox = UiKit.row(a, false);
+            loftBox = new SwipeBox(a);
+            loftBox.setOrientation(LinearLayout.VERTICAL);
             loftBox.setGravity(Gravity.CENTER_HORIZONTAL);
             loftBox.setBackground(UiKit.roundStroke(Color.argb(210, 20, 23, 28), 18, UiKit.dim(0.10f), 1, a));
             loftBox.setPadding(UiKit.dp(a, 2), UiKit.dp(a, 8), UiKit.dp(a, 2), UiKit.dp(a, 4));
@@ -180,6 +184,16 @@ final class OilTab {
             LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UiKit.dp(a, 30));
             sp.leftMargin = sp.rightMargin = UiKit.dp(a, 4);
             loftBox.addView(statsBtn, sp);
+            backupBtn = UiKit.button(a, "", false, true);              // backup ball: the spin mirrored at release
+            backupBtn.setTextSize(9);
+            backupBtn.setPadding(0, 0, 0, 0);
+            backupBtn.setMinHeight(0); backupBtn.setMinimumHeight(0); backupBtn.setMinWidth(0); backupBtn.setMinimumWidth(0);
+            backupBtn.setOnClickListener(v -> { Config.set("backupBall", !Config.b("backupBall", false)); syncStats(); });
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UiKit.dp(a, 30));
+            bp.leftMargin = bp.rightMargin = UiKit.dp(a, 4);
+            bp.topMargin = UiKit.dp(a, 3);
+            loftBox.addView(backupBtn, bp);
+            grip = new Grip(a);
         }
         syncStats();
         double ft = Math.max(0, Math.min(BF.MAX_LOFT, Config.d("loftFt", 0)));
@@ -196,7 +210,80 @@ final class OilTab {
         // hidden while a finger is down on the game (a throw's swipe) and for a moment after: after a throw the game has
         // left "holding the ball" by then and the panel stays away; after a tap it comes back
         boolean away = fingerDown || android.os.SystemClock.uptimeMillis() - fingerUpAt < 400;
-        loftBox.setVisibility(away ? View.INVISIBLE : View.VISIBLE);
+        boolean tucked = Config.b("loftSwipe", false) && !loftOut;
+        loftBox.setVisibility(away || tucked ? View.INVISIBLE : View.VISIBLE);
+        if (tucked && grip.getParent() != root) {
+            if (grip.getParent() instanceof ViewGroup) ((ViewGroup) grip.getParent()).removeView(grip);
+            FrameLayout.LayoutParams gl = new FrameLayout.LayoutParams(UiKit.dp(a, 24), UiKit.dp(a, 230));
+            gl.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+            gl.bottomMargin = UiKit.dp(a, 60);
+            root.addView(grip, gl);
+        } else if (!tucked && grip.getParent() instanceof ViewGroup) ((ViewGroup) grip.getParent()).removeView(grip);
+        if (grip.getParent() != null) { grip.setVisibility(away ? View.INVISIBLE : View.VISIBLE); grip.bringToFront(); }
+        loftBox.bringToFront();
+    }
+
+    private static void reveal() {
+        if (loftOut || loftBox == null) return;
+        loftOut = true;
+        fingerDown = false; fingerUpAt = 0;
+        update();
+        loftBox.setTranslationX(UiKit.dp(loftBox.getContext(), 80));
+        loftBox.animate().translationX(0).setDuration(180).start();
+    }
+
+    private static void tuck() {
+        if (!Config.b("loftSwipe", false) || loftBox == null) return;
+        loftBox.animate().translationX(UiKit.dp(loftBox.getContext(), 80)).setDuration(160).withEndAction(() -> {
+            loftOut = false;
+            loftBox.setTranslationX(0);
+            update();
+        }).start();
+    }
+
+    // the panel: a swipe to the right over it puts it away ("Swipe in from the right"); taps and the slider's drags
+    // still reach its controls
+    static final class SwipeBox extends LinearLayout {
+        private float sx, sy;
+        SwipeBox(Context c) { super(c); }
+        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { sx = e.getX(); sy = e.getY(); return false; }
+            if (e.getActionMasked() == MotionEvent.ACTION_MOVE && Config.b("loftSwipe", false)) {
+                float dx = e.getX() - sx, dy = e.getY() - sy;
+                if (dx > UiKit.dp(getContext(), 30) && dx > 2 * Math.abs(dy)) { tuck(); return true; }
+            }
+            return false;
+        }
+        @Override public boolean onTouchEvent(MotionEvent e) {   // on the panel itself (not a control): swallowed, or a swipe away
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { sx = e.getX(); sy = e.getY(); }
+            else if (e.getActionMasked() == MotionEvent.ACTION_MOVE && Config.b("loftSwipe", false)) {
+                float dx = e.getX() - sx, dy = e.getY() - sy;
+                if (dx > UiKit.dp(getContext(), 30) && dx > 2 * Math.abs(dy)) tuck();
+            }
+            return true;
+        }
+    }
+
+    // the grip at the right edge: swipe in from it, or tap it
+    static final class Grip extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+        private float sx;
+        Grip(Context c) { super(c); }
+        @Override protected void onDraw(Canvas cv) {
+            float w = UiKit.dp(getContext(), 5), h = UiKit.dp(getContext(), 46), x = getWidth() - UiKit.dp(getContext(), 4);
+            paint.setColor(Color.argb(115, 255, 255, 255));
+            r.set(x - w, (getHeight() - h) / 2f, x, (getHeight() + h) / 2f);
+            cv.drawRoundRect(r, w / 2, w / 2, paint);
+        }
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: sx = e.getX(); return true;
+                case MotionEvent.ACTION_MOVE: if (sx - e.getX() > UiKit.dp(getContext(), 20)) reveal(); return true;
+                case MotionEvent.ACTION_UP: if (Math.abs(sx - e.getX()) < UiKit.dp(getContext(), 10)) reveal(); return true;
+            }
+            return true;
+        }
     }
 
     // From BP.TapSpy, which sees every touch before the game does (UI thread). The game hides its own buttons the moment
@@ -205,12 +292,20 @@ final class OilTab {
     private static long fingerUpAt;
 
     static void touchDown(float x, float y) {
-        if (loftBox == null || loftBox.getParent() == null || loftBox.getVisibility() != View.VISIBLE) return;
-        int[] at = new int[2];
-        loftBox.getLocationInWindow(at);
-        if (x >= at[0] && x < at[0] + loftBox.getWidth() && y >= at[1] && y < at[1] + loftBox.getHeight()) return;   // on the panel
+        boolean boxUp = loftBox != null && loftBox.getParent() != null && loftBox.getVisibility() == View.VISIBLE;
+        boolean gripUp = grip != null && grip.getParent() != null && grip.getVisibility() == View.VISIBLE;
+        if (!boxUp && !gripUp) return;
+        if (boxUp && inside(loftBox, x, y)) return;   // on the panel
+        if (gripUp && inside(grip, x, y)) return;     // on the grip
         fingerDown = true;
-        loftBox.setVisibility(View.INVISIBLE);
+        if (loftBox != null) loftBox.setVisibility(View.INVISIBLE);
+        if (grip != null) grip.setVisibility(View.INVISIBLE);
+    }
+
+    private static boolean inside(View v, float x, float y) {
+        int[] at = new int[2];
+        v.getLocationInWindow(at);
+        return x >= at[0] && x < at[0] + v.getWidth() && y >= at[1] && y < at[1] + v.getHeight();
     }
 
     static void touchUp() {
@@ -225,9 +320,15 @@ final class OilTab {
         statsBtn.setText(off ? "STATS\nOFF" : "STATS\nON");
         statsBtn.setTextColor(off ? UiKit.dim(0.6f) : Color.rgb(20, 20, 20));
         statsBtn.setBackground(UiKit.round(off ? UiKit.dim(0.10f) : UiKit.YELLOW, 9, statsBtn.getContext()));
+        if (backupBtn == null) return;
+        boolean bk = Config.b("backupBall", false);
+        backupBtn.setText(bk ? "BACKUP\nON" : "BACKUP\nOFF");
+        backupBtn.setTextColor(bk ? Color.rgb(20, 20, 20) : UiKit.dim(0.6f));
+        backupBtn.setBackground(UiKit.round(bk ? UiKit.YELLOW : UiKit.dim(0.10f), 9, backupBtn.getContext()));
     }
 
     private static void removeLoft() {
+        if (grip != null && grip.getParent() instanceof ViewGroup) ((ViewGroup) grip.getParent()).removeView(grip);
         if (loftBox != null && loftBox.getParent() instanceof ViewGroup) ((ViewGroup) loftBox.getParent()).removeView(loftBox);
     }
 

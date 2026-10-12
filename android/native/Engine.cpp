@@ -62,7 +62,7 @@ Json BFConfigJson(void) {
     d.set("laneOther", Json::Bool_(gBF.laneOther));
     d.set("hideBallStats", Json::Bool_(gBF.hideBallStats)); d.set("loftHud", Json::Bool_(gBF.loftHud)); d.set("loftFt", gBF.loftFt);
     d.set("arsSort", gBF.arsSort); d.set("arsDesc", Json::Bool_(gBF.arsDesc)); d.set("rampsMode", Json::Bool_(gBF.rampsMode)); d.set("rampsBest", gBF.rampsBest);
-    d.set("roRamps", Json::Bool_(gBF.roRamps)); d.set("roStools", Json::Bool_(gBF.roStools)); d.set("roGates", Json::Bool_(gBF.roGates));
+    d.set("roRamps", Json::Bool_(gBF.roRamps)); d.set("roStools", Json::Bool_(gBF.roStools)); d.set("roGates", Json::Bool_(gBF.roGates)); d.set("backupBall", Json::Bool_(gBF.backupBall)); d.set("loftSwipe", Json::Bool_(gBF.loftSwipe));
     d.set("pinFricV2", 1);
     return d;
 }
@@ -122,6 +122,8 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "roRamps") gBF.roRamps = on;
     else if (k == "roStools") gBF.roStools = on;
     else if (k == "roGates") gBF.roGates = on;
+    else if (k == "backupBall") gBF.backupBall = on;
+    else if (k == "loftSwipe") gBF.loftSwipe = on;
     else if (k == "pinFricV2") {}                  // marker: pinFric 0 means recommended (1.7.5)
     else return false;
     Clamp();

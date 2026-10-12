@@ -57,16 +57,16 @@ STOOL_LAYOUTS = [
     ("Stool on the right", [(-0.24, 8.0)]),
     ("Stool on the left", [(0.24, 8.0)]),
     ("Squeeze",           [(-0.34, 7.0), (0.34, 7.0)]),
-    ("Slalom",            [(-0.21, 5.0), (0.34, 9.0), (0.21, 13.0)]),
+    ("Slalom",            [(-0.21, 5.5), (0.25, 10.5)]),
     ("The gate",          [(-0.33, 10.0), (0.33, 10.0)]),
-    ("Centre pair",       [(0.00, 6.0), (0.00, 11.0)]),
-    ("Right wall",        [(-0.36, 5.0), (-0.36, 8.5), (-0.36, 12.0)]),
-    ("Left wall",         [(0.36, 5.0), (0.36, 8.5), (0.36, 12.0)]),
-    ("Diagonal",          [(-0.34, 4.0), (-0.26, 8.0), (-0.18, 12.0), (-0.10, 16.0)]),
-    ("Triangle",          [(0.32, 6.0), (-0.35, 11.0), (0.35, 11.0)]),
-    ("Back gate",         [(-0.33, 14.5), (0.33, 14.5)]),
-    ("Offset pair",       [(-0.28, 7.0), (0.22, 13.0)]),
-    ("Late stool",        [(0.05, 15.5)]),
+    ("Centre pair",       [(0.00, 5.0), (0.00, 10.0)]),
+    ("Right pair",        [(-0.36, 5.5), (-0.36, 11.0)]),
+    ("Left pair",         [(0.36, 5.5), (0.36, 11.0)]),
+    ("Diagonal",          [(-0.32, 5.0), (-0.12, 10.5)]),
+    ("Cross-over",        [(0.30, 6.0), (-0.30, 12.0)]),
+    ("Back gate",         [(-0.34, 13.0), (0.34, 13.0)]),
+    ("Offset pair",       [(-0.28, 7.0), (0.22, 12.5)]),
+    ("Late stool",        [(0.06, 13.0)]),
 ]
 
 LANE_HALF = 0.527      # the lane surface's half width (RoadPhysMaterial box)
@@ -76,6 +76,11 @@ MIN_GAP = 0.27         # a ball (0.216 m) plus room
 
 
 LINE_MARGIN = 0.05     # a straight roll must miss every stool by this much (beyond touching)
+MAX_STOOLS = 2         # more made the head pin unreachable (1.7.5's fifth build: four stools in a diagonal)
+STOOL_MAX_Y = 13.5     # no barstool closer to the head pin (18.26 m) than 4.76 m
+GATE_MAX_Y = 14.0      # ...and no gate closer than 4.26 m
+HEAD_Y = 18.263
+HEAD_REACH = 0.10      # a straight roll must be able to end within 10 cm of the head pin's middle (the pocket or the nose)
 PLAY_HALF = 0.36       # ...with the ball's centre within 0.36 m of the lane's centre (about boards 5 to 35), not along the gutter
 
 
@@ -93,12 +98,43 @@ def stool_line_clearance(st):
     return best, arg
 
 
+def head_paths():
+    # Roughly how a ball gets to the head pin: straight from the foul line (centre within PLAY_HALF) to a breakpoint
+    # (6 to 15 m), then straight on to within HEAD_REACH of the head pin's middle. Each leg at most 6 degrees off the
+    # lane's line, and the turn at the breakpoint at most 6 degrees (a hook, not a corner). Yields x(y) as
+    # (x0, yb, xb, x1).
+    grid = [i * 0.02 - PLAY_HALF for i in range(int(2 * PLAY_HALF / 0.02) + 1)]
+    for x0 in grid:
+        for yb in [6.0 + 0.5 * k for k in range(19)]:
+            for xb in grid:
+                s1 = (xb - x0) / yb
+                if abs(s1) > 0.105: continue
+                for x1 in (-HEAD_REACH, -HEAD_REACH / 2, 0.0, HEAD_REACH / 2, HEAD_REACH):
+                    s2 = (x1 - xb) / (HEAD_Y - yb)
+                    if abs(s2) > 0.105 or abs(s2 - s1) > 0.105: continue
+                    yield x0, yb, xb, x1
+
+
+def path_x(path, y):
+    x0, yb, xb, x1 = path
+    return x0 + (xb - x0) * y / yb if y <= yb else xb + (x1 - xb) * (y - yb) / (HEAD_Y - yb)
+
+
+def stool_head_clearance(st):
+    # the best way to the head pin (head_paths): how far it misses the nearest stool, beyond touching it
+    best, arg = -9.0, None
+    for pth in head_paths():
+        c = min(abs(path_x(pth, sy) - sx) for sx, sy in st) - (STOOL_R + BALL_R)
+        if c > best: best, arg = c, pth
+    return best, arg
+
+
 def check_stools():
     bad = []
     for name, st in STOOL_LAYOUTS:
-        if len(st) > 4: bad.append((name, "more than 4 stools"))
+        if len(st) > MAX_STOOLS: bad.append((name, "more than %d stools" % MAX_STOOLS))
         for (x, y) in st:
-            if not (1.5 <= y <= 16.0): bad.append((name, "stool at y %.1f outside 1.5..16" % y))
+            if not (1.5 <= y <= STOOL_MAX_Y): bad.append((name, "stool at y %.1f outside 1.5..%.1f" % (y, STOOL_MAX_Y)))
             if abs(x) + STOOL_R > LANE_HALF: bad.append((name, "stool off the lane"))
         rows = []
         for s in sorted(st, key=lambda s: s[1]):
@@ -114,6 +150,9 @@ def check_stools():
         c, line = stool_line_clearance(st)
         print("%-18s straight roll misses by %.3f m (x %.2f at the foul line to %.2f at the pins)" % (name, c, line[0], line[1]))
         if c < LINE_MARGIN: bad.append((name, "no straight roll gets past all the stools (best misses by %.3f m)" % c))
+        h, hp = stool_head_clearance(st)
+        print("%-18s ...and the best way to the head pin misses by %.3f m (x %.2f at the foul line, %.2f at %.1f m)" % ("", h, hp[0], hp[2], hp[1]))
+        if h < LINE_MARGIN: bad.append((name, "no way to the head pin gets past the stools (best misses by %.3f m)" % h))
     return bad
 
 
@@ -131,8 +170,8 @@ GATE_LAYOUTS = [
     ("Keyhole left",      7.0,  [(-0.527, -0.06), (0.36, 0.527)]),
     ("Keyhole right",     7.0,  [(-0.527, -0.36), (0.06, 0.527)]),
     ("Wide keyhole",      6.0,  [(-0.527, -0.26), (0.26, 0.527)]),
-    ("Late keyhole",      14.0, [(-0.527, -0.28), (0.16, 0.527)]),
-    ("Pocket door",       15.5, [(-0.527, -0.30), (0.12, 0.527)]),
+    ("Late keyhole",      13.5, [(-0.527, -0.28), (0.16, 0.527)]),
+    ("Pocket door",       14.0, [(-0.527, -0.30), (0.12, 0.527)]),
     ("Two blocks",        8.0,  [(-0.40, -0.20), (0.20, 0.40)]),
     ("Long keyhole",      12.0, [(-0.527, -0.25), (0.17, 0.527)]),
 ]
@@ -143,7 +182,7 @@ def check_gates():
     bad = []
     for name, y, gs in GATE_LAYOUTS:
         if not (1 <= len(gs) <= 2): bad.append((name, "1 or 2 gates"))
-        if not (3.0 <= y <= 16.0): bad.append((name, "gate line at y %.1f outside 3..16" % y))
+        if not (3.0 <= y <= GATE_MAX_Y): bad.append((name, "gate line at y %.1f outside 3..%.1f" % (y, GATE_MAX_Y)))
         for x0, x1 in gs:
             if x0 >= x1 or x0 < -LANE_HALF - 1e-6 or x1 > LANE_HALF + 1e-6: bad.append((name, "gate off the lane"))
             if x1 - x0 < 0.15: bad.append((name, "gate narrower than 0.15 m"))
@@ -159,6 +198,10 @@ def check_gates():
             best = max(best, hi - lo)
         print("%-18s y %.1f, %d gate%s, room for the ball's centre in the widest opening: %.3f m" % (name, y, len(gs), "" if len(gs) == 1 else "s", best))
         if best < 0.05: bad.append((name, "no opening a ball rolls through comfortably"))
+        # some way to the head pin (head_paths) goes through an opening, 3 cm clear of both sides
+        ok = any(any(a + BALL_R + 0.03 <= path_x(pth, y) <= b - BALL_R - 0.03 for a, b in zip(edges[0::2], edges[1::2]))
+                 for pth in head_paths())
+        if not ok: bad.append((name, "no way to the head pin gets through"))
     return bad
 
 

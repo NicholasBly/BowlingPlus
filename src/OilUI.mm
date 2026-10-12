@@ -1461,7 +1461,9 @@ static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) 
 @property (nonatomic, strong) BFTouchWatch *watch;
 @property (nonatomic) BOOL fingerDown;
 @property (nonatomic) CFTimeInterval fingerUpAt;
-@property (nonatomic, strong) UIButton *stats;
+@property (nonatomic, strong) UIButton *stats, *backup;
+@property (nonatomic, strong) UIView *handle;      // "Swipe in from the right": the grip at the edge while it's tucked away
+@property (nonatomic) BOOL out;                    // ...swiped in (until swiped away, or the ball is thrown)
 @property (nonatomic, strong) UILabel *value;
 @property (nonatomic, strong) BFLoftSlider *slider;
 @property (nonatomic, strong) NSTimer *timer;
@@ -1494,20 +1496,68 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     self.stats.titleLabel.font = OFont(10, UIFontWeightHeavy);
     self.stats.layer.cornerRadius = 9;
     [self.stats addTarget:self action:@selector(statsTapped) forControlEvents:UIControlEventTouchUpInside];
+    self.backup = [UIButton buttonWithType:UIButtonTypeSystem];      // backup ball: the spin mirrored at release
+    self.backup.titleLabel.font = OFont(10, UIFontWeightHeavy);
+    self.backup.layer.cornerRadius = 9;
+    [self.backup addTarget:self action:@selector(backupTapped) forControlEvents:UIControlEventTouchUpInside];
     [self syncStats];
-    UIStackView *col = OStack(@[title, self.value, self.slider, self.stats], UILayoutConstraintAxisVertical, 2);
+    UIStackView *col = OStack(@[title, self.value, self.slider, self.stats, self.backup], UILayoutConstraintAxisVertical, 2);
     col.translatesAutoresizingMaskIntoConstraints = NO;
     [box addSubview:col];
     [NSLayoutConstraint activateConstraints:@[
         [box.widthAnchor constraintEqualToConstant:58],
         [self.slider.heightAnchor constraintEqualToConstant:170],
         [self.stats.heightAnchor constraintEqualToConstant:26],
+        [self.backup.heightAnchor constraintEqualToConstant:26],
         [col.topAnchor constraintEqualToAnchor:box.topAnchor constant:8],
         [col.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-4],
         [col.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:2],
         [col.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-2],
     ]];
     self.box = box;
+    UISwipeGestureRecognizer *away = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swipedAway)];
+    away.direction = UISwipeGestureRecognizerDirectionRight;        // "Swipe in from the right": put it away again
+    [box addGestureRecognizer:away];
+    // the grip: a strip at the right edge, as tall as the panel, with a little pill; swipe in from it (or tap it)
+    UIView *handle = [UIView new];
+    handle.translatesAutoresizingMaskIntoConstraints = NO;
+    handle.backgroundColor = [UIColor colorWithWhite:0 alpha:0.011];   // clear, but still takes the touch
+    UIView *pill = [UIView new];
+    pill.translatesAutoresizingMaskIntoConstraints = NO;
+    pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.45];
+    pill.layer.cornerRadius = 2.5;
+    pill.userInteractionEnabled = NO;
+    [handle addSubview:pill];
+    [NSLayoutConstraint activateConstraints:@[
+        [handle.widthAnchor constraintEqualToConstant:24],
+        [handle.heightAnchor constraintEqualToConstant:230],
+        [pill.widthAnchor constraintEqualToConstant:5],
+        [pill.heightAnchor constraintEqualToConstant:46],
+        [pill.centerYAnchor constraintEqualToAnchor:handle.centerYAnchor],
+        [pill.trailingAnchor constraintEqualToAnchor:handle.trailingAnchor constant:-4],
+    ]];
+    [handle addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)]];
+    [handle addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(reveal)]];
+    self.handle = handle;
+}
+- (void)handlePan:(UIPanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateChanged && [g translationInView:g.view].x < -20) [self reveal];
+}
+- (void)reveal {
+    if (self.out) return;
+    self.out = YES;
+    self.fingerDown = NO; self.fingerUpAt = 0;
+    [self tick];
+    self.box.transform = CGAffineTransformMakeTranslation(80, 0);
+    [UIView animateWithDuration:0.18 animations:^{ self.box.transform = CGAffineTransformIdentity; }];
+}
+- (void)swipedAway {
+    if (!gBF.loftSwipe) return;
+    [UIView animateWithDuration:0.16 animations:^{ self.box.transform = CGAffineTransformMakeTranslation(80, 0); } completion:^(BOOL f) {
+        self.out = NO;
+        self.box.transform = CGAffineTransformIdentity;
+        [self tick];
+    }];
 }
 - (void)syncStats {
     [self.stats setTitle:gBF.hideBallStats ? @"STATS\nOFF" : @"STATS\nON" forState:UIControlStateNormal];
@@ -1515,12 +1565,18 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     self.stats.titleLabel.textAlignment = NSTextAlignmentCenter;
     [self.stats setTitleColor:gBF.hideBallStats ? ODim(0.6) : [UIColor colorWithWhite:0.08 alpha:1] forState:UIControlStateNormal];
     self.stats.backgroundColor = gBF.hideBallStats ? ODim(0.10) : OYellow();
+    [self.backup setTitle:gBF.backupBall ? @"BACKUP\nON" : @"BACKUP\nOFF" forState:UIControlStateNormal];
+    self.backup.titleLabel.numberOfLines = 2;
+    self.backup.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [self.backup setTitleColor:gBF.backupBall ? [UIColor colorWithWhite:0.08 alpha:1] : ODim(0.6) forState:UIControlStateNormal];
+    self.backup.backgroundColor = gBF.backupBall ? OYellow() : ODim(0.10);
 }
 - (void)statsTapped { gBF.hideBallStats = !gBF.hideBallStats; BFSaveConfig(); [self syncStats]; }
+- (void)backupTapped { gBF.backupBall = !gBF.backupBall; BFSaveConfig(); [self syncStats]; }
 - (void)tick {
     UIWindow *w = OHostWindow();
     BOOL show = w && BFLoftHudVisible() && !BFMenuVisible() && !BFMenuPickerVisible() && ![BFOilLibrary shared].showing && !sEditor && ![BFModeSheet shared].showing;
-    if (!show) { [self.box removeFromSuperview]; return; }
+    if (!show) { [self.box removeFromSuperview]; [self.handle removeFromSuperview]; self.out = NO; return; }
     if (!self.box) [self build];
     if (self.watch.view != w) {                     // watch the window's touches (see BFTouchWatch)
         [self.watch.view removeGestureRecognizer:self.watch];
@@ -1528,10 +1584,13 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
         __weak BFLoftHud *weak = self;
         self.watch.down = ^(UITouch *t) {
             BFLoftHud *me = weak;
-            if (!me.box.superview || me.box.hidden) return;
-            if ([me.box pointInside:[t locationInView:me.box] withEvent:nil]) return;   // on the panel itself
+            BOOL boxUp = me.box.superview && !me.box.hidden, gripUp = me.handle.superview && !me.handle.hidden;
+            if (!boxUp && !gripUp) return;
+            if (boxUp && [me.box pointInside:[t locationInView:me.box] withEvent:nil]) return;   // on the panel itself
+            if (gripUp && [me.handle pointInside:[t locationInView:me.handle] withEvent:nil]) return;   // on the grip
             me.fingerDown = YES;
             me.box.hidden = YES;                          // at once, like the game's own buttons
+            me.handle.hidden = YES;
         };
         self.watch.up = ^{ BFLoftHud *me = weak; if (me.fingerDown) { me.fingerDown = NO; me.fingerUpAt = CACurrentMediaTime(); } };
         [w addGestureRecognizer:self.watch];
@@ -1546,6 +1605,15 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
         self.slider.value = fmaxf(0, fminf(gBF.loftFt, BF_MAX_LOFT));
         [self.slider setNeedsDisplay];
     }
+    BOOL tucked = gBF.loftSwipe && !self.out;
+    if (tucked && self.handle.superview != w) {
+        [self.handle removeFromSuperview];
+        [w addSubview:self.handle];
+        [NSLayoutConstraint activateConstraints:@[
+            [self.handle.trailingAnchor constraintEqualToAnchor:w.trailingAnchor],
+            [self.handle.centerYAnchor constraintEqualToAnchor:w.centerYAnchor constant:-30],
+        ]];
+    } else if (!tucked && self.handle.superview) [self.handle removeFromSuperview];
     if (!self.slider.touching && fabsf(self.slider.value - gBF.loftFt) > 0.01f) {   // changed in the menu
         self.slider.value = fmaxf(0, fminf(gBF.loftFt, BF_MAX_LOFT));
         [self.slider setNeedsDisplay];
@@ -1554,8 +1622,11 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     [self syncStats];
     // hidden while a finger is down on the game (a throw's swipe) and for a moment after: if it was a throw, the game
     // has left "holding the ball" by then and the panel stays away; if it was a tap, it comes back
-    self.box.hidden = self.fingerDown || CACurrentMediaTime() - self.fingerUpAt < 0.4;
+    BOOL away = self.fingerDown || CACurrentMediaTime() - self.fingerUpAt < 0.4;
+    self.box.hidden = away || tucked;
+    self.handle.hidden = away;
     [w bringSubviewToFront:self.box];
+    if (self.handle.superview) [w bringSubviewToFront:self.handle];
 }
 @end
 
