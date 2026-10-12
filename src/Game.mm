@@ -4739,7 +4739,7 @@ static bool GmRestartGame() {
 // default, 0.18 against the ball, and a spinning ball turned hard as it climbed).
 #include "RampLayouts.h"
 
-static const int kRoMaxParts = 100;                // up to 4 barstools of 22 pieces
+static const int kRoMaxParts = 180;                // up to 4 barstools of 40 pieces
 static Ref sRoPart[kRoMaxParts];
 static int sRoParts = 0;
 static int sRoKind = 0, sRoLayout = -1, sRoLastLayout = -1, sRoLastStool = -1;   // kind 1 ramps, 2 stools
@@ -4923,14 +4923,15 @@ static void RoRampPose(const BPRamp &r, float x, BFVec3 &pos, BPQuat &q, BFVec3 
 }
 
 // ---- the barstool: a Brunswick-style pin stool ----
-// Four chrome legs in an X from a hub, a bowling pin (the game's own pin model, wearing the pin library's Brunswick Max
-// Crown picture) standing on the hub as the post, a chrome foot ring round the pin, and a round seat on the pin's head:
-// blue sides with white crowns, a grey top. The pieces have no colliders: a ball that reaches a stool is bounced off it
+// A flat X of four chrome bars from a low hub, a bowling pin (the game's own pin model, wearing the pin library's
+// Brunswick Max Crown picture) standing on the hub as the post, a round chrome foot ring round the pin's belly on four
+// struts from the pin's foot, and a round seat on the pin's head: blue sides with white crowns, a grey vinyl top with the
+// Brunswick logo and three ball holes. The pieces have no colliders: a ball that reaches a stool is bounced off it
 // by BowlingPlus (RoStoolBounce), so the legs never trip it up and the shot always ends in a gutter.
 static const float kStoolLegR = 0.17f;             // the legs' reach from the post (metres)
-static const float kStoolReach = 0.24f;            // ball centre to post when the ball meets a leg (the legs are low)
+static const float kStoolReach = 0.245f;           // ball centre to the stool's middle when the ball meets a leg or the ring
 static const float kStoolPinH = 0.44f;             // the post: a pin 1.15 x real size
-static const float kStoolPinBase = 0.10f;          // ...standing on the hub
+static const float kStoolPinBase = 0.065f;         // ...standing on the hub
 
 static BPQuat QMul(BPQuat a, BPQuat b) {
     return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
@@ -5033,89 +5034,119 @@ static void *RoStoolPin(float x, float y, float z, int layer) {   // the post: a
 static void RoStool(float x, float y, int layer) {
     const float z = sLaneZ;
     const BPQuat up = { 0.70710678f, 0, 0, 0.70710678f };   // a cylinder's own axis (local y) to world up (z)
-    // legs: four chrome bars in an X (diagonal to the lane), from the hub down to the lane
-    const float hubZ = z + 0.075f, legLen = 0.185f, drop = 0.06f;
+    // the base: four flat chrome bars in an X (diagonal to the lane), from a low hub down to the lane
+    const float hubZ = z + 0.04f, legLen = 0.18f, drop = 0.025f;
     float slope = atanf(drop / kStoolLegR);
     for (int k = 0; k < 4; k++) {
         float phi = 0.7853982f + k * 1.5707963f;
         BPQuat q = QMul(QAxis(0, 0, 1, phi - 1.5707963f), QAxis(1, 0, 0, -slope));   // local y: outwards and down
         float c = cosf(slope) * legLen * 0.5f;
         BFVec3 pos = { x + cosf(phi) * c, y + sinf(phi) * c, hubZ - sinf(slope) * legLen * 0.5f };
-        RoPiece(3, pos, q, BFVec3{ 0.028f, legLen, 0.018f }, RO_CHROME, layer, 0, "BowlingPlus stool leg");
+        RoPiece(3, pos, q, BFVec3{ 0.034f, legLen, 0.013f }, RO_CHROME, layer, 0, "BowlingPlus stool leg");
     }
-    RoPiece(2, BFVec3{ x, y, z + 0.0825f }, up, BFVec3{ 0.065f, 0.0175f, 0.065f }, RO_CHROME, layer, 0, "BowlingPlus stool hub");
+    RoPiece(2, BFVec3{ x, y, z + 0.045f }, up, BFVec3{ 0.07f, 0.02f, 0.07f }, RO_CHROME, layer, 0, "BowlingPlus stool hub");
     // the post
     if (!RoStoolPin(x, y, z + kStoolPinBase, layer))
         RoPiece(2, BFVec3{ x, y, z + kStoolPinBase + kStoolPinH * 0.5f }, up, BFVec3{ 0.07f, kStoolPinH * 0.5f, 0.07f }, RO_CHROME, layer, 0, "BowlingPlus stool post");
-    // foot ring round the pin's belly, on four rods from the legs
-    const float ringR = 0.15f, ringZ = z + 0.23f;
-    const int segs = 10;
+    // the foot ring round the pin's belly: a circle of short chrome tubes
+    const float ringR = 0.15f, ringZ = z + 0.18f;
+    const int segs = 28;
     for (int k = 0; k < segs; k++) {
-        float th = k * 6.2831853f / segs;
+        float th = (k + 0.5f) * 6.2831853f / segs;
         BPQuat q = QAxis(0, 0, 1, th);                // local y along the ring
         BFVec3 pos = { x + ringR * cosf(th), y + ringR * sinf(th), ringZ };
-        RoPiece(2, pos, q, BFVec3{ 0.016f, ringR * 3.1415927f / segs * 1.08f, 0.016f }, RO_CHROME, layer, 0, "BowlingPlus stool ring");
+        RoPiece(2, pos, q, BFVec3{ 0.014f, ringR * 3.1415927f / segs * 1.12f, 0.014f }, RO_CHROME, layer, 0, "BowlingPlus stool ring");
     }
+    // ...held by four struts from the foot of the pin, out and up to the ring (over the legs)
+    const float r0 = 0.035f, z0 = z + kStoolPinBase + 0.025f;
+    float dr = ringR - r0, dz = ringZ - z0, len = sqrtf(dr * dr + dz * dz), lift = atan2f(dz, dr);
     for (int k = 0; k < 4; k++) {
-        float phi = 0.7853982f + k * 1.5707963f;
-        float legZ = hubZ - drop * (ringR / kStoolLegR);
-        float h = ringZ - legZ;
-        RoPiece(2, BFVec3{ x + ringR * cosf(phi), y + ringR * sinf(phi), legZ + h * 0.5f }, up, BFVec3{ 0.012f, h * 0.5f, 0.012f }, RO_CHROME, layer, 0, "BowlingPlus stool rod");
+        float phi = 0.7853982f + k * 1.5707963f, rm = r0 + 0.5f * dr;
+        BPQuat q = QMul(QAxis(0, 0, 1, phi - 1.5707963f), QAxis(1, 0, 0, lift));    // local y: outwards and up
+        RoPiece(2, BFVec3{ x + rm * cosf(phi), y + rm * sinf(phi), z0 + 0.5f * dz }, q, BFVec3{ 0.011f, len * 0.5f, 0.011f }, RO_CHROME, layer, 0, "BowlingPlus stool strut");
     }
-    // the seat on the pin's head: blue sides with crowns, a grey top
+    // the seat on the pin's head: blue sides with crowns; on top the grey vinyl with the logo and three ball holes
     const float seatZ = z + kStoolPinBase + kStoolPinH - 0.01f;
     RoPiece(2, BFVec3{ x, y, seatZ + 0.04f }, up, BFVec3{ 0.34f, 0.04f, 0.34f }, RO_BAND, layer, 0, "BowlingPlus stool seat");
     RoPiece(2, BFVec3{ x, y, seatZ + 0.086f }, up, BFVec3{ 0.325f, 0.008f, 0.325f }, RO_TOP, layer, 0, "BowlingPlus stool cushion");
 }
 
-static bool RoBuild(bool lastFrame) {
+// one lane layout: what RoBuildShot puts on the lane (a rack's, or a replayed shot's)
+static float sRoReplayX = NAN;                    // a replayed sliding ramp's x (NAN: follow the clock)
+static float RoRampX(int i);
+struct RoShot { int kind, layout; bool moving; float moveA, moveBaseX; double moveT0; };
+static RoShot sRoLive = { 0, -1, false, 0, 0, 0 };   // the rack's own layout (put back after a replay)
+static int sRoShowing = -1;                        // what's on the lane: -1 the rack's, -2 nothing (a replay we
+                                                   // don't know), else the replayed shot's snapshot
+
+static bool RoBuildShot(const RoShot &sh, bool log) {
     RoClear(nullptr);
     if (!sLaneRef) { sRoWhy = "lane not found yet"; return false; }
+    if (sh.kind == 0 || sh.layout < 0) return false;
     int layer = RoLayer();
-    bool ramps = (int)(RoRand() % (uint32_t)(kRampLayoutCount + kStoolLayoutCount)) < kRampLayoutCount;
     sRoMoving = false;
-    if (lastFrame && RoRand() % 100 < 45) { ramps = true; sRoMoving = true; }
+    if (sh.kind == 1) {
+        if (sh.layout >= kRampLayoutCount) return false;
+        const BPRampLayout &L = kRampLayouts[sh.layout];
+        sRoKind = 1; sRoLayout = sh.layout;
+        sRoMoving = sh.moving; sRoMoveA = sh.moveA; sRoMoveBaseX = sh.moveBaseX; sRoMoveT0 = sh.moveT0;
+        for (int i = 0; i < L.n; i++) {
+            BFVec3 pos, scale; BPQuat q;
+            RoRampPose(L.r[i], i == 0 && sRoMoving ? RoRampX(0) : L.r[i].x, pos, q, scale);
+            RoPiece(3, pos, q, scale, 0, layer, 3, "BowlingPlus ramp");
+        }
+        if (log) Bp175Log("ramps: \"%s\" (%d ramp%s)%s", L.name, L.n, L.n == 1 ? "" : "s", sRoMoving ? ", sliding" : "");
+    } else {
+        if (sh.layout >= kStoolLayoutCount) return false;
+        const BPStoolLayout &L = kStoolLayouts[sh.layout];
+        sRoKind = 2; sRoLayout = sh.layout;
+        for (int i = 0; i < L.n; i++) RoStool(sLaneX + L.s[i].x, sFoulY + L.s[i].y, layer);
+        if (log) Bp175Log("ramps: obstacles \"%s\" (%d barstool%s)", L.name, L.n, L.n == 1 ? "" : "s");
+    }
+    if (!sRoParts) { sRoKind = 0; sRoLayout = -1; sRoMoving = false; sRoFails++; sRoWhy = "couldn't make the pieces"; return false; }
+    sRoWhy = "on the lane";
+    return true;
+}
+
+static bool RoBuild(bool lastFrame) {              // a new random layout for a new rack
+    RoShot sh = { 0, -1, false, 0, 0, 0 };
+    bool ramps = (int)(RoRand() % (uint32_t)(kRampLayoutCount + kStoolLayoutCount)) < kRampLayoutCount;
+    if (lastFrame && RoRand() % 100 < 45) { ramps = true; sh.moving = true; }
     if (ramps) {
         int pick;
         for (int tries = 0; ; tries++) {
             pick = (int)(RoRand() % (uint32_t)kRampLayoutCount);
             if (tries > 20) break;
             if (pick == sRoLastLayout) continue;
-            if (sRoMoving && kRampLayouts[pick].n != 1) continue;              // only single ramps slide
-            if (sRoMoving && kRampLayouts[pick].r[0].w > 0.6f) continue;
+            if (sh.moving && kRampLayouts[pick].n != 1) continue;              // only single ramps slide
+            if (sh.moving && kRampLayouts[pick].r[0].w > 0.6f) continue;
             break;
         }
         const BPRampLayout &L = kRampLayouts[pick];
-        for (int i = 0; i < L.n; i++) {
-            BFVec3 pos, scale; BPQuat q;
-            RoRampPose(L.r[i], L.r[i].x, pos, q, scale);
-            RoPiece(3, pos, q, scale, 0, layer, 3, "BowlingPlus ramp");
+        if (sh.moving && L.n != 1) sh.moving = false;
+        sh.kind = 1; sh.layout = pick; sRoLastLayout = pick;
+        if (sh.moving) {
+            sh.moveA = 0.5f - 0.5f * L.r[0].w - 0.02f;
+            sh.moveBaseX = 0;
+            float s0 = sh.moveA > 0.01f ? fmaxf(-1.0f, fminf(1.0f, L.r[0].x / sh.moveA)) : 0.0f;
+            sh.moveT0 = BP175_CLOCK - asinf(s0) / 6.2831853f * 7.0;   // it starts where the layout puts it
         }
-        sRoKind = 1; sRoLayout = pick; sRoLastLayout = pick;
-        if (sRoMoving) {
-            sRoMoveA = 0.5f - 0.5f * L.r[0].w - 0.02f;
-            sRoMoveBaseX = 0;
-            float s0 = sRoMoveA > 0.01f ? fmaxf(-1.0f, fminf(1.0f, L.r[0].x / sRoMoveA)) : 0.0f;
-            sRoMoveT0 = BP175_CLOCK - asinf(s0) / 6.2831853f * 7.0;   // it starts where the layout puts it
-        }
-        Bp175Log("ramps: \"%s\" (%d ramp%s)%s", L.name, L.n, L.n == 1 ? "" : "s", sRoMoving ? ", sliding" : "");
     } else {
         int pick;
         for (int tries = 0; ; tries++) { pick = (int)(RoRand() % (uint32_t)kStoolLayoutCount); if (pick != sRoLastStool || tries > 20) break; }
-        const BPStoolLayout &L = kStoolLayouts[pick];
-        for (int i = 0; i < L.n; i++) RoStool(sLaneX + L.s[i].x, sFoulY + L.s[i].y, layer);
-        sRoKind = 2; sRoLayout = pick; sRoLastStool = pick;
-        Bp175Log("ramps: obstacles \"%s\" (%d barstool%s)", L.name, L.n, L.n == 1 ? "" : "s");
+        sh.kind = 2; sh.layout = pick; sRoLastStool = pick;
     }
-    if (!sRoParts) { sRoFails++; sRoWhy = "couldn't make the pieces"; return false; }
+    sRoLive = sh;
+    sRoShowing = -1;
+    if (!RoBuildShot(sh, true)) return false;
     sRoBuilds++;
-    sRoWhy = "on the lane";
     return true;
 }
 
 static float RoRampX(int i) {                       // a ramp's x now (lane-relative), sliding in the last frame
     const BPRampLayout &L = kRampLayouts[sRoLayout];
     if (!sRoMoving) return L.r[i].x;
+    if (sRoReplayX == sRoReplayX) return sRoReplayX;   // a replay: where it was when the ball was where it is now
     double t = BP175_CLOCK - sRoMoveT0;
     return sRoMoveBaseX + sRoMoveA * sinf((float)(t * 6.2831853 / 7.0));
 }
@@ -5241,6 +5272,9 @@ static bool RoStoolBounce(const BFVec3 &p, int i) {
     return true;
 }
 
+static void RoSnapStart();
+static void RoSnapSample(const BFVec3 &p);
+
 static void RoThrowTick() {
     BFVec3 p;
     if (!BpBallPos(p)) return;
@@ -5251,7 +5285,9 @@ static void RoThrowTick() {
         sRoThrow = true; sRoThrew = true; sRoDecided = false; sRoHit = false; sRoAirEarly = false; sRoPrev = p;
         sRoStoolHit = false; sRoLateDone = false;
         DampStart(8.0);
+        RoSnapStart();
     }
+    RoSnapSample(p);
     if (sRoDecided || sRoKind == 0 || sRoLayout < 0) { sRoPrev = p; return; }
     float lx = p.x - sLaneX, ly = p.y - sFoulY, lz = p.z - sLaneZ;
     if (fabsf(lx) > 0.53f) { sRoDecided = true; sRoPrev = p; return; }      // in a gutter already: 0 anyway
@@ -5312,6 +5348,226 @@ static void RoThrowTick() {
     sRoPrev = p;
 }
 
+// ---- replays: show the layout each shot was bowled on ----
+// A new rack gets a new layout as soon as the pins are reset, so a replay watched later would show the wrong lane.
+// Every shot bowled on a layout keeps a snapshot: the layout, the replay's own frame and throw numbers, and where the
+// ball crossed the foul line and its breakpoint, read from the game's recording (RunPsycsTest.replayManager) through
+// ReplayManager's own getters. In the replayer, the playing ReplayManager (ReplayerInterfaceManager.replayManagers
+// [curRecordId], or any that is playing) is asked the same things; the snapshot that matches is put on the lane,
+// nothing if none does (a shot from before, or with no obstacles), and the rack's layout comes back after the replay.
+// A sliding ramp follows the ball: its x was sampled against the ball's distance down the lane while it was bowled.
+struct RoSnap {
+    RoShot shot;
+    int frame, thr;                                // ReplayData.FrameIndex / ThrowIndex
+    BFVec3 foul, brk;                              // the ball after the foul line, at the breakpoint
+    int n;                                         // a sliding ramp's x against the ball's y
+    float sy[96], sx[96];
+    bool used, keyed;
+    uint32_t seq;
+};
+static const int kRoSnaps = 24;
+static RoSnap sRoSnaps[kRoSnaps];
+static uint32_t sRoSnapSeq = 0;
+static int sRoSnapNext = 0, sRoCurSnap = -1, sRoSnapsMade = 0, sRoReplayMatches = 0, sRoReplayUnknown = 0;
+static ObjRef sRoRecMgr, sRoRecData, sRoPlayData;
+static bool sRoRpLooked = false;
+static int sRoOffRec = -1, sRoOffPrac = -1, sRoOffIface = -1, sRoOffMgrs = -1, sRoOffCur = -1;
+static const MethodInfo *sRmData = nullptr, *sRmPlayed = nullptr, *sRmFoul = nullptr, *sRmBrk = nullptr, *sRmNow = nullptr,
+                        *sRdFrame = nullptr, *sRdThrow = nullptr, *sRdCount = nullptr;
+static int sRoRecFrames = 0;
+
+static int RoTypedOff(Il2CppClass *k, const char *name, const char *type) {
+    char tn[160];
+    return k && FieldTypeName(k, name, tn, sizeof(tn)) && !strcmp(tn, type) ? FieldOffset(k, name) : -1;
+}
+
+static bool RoReplayResolve() {
+    if (sRoRpLooked) return sRmData && sRdFrame;
+    sRoRpLooked = true;
+    Il2CppClass *rm = FindClass("", "ReplayManager"), *rd = FindClass("", "ReplayData"), *ri = FindClass("", "ReplayerInterfaceManager");
+    if (!rm || !rd || !N.RunPsycsTest) return false;
+    sRoOffRec = RoTypedOff(N.RunPsycsTest, "replayManager", "ReplayManager");
+    sRoOffPrac = RoTypedOff(N.RunPsycsTest, "replayPractice", "ReplayManager");
+    sRoOffIface = RoTypedOff(N.RunPsycsTest, "manReplayInterface", "ReplayerInterfaceManager");
+    sRoOffMgrs = RoTypedOff(ri, "replayManagers", "ReplayManager[]");
+    sRoOffCur = RoTypedOff(ri, "curRecordId", "System.Int32");
+    sRmData = XM(rm, "get_Data", 0);
+    sRmPlayed = XM(rm, "get_IsPlayed", 0);
+    sRmFoul = XM(rm, "GetBallPositionAfterFoulFrame", 0);
+    sRmBrk = XM(rm, "GetBallPositionAtBreakpointFrame", 0);
+    sRmNow = XM(rm, "GetBallPositionAtCurrentFrame", 0);
+    sRdFrame = XM(rd, "get_FrameIndex", 0);
+    sRdThrow = XM(rd, "get_ThrowIndex", 0);
+    sRdCount = XM(rd, "get_FrameCount", 0);
+    Bp175Log("ramps: replay lookup rec %d practice %d iface %d managers %d cur %d methods %d", sRoOffRec, sRoOffPrac, sRoOffIface,
+             sRoOffMgrs, sRoOffCur, (sRmData && sRmPlayed && sRmFoul && sRmBrk && sRmNow && sRdFrame && sRdThrow) ? 1 : 0);
+    return sRmData && sRdFrame;
+}
+
+static bool RoZero(const BFVec3 &a) { return a.x == 0 && a.y == 0 && a.z == 0; }
+
+static bool RoVecOf(const MethodInfo *m, void *obj, BFVec3 &out) {
+    if (!m || !obj) return false;
+    bool ok = false;
+    Il2CppObject *b = Invoke(m, obj, nullptr, &ok);
+    if (!ok || !b) return false;
+    out = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+// the shot's key, from a ReplayManager holding its data
+static bool RoReplayKey(void *mgr, void *&data, int &frame, int &thr, BFVec3 &foul, BFVec3 &brk) {
+    bool ok = false;
+    data = mgr && sRmData ? (void *)Invoke(sRmData, mgr, nullptr, &ok) : nullptr;
+    if (!ok || !data) return false;
+    frame = sRdFrame ? InvokeInt(sRdFrame, data, nullptr, -1) : -1;
+    thr = sRdThrow ? InvokeInt(sRdThrow, data, nullptr, -1) : -1;
+    foul = brk = BFVec3{ 0, 0, 0 };
+    RoVecOf(sRmFoul, mgr, foul);
+    RoVecOf(sRmBrk, mgr, brk);
+    return true;
+}
+
+static void RoSnapStart() {                       // a throw on a layout begins
+    if (sRoKind == 0 || sRoShowing != -1 || !RoReplayResolve()) { sRoCurSnap = -1; return; }
+    RoSnap &sn = sRoSnaps[sRoSnapNext];
+    sRoCurSnap = sRoSnapNext;
+    sRoSnapNext = (sRoSnapNext + 1) % kRoSnaps;
+    sn.shot = sRoLive;
+    sn.frame = sn.thr = -1;
+    sn.foul = sn.brk = BFVec3{ 0, 0, 0 };
+    sn.n = 0;
+    sn.used = true;
+    sn.keyed = false;
+    sn.seq = ++sRoSnapSeq;
+    sRoSnapsMade++;
+    void *rpt = sRPT.get();
+    void *mgr = rpt && sRoOffRec >= 0 ? At<void *>(rpt, sRoOffRec) : nullptr;
+    sRoRecMgr.set(mgr);
+    bool ok = false;
+    void *data = mgr ? (void *)Invoke(sRmData, mgr, nullptr, &ok) : nullptr;
+    sRoRecData.set(ok ? data : nullptr);
+    sRoRecFrames = 0;
+}
+
+static void RoSnapSample(const BFVec3 &p) {      // a sliding ramp's x against the ball's distance down the lane
+    if (sRoCurSnap < 0 || !sRoMoving) return;
+    RoSnap &sn = sRoSnaps[sRoCurSnap];
+    float ly = p.y - sFoulY;
+    if (sn.n >= 96 || (sn.n && ly < sn.sy[sn.n - 1] + 0.2f)) return;
+    sn.sy[sn.n] = ly;
+    sn.sx[sn.n] = RoRampX(0);
+    sn.n++;
+}
+
+static void RoSnapKeyTick() {                     // after the throw: read the recording's key (kept up to date until
+    if (sRoCurSnap < 0 || sFrame % 10 != 0) return;   // the next throw, in case the game fills it in late)
+    void *mgr = sRoRecMgr.get();
+    void *data = nullptr, *was = sRoRecData.get();
+    RoSnap &sn = sRoSnaps[sRoCurSnap];
+    int frame, thr;
+    BFVec3 foul, brk;
+    if (!RoReplayKey(mgr, data, frame, thr, foul, brk)) return;
+    // the recording moved on (the game reuses its ReplayData: StartRecord clears it): keep what we read
+    int count = sRdCount ? InvokeInt(sRdCount, data, nullptr, -1) : -1;
+    if ((was && data != was) || count < sRoRecFrames) { sRoCurSnap = -1; return; }
+    sRoRecFrames = count;
+    sn.frame = frame; sn.thr = thr; sn.foul = foul; sn.brk = brk;
+    sn.keyed = frame >= 0 || !RoZero(foul) || !RoZero(brk);
+}
+
+static void *RoReplayPlayer() {                   // the ReplayManager the replayer is playing
+    void *rpt = sRPT.get();
+    if (!rpt) return nullptr;
+    void *first = nullptr;
+    void *iface = sRoOffIface >= 0 ? At<void *>(rpt, sRoOffIface) : nullptr;
+    if (iface && Alive(iface) && sRoOffMgrs >= 0) {
+        Il2CppArray *a = At<Il2CppArray *>(iface, sRoOffMgrs);
+        int cur = sRoOffCur >= 0 ? At<int>(iface, sRoOffCur) : -1;
+        if (a && cur >= 0 && (size_t)cur < Len(a)) {
+            first = ((void **)Data(a))[cur];
+            if (first && sRmPlayed && InvokeBool(sRmPlayed, first, nullptr, false)) return first;
+        }
+        for (size_t i = 0; a && i < Len(a); i++) {
+            void *m = ((void **)Data(a))[i];
+            if (m && sRmPlayed && InvokeBool(sRmPlayed, m, nullptr, false)) return m;
+        }
+    }
+    int offs[2] = { sRoOffPrac, sRoOffRec };
+    for (int o : offs) {
+        void *m = o >= 0 ? At<void *>(rpt, o) : nullptr;
+        if (m && sRmPlayed && InvokeBool(sRmPlayed, m, nullptr, false)) return m;
+    }
+    return first;
+}
+
+static void RoReplayTick() {
+    if (!RoReplayResolve()) return;
+    void *mgr = RoReplayPlayer();
+    void *data = nullptr;
+    int frame = -1, thr = -1;
+    BFVec3 foul, brk;
+    if (!mgr) return;
+    if (sFrame % 5 == 0 || sRoShowing == -1) {
+        if (!RoReplayKey(mgr, data, frame, thr, foul, brk)) return;
+        bool fresh = data != sRoPlayData.get() || sRoShowing == -1;
+        if (fresh) {
+            sRoPlayData.set(data);
+            int best = -2;
+            float bestD = 0.06f;
+            for (int k = 0; k < kRoSnaps; k++) {
+                const RoSnap &sn = sRoSnaps[k];
+                if (!sn.used || !sn.keyed || sn.frame != frame || sn.thr != thr) continue;
+                // across the lane and up only: a saved replay may keep fewer frames (its compression), so the frame
+                // nearest the foul line or the breakpoint can sit a step further down the lane, but hardly to the side
+                float d = 0;
+                if (!RoZero(foul) && !RoZero(sn.foul)) d += fabsf(foul.x - sn.foul.x) + fabsf(foul.z - sn.foul.z);
+                if (!RoZero(brk) && !RoZero(sn.brk)) d += fabsf(brk.x - sn.brk.x);
+                if (RoZero(foul) && RoZero(brk)) d = 0.05f;   // no positions to go by: the latest shot with these numbers
+                if (d < bestD || (d == bestD && best >= 0 && sn.seq > sRoSnaps[best].seq)) { bestD = d; best = k; }
+            }
+            if (best != sRoShowing) {
+                sRoReplayX = NAN;
+                if (best >= 0) {
+                    if (RoBuildShot(sRoSnaps[best].shot, false)) sRoReplayMatches++;
+                    Bp175Log("ramps: replay of frame %d throw %d shows its layout (snapshot %d, off by %.3f m)", frame + 1, thr + 1, best, bestD);
+                } else {
+                    RoClear(nullptr);
+                    sRoReplayUnknown++;
+                    Bp175Log("ramps: replay of frame %d throw %d: no layout recorded for it, lane left clear", frame + 1, thr + 1);
+                }
+                sRoShowing = best;
+            }
+        }
+    }
+    if (sRoShowing >= 0 && sRoMoving && sRoKind == 1) {   // the sliding ramp, where it was when the ball was here
+        const RoSnap &sn = sRoSnaps[sRoShowing];
+        BFVec3 b;
+        if (sn.n > 0 && RoVecOf(sRmNow, mgr, b)) {
+            float ly = b.y - sFoulY, x = sn.sx[0];
+            if (ly >= sn.sy[sn.n - 1]) x = sn.sx[sn.n - 1];
+            else for (int i = 1; i < sn.n; i++)
+                if (ly < sn.sy[i]) {
+                    float t = (ly - sn.sy[i - 1]) / fmaxf(sn.sy[i] - sn.sy[i - 1], 1e-4f);
+                    t = t < 0 ? 0 : t;
+                    x = sn.sx[i - 1] + t * (sn.sx[i] - sn.sx[i - 1]);
+                    break;
+                }
+            sRoReplayX = x;
+            RoMoveTick();
+        }
+    }
+}
+
+static void RoReplayDone() {                      // out of the replayer: the rack's own layout again
+    if (sRoShowing == -1) return;
+    sRoShowing = -1;
+    sRoReplayX = NAN;
+    sRoPlayData.set(nullptr);
+    if (sRoLive.kind) RoBuildShot(sRoLive, false);
+    else RoClear(nullptr);
+}
+
 static void DampTick() {
     if (sLoc != LOC_THROWING && sLoc != LOC_ON_PINDECK) { sDampUntil = 0; return; }
     if (BP175_CLOCK > sDampUntil || !N.RB_getVel || !N.RB_setVel) return;
@@ -5342,12 +5598,18 @@ static bool RoFullRack() {
 
 static void RampsTick() {
     bool want = gBF.rampsMode && InPracticeOil() && sSettled && N.ok;
-    if (!want) { if (sRoParts) RoClear(gBF.rampsMode ? "left Practice" : "mode off"); sRoThrow = false; return; }
+    if (!want) {
+        if (sRoParts) RoClear(gBF.rampsMode ? "left Practice" : "mode off");
+        sRoThrow = false; sRoShowing = -1; sRoReplayX = NAN; sRoLive.kind = 0; sRoCurSnap = -1;
+        return;
+    }
     if (!RoResolve()) return;
     if (sRoParts && !sRoPart[0].get()) { sRoParts = 0; sRoKind = 0; sRoLayout = -1; sRoThrew = true; }   // a new scene took them
-    if (sLoc == LOC_REPLAYER) return;                // replays show the shot's own layout
+    if (sLoc == LOC_REPLAYER) { RoReplayTick(); return; }   // replays show the shot's own layout
+    RoReplayDone();
     if (sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK) { sRoLastThrowFrame = sFrame; RoMoveTick(); RoThrowTick(); return; }
     sRoThrow = false;
+    RoSnapKeyTick();
     RoMoveTick();
     // a new layout for every new rack: all ten pins up after a throw, once the rack is surely done (holding the ball,
     // or a second and a half after the throw at the rack or the top screen)
@@ -5420,10 +5682,11 @@ static void Bp175Tick() {                         // after SpeedTick and SpinTic
 
 static void Bp175Debug(char *buf, size_t size) {
     snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
-                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d",
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d",
              sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
              BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
-             sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0);
+             sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0,
+             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown);
 }
 
 static void OilTick() {

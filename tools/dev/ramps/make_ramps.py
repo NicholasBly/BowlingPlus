@@ -184,6 +184,62 @@ def pin_texture(side=512):
     return b.getvalue()
 
 
+def seat_top(side=512):
+    # the seat's top, as on Brunswick's pin stools: grey vinyl, the Brunswick B logo (cut from the pin library's Brunswick
+    # Max Crown picture, its words turned white and the B royal blue so they show on the vinyl) and three ball holes at
+    # the far side. Unity's cylinder maps its top cap u = 0.5 - x, v = 0.5 - z; the seat is turned local y -> world up,
+    # so the picture reads upright, unmirrored, for the bowler (top of the picture = down the lane).
+    from PIL import Image, ImageDraw, ImageFilter
+    src = Image.open(os.path.join(REPO, 'pins/BrunswickCrownMax.png')).convert('RGB')
+    sw, sh = src.size
+    k = sw / 4096.0
+    c = src.crop((int(590 * k), int(975 * k), int(1420 * k), int(1260 * k)))
+    c = c.resize((c.size[0] // 2, c.size[1]), Image.LANCZOS)          # the wrap is stretched round the pin: undo it
+    w, h = c.size
+    navy = Image.new('L', (w, h), 0)
+    px, npx = c.load(), navy.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b = px[x, y]
+            npx[x, y] = 255 if (b > r + 40 and r < 160) else 0
+    # white that touches the edge is background; white the logo encloses (the crown, the seal) stays white
+    outside = navy.copy()
+    for x in range(w):
+        for y in (0, h - 1):
+            if outside.getpixel((x, y)) == 0: ImageDraw.floodfill(outside, (x, y), 128)
+    for y in range(h):
+        for x in (0, w - 1):
+            if outside.getpixel((x, y)) == 0: ImageDraw.floodfill(outside, (x, y), 128)
+    split = int(w * 0.255)                                             # left of here: the words; right: the B
+    words = navy.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))   # "Brunswick" only, not the fine print
+    wp = words.load()
+    logo = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    lp, op = logo.load(), outside.load()
+    blue, white = (28, 64, 182, 255), (250, 250, 252, 255)            # opaque here: the alpha (the shader's shine) is set below
+    for y in range(h):
+        for x in range(w):
+            if x < split:
+                if wp[x, y]: lp[x, y] = white
+            elif npx[x, y]: lp[x, y] = blue
+            elif op[x, y] == 0: lp[x, y] = white if y < h * 0.5 else blue   # the crown stays white, the seal goes
+    top = Image.new('RGBA', (side, side))
+    tp = top.load()
+    for y in range(side):
+        for x in range(side):
+            r = ((x - side / 2 + 0.5) ** 2 + (y - side / 2 + 0.5) ** 2) ** 0.5 / (side / 2)
+            g = int(150 - 40 * max(0.0, r - 0.72) / 0.28)
+            tp[x, y] = (g, g + 2, g + 6, 110)
+    lw = int(side * 0.54); lh = int(lw * h / w)
+    top.alpha_composite(logo.resize((lw, lh), Image.LANCZOS), ((side - lw) // 2, int(side * 0.47)))
+    top.putalpha(110)                                                  # how much the vinyl shines (the logo the same)
+    d = ImageDraw.Draw(top)
+    for (hx, hy, hr) in ((0.44, 0.17, 0.035), (0.56, 0.17, 0.035), (0.50, 0.31, 0.042)):   # two fingers, a thumb
+        cx, cy, rr = hx * side, hy * side, hr * side
+        d.ellipse([cx - rr - 3, cy - rr - 3, cx + rr + 3, cy + rr + 3], fill=(175, 178, 184, 160))   # a chrome-ish rim
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(18, 18, 20, 10))
+    return top
+
+
 def crown(draw, cx, cy, s, fill, sx=1.0):
     # a plain five-point crown: a band with three tall points and two short ones, a dot on each tip
     pts = [(-1.0, 0.55), (-1.0, -0.25), (-0.5, 0.15), (0.0, -0.6), (0.5, 0.15), (1.0, -0.25), (1.0, 0.55)]
@@ -208,13 +264,7 @@ def textures():
     for i in range(10):
         crown(d, (i + 0.5) * 512 * k / 10, 35 * k, 20 * k, (250, 250, 255, 70), 0.6)
     band = band.resize((512, 64), Image.LANCZOS)
-    # the seat's top: light grey vinyl, a little darker at the rim
-    top = Image.new('RGBA', (64, 64))
-    for y in range(64):
-        for x in range(64):
-            r = ((x - 31.5) ** 2 + (y - 31.5) ** 2) ** 0.5 / 31.5
-            g = int(186 - 22 * max(0.0, r - 0.6) / 0.4)
-            top.putpixel((x, y), (g, g + 2, g + 6, 110))
+    top = seat_top()
     chrome = png(8, 8, lambda x, y: (214, 218, 224, 255) if y % 4 else (170, 176, 184, 255))   # full reflection
     return ramp, enc(band), enc(top), chrome, pin_texture()
 

@@ -570,7 +570,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     self.rampsSwitch = [self switchOn:gBF.rampsMode action:@selector(rampsChanged:)];
     self.rampsLabel = [self label:@"" size:12 weight:UIFontWeightSemibold color:Accent()];
     UIStackView *rampsStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
+        [self row:@"Ramps & obstacles" help:@"Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \U0001F3B2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1." control:self.rampsSwitch],
         self.rampsLabel]];
     rampsStack.axis = UILayoutConstraintAxisVertical;
     rampsStack.spacing = 6;

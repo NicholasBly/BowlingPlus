@@ -583,7 +583,7 @@ public final class Menu {
     static View rampsStack(Context c) {
         rampsLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
         LinearLayout col = UiKit.row(c, false);
-        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
+        col.addView(rowView(c, "Ramps & obstacles", "Every frame gets a random lane: ramps you have to roll over (28 layouts) or Brunswick pin barstools to miss (14). Miss the ramp or hit a barstool (the ball bounces off it into the gutter) and the shot scores 0. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game in this mode is kept. Practice only. Tip: the \uD83C\uDFB2 Mode button on the practice pattern screen picks a mode and starts the game again at frame 1.", toggle(c, "rampsMode", () -> tickRefresh())));
         col.addView(rampsLabel, mt(c, 6));
         return col;
     }
