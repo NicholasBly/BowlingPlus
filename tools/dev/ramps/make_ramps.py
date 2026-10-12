@@ -7,8 +7,10 @@ Usage (from the repo root):
 Every ramp is simulated in pinlab (tools/dev/pinlab, `ramp` experiment: the game's lane, gutters and ball on
 PhysX 4.1) at 5.5, 7, 8.5 and 10 m/s (about 12 to 22 mph), aimed at its centre and 5 cm inside each edge. A ramp
 passes when, every time, the ball climbs it, stays on the lane, comes down by 16.9 m (well before the head pin at
-18.26 m) and is rolling on the lane at 17.6 m. Barstool layouts are checked on paper: every row of stools leaves
-at least one gap a ball fits through (27 cm or more between stool bases, or between a base and the lane edge).
+18.26 m) and is rolling on the lane at 17.6 m. The ramps are "oiled" (no friction, as in the game since 1.7.5's second
+build), so a hooking ball goes straight over them. Barstool layouts are checked on paper: every row of stools leaves a
+gap a ball fits through, and some straight roll (ball centre within 0.36 m of the lane's centre) misses every stool by
+5 cm or more.
 
 Coordinates are the game's: x across the lane from its centre (+x is the 2-pin side, so a right-hander's pocket
 is at -x), y down the lane from the foul line, in metres. A ramp is (x, y0, w, h, deg): its front edge at y0,
@@ -54,16 +56,16 @@ STOOL_LAYOUTS = [
     ("Lone stool",        [(0.00, 9.0)]),
     ("Stool on the right", [(-0.24, 8.0)]),
     ("Stool on the left", [(0.24, 8.0)]),
-    ("Squeeze",           [(-0.30, 7.0), (0.30, 7.0)]),
-    ("Slalom",            [(-0.18, 5.0), (0.18, 8.5), (-0.18, 12.0)]),
+    ("Squeeze",           [(-0.34, 7.0), (0.34, 7.0)]),
+    ("Slalom",            [(-0.21, 5.0), (0.34, 9.0), (0.21, 13.0)]),
     ("The gate",          [(-0.33, 10.0), (0.33, 10.0)]),
     ("Centre pair",       [(0.00, 6.0), (0.00, 11.0)]),
     ("Right wall",        [(-0.36, 5.0), (-0.36, 8.5), (-0.36, 12.0)]),
     ("Left wall",         [(0.36, 5.0), (0.36, 8.5), (0.36, 12.0)]),
-    ("Diagonal",          [(-0.30, 5.0), (-0.10, 8.0), (0.10, 11.0), (0.30, 14.0)]),
-    ("Triangle",          [(0.00, 7.0), (-0.31, 10.0), (0.31, 10.0)]),
-    ("Back row",          [(-0.36, 14.5), (0.10, 14.5)]),
-    ("Chicane",           [(0.20, 6.0), (-0.20, 9.0), (0.20, 12.0)]),
+    ("Diagonal",          [(-0.34, 4.0), (-0.26, 8.0), (-0.18, 12.0), (-0.10, 16.0)]),
+    ("Triangle",          [(0.32, 6.0), (-0.35, 11.0), (0.35, 11.0)]),
+    ("Back gate",         [(-0.33, 14.5), (0.33, 14.5)]),
+    ("Offset pair",       [(-0.28, 7.0), (0.22, 13.0)]),
     ("Late stool",        [(0.05, 15.5)]),
 ]
 
@@ -71,6 +73,24 @@ LANE_HALF = 0.527      # the lane surface's half width (RoadPhysMaterial box)
 STOOL_R = 0.15         # stool base radius
 BALL_R = 0.108
 MIN_GAP = 0.27         # a ball (0.216 m) plus room
+
+
+LINE_MARGIN = 0.05     # a straight roll must miss every stool by this much (beyond touching)
+PLAY_HALF = 0.36       # ...with the ball's centre within 0.36 m of the lane's centre (about boards 5 to 35), not along the gutter
+
+
+def stool_line_clearance(st):
+    # The best straight roll from the foul line to the pins (a ball centre that stays on the lane): how far it misses the
+    # nearest stool, beyond touching it (stool base radius + ball radius). Rows alone weren't enough: four stools in a
+    # diagonal each left a gap in their own row, but no ball could get through all four (1.7.5's first build).
+    lim = PLAY_HALF
+    xs = [i * 0.005 - lim for i in range(int(2 * lim / 0.005) + 1)]
+    best, arg = -9.0, None
+    for x0 in xs:
+        for x1 in xs:
+            c = min(abs(x0 + (x1 - x0) * sy / 18.0 - sx) for sx, sy in st) - (STOOL_R + BALL_R)
+            if c > best: best, arg = c, (x0, x1)
+    return best, arg
 
 
 def check_stools():
@@ -91,6 +111,9 @@ def check_stools():
                 best = max(best, a - edge); edge = max(edge, b)
             best = max(best, LANE_HALF - edge)
             if best < MIN_GAP: bad.append((name, "row at y %.1f: widest gap %.2f m" % (row[0][1], best)))
+        c, line = stool_line_clearance(st)
+        print("%-18s straight roll misses by %.3f m (x %.2f at the foul line to %.2f at the pins)" % (name, c, line[0], line[1]))
+        if c < LINE_MARGIN: bad.append((name, "no straight roll gets past all the stools (best misses by %.3f m)" % c))
     return bad
 
 

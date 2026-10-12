@@ -11,7 +11,7 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Match Up skin fix | Match Up Pearl and Match Up BP get their real skins on the rack, in the Arsenal, previews, your hand and replays | Everywhere (looks only) |
 | Realistic pin physics | Sets the pins' friction so the game's strike rate on the bowling congress's Bowlscore test lands inside real pins' 42-44% (0.40, or 0.25 with the double physics rate: 44% in a PhysX copy of the game, which strikes 46.5% as it comes; see PIN_PHYSICS_STUDY.md). Counts first-ball strikes with it on and off | Practice only |
 | Ball speed | Slider from 1x to 5x | Practice only |
-| Loft | A LOFT slider on the left of the screen while you hold the ball: 0 to 16 ft, kept until you change it. The ball comes down that far past your release, without bouncing | Practice only |
+| Loft | A LOFT slider on the right edge of the screen while you hold the ball (it gets out of the way as you swipe): 0 to 16 ft, kept until you change it. The ball comes down that far past your release, without bouncing | Practice only |
 | Ball spin (RPM) | Slider from 1x to 17x: past the game's ~600 rpm cap, up to about 10,000 rpm, with the extra grip (hook) that much spin gives | Practice only |
 | Spare shooting mode | Pick which pins are standing at the start of every frame, or auto-rack the same pins every frame | Practice only |
 | Tap the pin layout | Tap the top-right pin layout (holding the ball) or the little screen under the ball return (overhead view) to pick pins for just that one shot, without turning on Spare mode. The picker has an X to leave without changes | Practice only |

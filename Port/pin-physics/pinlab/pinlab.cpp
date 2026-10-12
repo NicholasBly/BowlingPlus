@@ -401,16 +401,21 @@ static void ExpRest(const Cfg &cfg, float &maxDrift, float &maxTilt) {
 
 // ---------------- experiment 6: ramps (BowlingPlus 1.7.5 "Ramps & obstacles") ----------------
 // A ramp is a box (w x L x t) tilted up `deg` about x: its front top edge 2 mm under the lane at y0, its back top edge h
-// above it (L = h / sin(deg)), and t deep enough that its back face goes into the lane (a solid wedge). Its material is Unity's default for a primitive's collider (0.6 / 0.6, bounce 0,
-// Average), which the ball's Multiply overrides: friction 0.18, no bounce. The ball rolls straight up the lane at the
+// above it (L = h / sin(deg)), and t deep enough that its back face goes into the lane (a solid wedge). Its material has no
+// friction and no bounce, as BowlingPlus "oils" it (PINLAB_RAMPFRIC for another friction). The ball rolls straight up the lane at the
 // ramp's centre (pure roll, from y 0.6), and BowlingPlus's landing damper runs once per 60 Hz frame (a ball that comes
 // down on the lane after flying has its upward speed removed instead of hopping). Records: did it climb (highest point),
 // where it came down, where it was at the pins (y 17.6), and whether it stayed on the lane.
 struct RampSpec { float x, y0, w, h, deg; };
 
 static void AddRamp(World &w, const RampSpec &r) {
+    // BowlingPlus gives each ramp collider its own material with friction 0 and no bounce ("oiled", since 1.7.5's
+    // second build); PINLAB_RAMPFRIC sets another friction (0.6 = Unity's default material, 0.18 against the ball)
     static PxMaterial *mat = nullptr;
-    if (!mat) mat = gPhys->createMaterial(0.6f, 0.6f, 0.0f);   // Average combine (PhysX default)
+    if (!mat) {
+        float f = getenv("PINLAB_RAMPFRIC") ? (float)atof(getenv("PINLAB_RAMPFRIC")) : 0.0f;
+        mat = gPhys->createMaterial(f, f, 0.0f);                 // Average combine (PhysX default)
+    }
     // thick enough that its back face reaches under the lane: it shows as a solid wedge (BowlingPlus builds it the same way)
     float th = r.deg * 0.0174533f, L = r.h / sinf(th), t = r.h / cosf(th) + 0.25f, z0 = -0.002f;
     PxVec3 c(r.x, r.y0 + 0.5f * L * cosf(th) + 0.5f * t * sinf(th), z0 + 0.5f * L * sinf(th) - 0.5f * t * cosf(th));

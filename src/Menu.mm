@@ -527,7 +527,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     [loft addTarget:self action:@selector(speedDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
     self.loftSlider = loft;
     UIView *loftCell = [self sliderCell:@"Loft" value:self.loftLabel reset:@selector(loftReset) slider:loft
-                                   help:@"Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the left of the screen sets it too (double-tap it for Off). Kept until you change it."];
+                                   help:@"Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the right of the screen sets it too (double-tap it for Off). Kept until you change it."];
     self.loftHudSwitch = [self switchOn:gBF.loftHud action:@selector(loftHudChanged:)];
     UIView *loftHudCell = [self cell:[self row:@"Loft slider on screen" help:@"Shows the LOFT slider while you hold the ball in Practice." control:self.loftHudSwitch]];
     self.spareSwitch = [self switchOn:gBF.spareMode action:@selector(spareChanged:)];

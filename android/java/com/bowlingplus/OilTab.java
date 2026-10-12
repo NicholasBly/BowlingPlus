@@ -188,11 +188,35 @@ final class OilTab {
         if (loftBox.getParent() != root) {
             removeLoft();
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(UiKit.dp(a, 58), ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
-            lp.leftMargin = UiKit.dp(a, 8);
+            lp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;      // the right edge: the left one has the game's blue tab
+            lp.rightMargin = UiKit.dp(a, 8);
             lp.bottomMargin = UiKit.dp(a, 60);
             root.addView(loftBox, lp);
         }
+        // hidden while a finger is down on the game (a throw's swipe) and for a moment after: after a throw the game has
+        // left "holding the ball" by then and the panel stays away; after a tap it comes back
+        boolean away = fingerDown || android.os.SystemClock.uptimeMillis() - fingerUpAt < 400;
+        loftBox.setVisibility(away ? View.INVISIBLE : View.VISIBLE);
+    }
+
+    // From BP.TapSpy, which sees every touch before the game does (UI thread). The game hides its own buttons the moment
+    // a throw's swipe starts; the LOFT panel goes with them, at once.
+    private static boolean fingerDown;
+    private static long fingerUpAt;
+
+    static void touchDown(float x, float y) {
+        if (loftBox == null || loftBox.getParent() == null || loftBox.getVisibility() != View.VISIBLE) return;
+        int[] at = new int[2];
+        loftBox.getLocationInWindow(at);
+        if (x >= at[0] && x < at[0] + loftBox.getWidth() && y >= at[1] && y < at[1] + loftBox.getHeight()) return;   // on the panel
+        fingerDown = true;
+        loftBox.setVisibility(View.INVISIBLE);
+    }
+
+    static void touchUp() {
+        if (!fingerDown) return;
+        fingerDown = false;
+        fingerUpAt = android.os.SystemClock.uptimeMillis();
     }
 
     private static void syncStats() {

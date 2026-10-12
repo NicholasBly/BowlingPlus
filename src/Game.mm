@@ -4470,47 +4470,58 @@ static bool BpBallVel(void *rb, BFVec3 &v) {
 }
 
 // ---- hide the ball stats (looks only, everywhere) ----
-// What the game has (1.907, level1): the ball in your hand shows its stats on BallManager/Canvas (Ball_Description:
-// power, hook, length, RPM, tilt, rotation, condition); all of them sit under its child "Hook". The game switches
-// that canvas on and off itself (enableCanvas/disableCanvas) but never touches "Hook". The ball rack's balls are
-// ObjectsToShift/ObjectsOnBallSelect/ball1..ball10 (BallOnReturnerInfo, which switches its own object on and off every
-// frame); each one's stats are its child "OBJ_arc_all_120x90" (the arcs and numbers; "butt", the select button,
-// stays). BowlingPlus switches those children off, and back on when the setting goes off.
+// What the game has (1.907, level1): the ball in your hand shows its stats on BallManager/Canvas/Hook (Ball_Description
+// is on BallManager itself): the style name ("Belmo" for two-handed; stroker, tweener and cranker have their own), the
+// power / hook / length dots, the tilt / RPM / rotation arcs and the condition bar. The ball rack's balls are
+// ObjectsToShift/ObjectsOnBallSelect/ball1..ball10 (BallOnReturnerInfo); each one's stats are its child
+// "OBJ_arc_all_120x90" (the three arcs and the style name; "butt", the select button, stays). BallOnReturnerInfo.Update
+// calls SetActive on that child every frame (`+0x60`, CanShowBallInfo), so switching it off doesn't stick (1.7.5's first
+// build did that). BowlingPlus shrinks both to nothing instead (Transform.localScale 0, which the game never sets) and
+// puts each one's own scale back when the setting goes off.
 static const int kBsMax = 24;
-static Ref sBsGo[kBsMax];                 // the stats objects we switched off
+static Ref sBsTr[kBsMax];                 // the stats transforms we shrank
+static BFVec3 sBsScale[kBsMax];           // ...and their own scale
 static int sBsCount = 0, sBsSearches = 0;
 static Il2CppClass *sBsDesc = nullptr, *sBsRack = nullptr;
+static const MethodInfo *sBsGetScale = nullptr, *sBsSetScale = nullptr;
 static bool sBsLooked = false;
 
-static void BsHideUnder(void *comp, const char *childName) {
-    if (!Alive(comp) || !X.tr_find || !X.comp_go || !X.go_setActive || !X.go_activeSelf) return;
+static bool BsGetScale(void *tr, BFVec3 &s) {
+    bool ok = false;
+    Il2CppObject *b = sBsGetScale ? Invoke(sBsGetScale, tr, nullptr, &ok) : nullptr;
+    if (!ok || !b) return false;
+    s = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+static void BsSetScale(void *tr, BFVec3 s) {
+    void *a[] = { &s };
+    if (sBsSetScale) Invoke(sBsSetScale, tr, a);
+}
+
+static void BsHideUnder(void *comp, const char *path) {
+    if (!Alive(comp) || !X.tr_find) return;
     void *go = GameObjectOf(comp);
     bool ok = false;
     void *tr = Alive(go) ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
     if (!ok || !tr) return;
-    void *fa[] = { NewString(childName) };
+    void *fa[] = { NewString(path) };
     void *ch = (void *)Invoke(X.tr_find, tr, fa, &ok);
-    void *cgo = ok && Alive(ch) ? (void *)Invoke(X.comp_go, ch, nullptr, &ok) : nullptr;
-    if (!ok || !Alive(cgo)) return;
-    if (!InvokeBool(X.go_activeSelf, cgo, nullptr, false)) return;   // already off (by the game, or by us)
-    int known = -1;
-    for (int i = 0; i < sBsCount; i++) if (sBsGo[i].get() == cgo) { known = i; break; }
-    if (known < 0) {                              // only what we switch off gets switched back on
-        if (sBsCount >= kBsMax) return;
-        sBsGo[sBsCount++].set(cgo);
-    }
-    bool off = false;
-    void *a[] = { &off };
-    Invoke(X.go_setActive, cgo, a);
+    if (!ok || !Alive(ch)) return;
+    for (int i = 0; i < sBsCount; i++) if (sBsTr[i].get() == ch) return;   // already ours
+    BFVec3 s;
+    if (sBsCount >= kBsMax || !BsGetScale(ch, s)) return;
+    if (s.x == 0 && s.y == 0 && s.z == 0) s = { 1, 1, 1 };
+    sBsScale[sBsCount] = s;
+    sBsTr[sBsCount++].set(ch);
+    BsSetScale(ch, BFVec3{ 0, 0, 0 });
 }
 
 static void BallStatsTick() {
     if (sFrame % 10 != 0) return;
     if (!gBF.hideBallStats || !sSettled) {
         if (!sBsCount) return;
-        bool on = true;
-        void *a[] = { &on };
-        for (int i = 0; i < sBsCount; i++) { void *go = sBsGo[i].get(); if (go && X.go_setActive) Invoke(X.go_setActive, go, a); sBsGo[i].set(nullptr); }
+        for (int i = 0; i < sBsCount; i++) { void *tr = sBsTr[i].get(); if (tr) BsSetScale(tr, sBsScale[i]); sBsTr[i].set(nullptr); }
         sBsCount = 0;
         Bp175Log("ball stats: shown again");
         return;
@@ -4520,22 +4531,24 @@ static void BallStatsTick() {
         sBsLooked = true;
         sBsDesc = FindClass("", "Ball_Description");
         sBsRack = FindClass("", "BallOnReturnerInfo");
+        sBsGetScale = XM(X.Transform, "get_localScale", 0);
+        sBsSetScale = XM(X.Transform, "set_localScale", 1, "UnityEngine.Vector3");
     }
+    if (!sBsGetScale || !sBsSetScale) return;
     // the ones already found, every 10 frames; a fresh search every 2 s (the rack's balls come and go)
     bool search = sFrame % 120 == 0 || sBsCount == 0;
     if (!search) {
-        bool off = false;
-        void *a[] = { &off };
         for (int i = 0; i < sBsCount; i++) {
-            void *go = sBsGo[i].get();
-            if (go && InvokeBool(X.go_activeSelf, go, nullptr, false)) Invoke(X.go_setActive, go, a);
+            void *tr = sBsTr[i].get();
+            BFVec3 s;
+            if (tr && BsGetScale(tr, s) && (s.x != 0 || s.y != 0 || s.z != 0)) BsSetScale(tr, BFVec3{ 0, 0, 0 });
         }
         return;
     }
     if (sBsCount == 0 && sFrame % 60 != 0) return;     // nothing found yet: look once a second
     int before = sBsCount;
     Il2CppArray *d = sBsDesc ? FindAllLoaded(TypeOf(sBsDesc)) : nullptr;
-    for (size_t i = 0; i < Len(d); i++) BsHideUnder(Elem(d, i), "Hook");
+    for (size_t i = 0; i < Len(d); i++) BsHideUnder(Elem(d, i), "Canvas/Hook");
     Il2CppArray *r = sBsRack ? FindAllLoaded(TypeOf(sBsRack)) : nullptr;
     for (size_t i = 0; i < Len(r); i++) BsHideUnder(Elem(r, i), "OBJ_arc_all_120x90");
     sBsSearches++;
@@ -4721,8 +4734,9 @@ static bool GmRestartGame() {
 // The pieces are Unity primitives (GameObject.CreatePrimitive): a ramp is a cube tilted up (its back face goes into
 // the lane, so it shows as a wedge; its BoxCollider is the ramp), a stool is three cylinders (base with a box collider,
 // post with its own capsule, seat without one). They use a copy of the pins' material with BowlingPlus's own
-// textures, on the lane's layer (drawn by the lane camera, hit by the ball and the pins). Collider material: Unity's default
-// (0.6 / 0.6, no bounce), which the ball's Multiply makes friction 0.18 and bounce 0.
+// textures, on the lane's layer (drawn by the lane camera, hit by the ball and the pins). A ramp's collider gets its own
+// material with no friction and no bounce: "oiled", so the ball doesn't hook on it (1.7.5's first build left Unity's
+// default, 0.18 against the ball, and a spinning ball turned hard as it climbed).
 #include "RampLayouts.h"
 
 static const int kRoMaxParts = 12;
@@ -4741,7 +4755,8 @@ static uintptr_t sRoTex[3] = { 0, 0, 0 };
 static Il2CppClass *sRoGO = nullptr, *sRoRenderer = nullptr, *sRoCollider = nullptr, *sRoBox = nullptr;
 static const MethodInfo *sRoCreate = nullptr, *sRoSetPos = nullptr, *sRoSetRot = nullptr, *sRoSetScale = nullptr, *sRoSetLayer = nullptr,
                         *sRoSetMat = nullptr, *sRoColEnable = nullptr, *sRoAddComp = nullptr, *sRoBoxSize = nullptr,
-                        *sRoRbSetPos = nullptr, *sRoSetName = nullptr;
+                        *sRoRbSetPos = nullptr, *sRoSetName = nullptr, *sRoColMat = nullptr, *sRoMatSetDf = nullptr, *sRoMatSetSf = nullptr;
+static int sRoOiled = 0;
 static bool sRoLooked = false;
 static const char *sRoWhy = "";
 static ObjRef sRoGame;                             // the game played in this mode from frame 1 (a plain C# object)
@@ -4777,6 +4792,10 @@ static bool RoResolve() {
     sRoBoxSize = XM(sRoBox, "set_size", 1, "UnityEngine.Vector3");
     sRoRbSetPos = XM(N.Rigidbody, "set_position", 1, "UnityEngine.Vector3");
     sRoSetName = XM(X.Object, "set_name", 1, "System.String");
+    Il2CppClass *pm = FindClass("UnityEngine", "PhysicsMaterial");
+    sRoColMat = XM(sRoCollider, "get_material", 0);
+    sRoMatSetDf = XM(pm, "set_dynamicFriction", 1, "System.Single");
+    sRoMatSetSf = XM(pm, "set_staticFriction", 1, "System.Single");
     if (!sRoCreate || !sRoSetPos || !sRoSetRot || !sRoSetScale || !sRoSetMat) sRoWhy = "a Unity method is missing";
     return sRoCreate && sRoSetPos && sRoSetRot && sRoSetScale && sRoSetMat;
 }
@@ -4857,7 +4876,22 @@ static void *RoPiece(int type, BFVec3 pos, BPQuat q, BFVec3 scale, int mat, int 
     void *m = RoMaterial(mat);
     void *r = m && sRoRenderer ? GetComp(go, TypeOf(sRoRenderer)) : nullptr;
     if (r) { void *ma[] = { m }; Invoke(sRoSetMat, r, ma); }
-    if (collider != 1 && sRoCollider && sRoColEnable) {   // 0: none, 2: a box instead of the primitive's own
+    if (collider == 3 && sRoCollider && sRoColMat && sRoMatSetDf && sRoMatSetSf) {   // 3: its own, oiled (no friction)
+        // Collider.get_material gives this collider its own copy of the default material (bounce 0); friction 0 there
+        // means 0 against the ball too (the ball's Multiply wins), so a spinning ball doesn't hook on the ramp: it
+        // slides up it as on the oil, and the lane's own oil friction takes over again where it lands.
+        void *c = GetComp(go, TypeOf(sRoCollider));
+        void *pm = c ? (void *)Invoke(sRoColMat, c, nullptr, &ok) : nullptr;
+        if (ok && Alive(pm)) {
+            float zero = 0;
+            void *za[] = { &zero };
+            bool ok1 = false, ok2 = false;
+            Invoke(sRoMatSetDf, pm, za, &ok1);
+            Invoke(sRoMatSetSf, pm, za, &ok2);
+            if (ok1 && ok2) sRoOiled++;
+        }
+    }
+    if (collider != 1 && collider != 3 && sRoCollider && sRoColEnable) {   // 0: none, 2: a box instead of the primitive's own
         void *c = GetComp(go, TypeOf(sRoCollider));
         bool off = false;
         if (c) { void *ea[] = { &off }; Invoke(sRoColEnable, c, ea); }
@@ -4904,7 +4938,7 @@ static bool RoBuild(bool lastFrame) {
         for (int i = 0; i < L.n; i++) {
             BFVec3 pos, scale; BPQuat q;
             RoRampPose(L.r[i], L.r[i].x, pos, q, scale);
-            RoPiece(3, pos, q, scale, 0, layer, 1, "BowlingPlus ramp");
+            RoPiece(3, pos, q, scale, 0, layer, 3, "BowlingPlus ramp");
         }
         sRoKind = 1; sRoLayout = pick; sRoLastLayout = pick;
         if (sRoMoving) {
@@ -5159,9 +5193,9 @@ static void Bp175Tick() {                         // after SpeedTick and SpinTic
 
 static void Bp175Debug(char *buf, size_t size) {
     snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
-                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d builds %d fails %d (%s) hits %d misses %d stools %d best %d last %d clean %d",
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d best %d last %d clean %d",
              sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
-             BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoBuilds, sRoFails, sRoWhy,
+             BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
              sRoHits, sRoMisses, sRoStoolHits, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0);
 }
 

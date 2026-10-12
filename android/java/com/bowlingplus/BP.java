@@ -339,6 +339,8 @@ public final class BP {
                 if (ev.getEventTime() - triAt < 800) { Log.i(TAG, "three-finger tap"); handleShake(); }
             } else if (a == MotionEvent.ACTION_CANCEL) triOn = false;
 
+            if (a == MotionEvent.ACTION_DOWN) OilTab.touchDown(ev.getX(), ev.getY());   // the LOFT panel hides as a swipe starts
+            else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) OilTab.touchUp();
             if (a == MotionEvent.ACTION_DOWN) { downX = ev.getX(); downY = ev.getY(); downAt = ev.getEventTime(); multi = false; return; }
             if (a == MotionEvent.ACTION_POINTER_DOWN) { multi = true; return; }
             if (a != MotionEvent.ACTION_UP || multi || Menu.visible() || Menu.pickerVisible()) return;

@@ -170,7 +170,7 @@ public final class Menu {
             updateLoftLabel();
         }));
         View loftCell = sliderCell(c, "Loft", loftLabel, loftSlider,
-                "Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the left of the screen sets it too (double-tap it for Off). Kept until you change it.",
+                "Throws the ball out over the lane: it comes down this many feet past where it leaves your hand. Off is the game's own release. While you hold the ball, the LOFT slider on the right of the screen sets it too (double-tap it for Off). Kept until you change it.",
                 () -> { Config.set("loftFt", 0.0); loftSlider.setProgress(0); updateLoftLabel(); });
         loftSlider.setProgress((int) Math.round(Config.d("loftFt", 0) * 2));
         updateLoftLabel();

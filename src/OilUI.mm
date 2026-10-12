@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
 #import <AVFoundation/AVFoundation.h>
 #import <PhotosUI/PhotosUI.h>
 #import <CoreImage/CoreImage.h>
@@ -1425,8 +1426,41 @@ static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) 
 - (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = NO; if (self.changed) self.changed(YES); }
 @end
 
+// Watches every touch on the game's window without taking part: it never recognizes, never cancels or delays the game's
+// touches, and only reports a finger going down (outside the LOFT panel) and the last finger coming up. The game hides
+// its own buttons the moment a throw's swipe starts; the LOFT panel goes with them.
+@interface BFTouchWatch : UIGestureRecognizer
+@property (nonatomic, copy) void (^down)(UITouch *touch);
+@property (nonatomic, copy) void (^up)(void);
+@end
+
+@implementation BFTouchWatch
+- (instancetype)init {
+    if ((self = [super initWithTarget:nil action:nil])) {
+        self.cancelsTouchesInView = NO;
+        self.delaysTouchesBegan = NO;
+        self.delaysTouchesEnded = NO;
+    }
+    return self;
+}
+- (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
+- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
+- (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { if (self.down) self.down(t.anyObject); }
+- (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e {}
+- (void)lift:(UIEvent *)e {
+    for (UITouch *x in e.allTouches) if (x.phase != UITouchPhaseEnded && x.phase != UITouchPhaseCancelled) return;   // fingers still down
+    if (self.up) self.up();
+    self.state = UIGestureRecognizerStateFailed;   // back to "possible" for the next touch
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self lift:e]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self lift:e]; }
+@end
+
 @interface BFLoftHud : NSObject
 @property (nonatomic, strong) UIView *box;
+@property (nonatomic, strong) BFTouchWatch *watch;
+@property (nonatomic) BOOL fingerDown;
+@property (nonatomic) CFTimeInterval fingerUpAt;
 @property (nonatomic, strong) UIButton *stats;
 @property (nonatomic, strong) UILabel *value;
 @property (nonatomic, strong) BFLoftSlider *slider;
@@ -1488,11 +1522,25 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     BOOL show = w && BFLoftHudVisible() && !BFMenuVisible() && !BFMenuPickerVisible() && ![BFOilLibrary shared].showing && !sEditor && ![BFModeSheet shared].showing;
     if (!show) { [self.box removeFromSuperview]; return; }
     if (!self.box) [self build];
+    if (self.watch.view != w) {                     // watch the window's touches (see BFTouchWatch)
+        [self.watch.view removeGestureRecognizer:self.watch];
+        self.watch = [BFTouchWatch new];
+        __weak BFLoftHud *weak = self;
+        self.watch.down = ^(UITouch *t) {
+            BFLoftHud *me = weak;
+            if (!me.box.superview || me.box.hidden) return;
+            if ([me.box pointInside:[t locationInView:me.box] withEvent:nil]) return;   // on the panel itself
+            me.fingerDown = YES;
+            me.box.hidden = YES;                          // at once, like the game's own buttons
+        };
+        self.watch.up = ^{ BFLoftHud *me = weak; if (me.fingerDown) { me.fingerDown = NO; me.fingerUpAt = CACurrentMediaTime(); } };
+        [w addGestureRecognizer:self.watch];
+    }
     if (self.box.superview != w) {
         [self.box removeFromSuperview];
         [w addSubview:self.box];
-        [NSLayoutConstraint activateConstraints:@[
-            [self.box.leadingAnchor constraintEqualToAnchor:w.safeAreaLayoutGuide.leadingAnchor constant:8],
+        [NSLayoutConstraint activateConstraints:@[   // the right edge: the left one has the game's blue tab
+            [self.box.trailingAnchor constraintEqualToAnchor:w.safeAreaLayoutGuide.trailingAnchor constant:-8],
             [self.box.centerYAnchor constraintEqualToAnchor:w.centerYAnchor constant:-30],
         ]];
         self.slider.value = fmaxf(0, fminf(gBF.loftFt, BF_MAX_LOFT));
@@ -1504,6 +1552,9 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     }
     self.value.text = LoftText(gBF.loftFt);
     [self syncStats];
+    // hidden while a finger is down on the game (a throw's swipe) and for a moment after: if it was a throw, the game
+    // has left "holding the ball" by then and the panel stays away; if it was a tap, it comes back
+    self.box.hidden = self.fingerDown || CACurrentMediaTime() - self.fingerUpAt < 0.4;
     [w bringSubviewToFront:self.box];
 }
 @end
