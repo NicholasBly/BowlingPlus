@@ -31,6 +31,7 @@ final class OilTab {
     private static LoftSlider loftSlider;
     private static TextView loftValue;
     private static Button statsBtn, backupBtn;
+    private static TextView closeBtn;
     private static Grip grip;                // "Swipe in from the right": the strip at the edge while the panel is tucked away
     private static boolean loftOut;          // ...swiped in (until swiped away, or the ball is thrown)
     private static boolean lobby, holding;  // the last answers from the game
@@ -164,6 +165,10 @@ final class OilTab {
             loftBox.setGravity(Gravity.CENTER_HORIZONTAL);
             loftBox.setBackground(UiKit.roundStroke(Color.argb(210, 20, 23, 28), 18, UiKit.dim(0.10f), 1, a));
             loftBox.setPadding(UiKit.dp(a, 2), UiKit.dp(a, 8), UiKit.dp(a, 2), UiKit.dp(a, 4));
+            closeBtn = UiKit.label(a, "\u203A\u203A", 17, UiKit.dim(0.55f), true);   // "Swipe in from the right": put it away
+            closeBtn.setGravity(Gravity.CENTER);
+            closeBtn.setOnClickListener(v -> tuck());
+            loftBox.addView(closeBtn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UiKit.dp(a, 22)));
             TextView title = UiKit.label(a, "LOFT", 11, UiKit.YELLOW, true);
             title.setGravity(Gravity.CENTER);
             loftValue = UiKit.label(a, "", 13, Color.WHITE, true);
@@ -211,6 +216,7 @@ final class OilTab {
         // left "holding the ball" by then and the panel stays away; after a tap it comes back
         boolean away = fingerDown || android.os.SystemClock.uptimeMillis() - fingerUpAt < 400;
         boolean tucked = Config.b("loftSwipe", false) && !loftOut;
+        closeBtn.setVisibility(Config.b("loftSwipe", false) ? View.VISIBLE : View.GONE);
         loftBox.setVisibility(away || tucked ? View.INVISIBLE : View.VISIBLE);
         if (tucked && grip.getParent() != root) {
             if (grip.getParent() instanceof ViewGroup) ((ViewGroup) grip.getParent()).removeView(grip);
@@ -234,31 +240,54 @@ final class OilTab {
 
     private static void tuck() {
         if (!Config.b("loftSwipe", false) || loftBox == null) return;
-        loftBox.animate().translationX(UiKit.dp(loftBox.getContext(), 80)).setDuration(160).withEndAction(() -> {
+        loftBox.animate().translationX(UiKit.dp(loftBox.getContext(), 90)).setDuration(160).withEndAction(() -> {
             loftOut = false;
             loftBox.setTranslationX(0);
             update();
         }).start();
     }
 
-    // the panel: a swipe to the right over it puts it away ("Swipe in from the right"); taps and the slider's drags
-    // still reach its controls
+    // the panel: in "Swipe in from the right", a drag to the right over it (starting sideways, so the slider's up-and-down
+    // drags stay the slider's) moves it with the finger and puts it away; a slider move it interrupted is undone
     static final class SwipeBox extends LinearLayout {
         private float sx, sy;
+        private long downAt;
+        private boolean dragging;
         SwipeBox(Context c) { super(c); }
-        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
-            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { sx = e.getX(); sy = e.getY(); return false; }
-            if (e.getActionMasked() == MotionEvent.ACTION_MOVE && Config.b("loftSwipe", false)) {
-                float dx = e.getX() - sx, dy = e.getY() - sy;
-                if (dx > UiKit.dp(getContext(), 30) && dx > 2 * Math.abs(dy)) { tuck(); return true; }
-            }
-            return false;
+        private boolean sideways(MotionEvent e) {
+            float dx = e.getRawX() - sx, dy = e.getRawY() - sy;   // screen coordinates: the panel moves under the finger
+            return Config.b("loftSwipe", false) && dx > UiKit.dp(getContext(), 18) && dx > 1.3f * Math.abs(dy);
         }
-        @Override public boolean onTouchEvent(MotionEvent e) {   // on the panel itself (not a control): swallowed, or a swipe away
-            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { sx = e.getX(); sy = e.getY(); }
-            else if (e.getActionMasked() == MotionEvent.ACTION_MOVE && Config.b("loftSwipe", false)) {
-                float dx = e.getX() - sx, dy = e.getY() - sy;
-                if (dx > UiKit.dp(getContext(), 30) && dx > 2 * Math.abs(dy)) tuck();
+        private void startDrag() {
+            dragging = true;
+            if (loftSlider != null && loftSlider.downAt >= downAt && Math.abs(loftSlider.value - loftSlider.startValue) > 0.01) {
+                loftSlider.value = loftSlider.startValue;
+                loftSlider.invalidate();
+                Config.set("loftFt", loftSlider.value);
+                if (loftValue != null) loftValue.setText(loftText(loftSlider.value));
+            }
+        }
+        private void down(MotionEvent e) { sx = e.getRawX(); sy = e.getRawY(); downAt = e.getEventTime(); dragging = false; }
+        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) { down(e); return false; }
+            if (e.getActionMasked() == MotionEvent.ACTION_MOVE && !dragging && sideways(e)) { startDrag(); return true; }
+            return dragging;
+        }
+        @Override public boolean onTouchEvent(MotionEvent e) {   // the panel itself, or a drag taken from a control
+            float dx = e.getRawX() - sx;
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: down(e); return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (!dragging && sideways(e)) startDrag();
+                    if (dragging) setTranslationX(Math.max(0, dx));
+                    return true;
+                case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL:
+                    if (dragging) {
+                        dragging = false;
+                        if (getTranslationX() > UiKit.dp(getContext(), 36)) tuck();
+                        else animate().translationX(0).setDuration(150).start();
+                    }
+                    return true;
             }
             return true;
         }
@@ -336,7 +365,8 @@ final class OilTab {
 
     // a vertical slider: drag anywhere on it; double-tap for Off
     static final class LoftSlider extends View {
-        double value;
+        double value, startValue;           // startValue: when the last touch began (a swipe that puts the panel away undoes it)
+        long downAt;
         boolean touching;
         LoftListener listener;
         private long lastTap;
@@ -373,7 +403,8 @@ final class OilTab {
                     if (now - lastTap < 300) { value = 0; touching = false; invalidate(); if (listener != null) listener.changed(true); lastTap = 0; return true; }
                     lastTap = now;
                     touching = true;
-                    getParent().requestDisallowInterceptTouchEvent(true);
+                    startValue = value;
+                    downAt = now;                // (no requestDisallowIntercept: the panel may take a sideways drag)
                     track(e.getY(), false);
                     return true;
                 }

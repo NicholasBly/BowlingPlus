@@ -1376,6 +1376,8 @@ static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) 
 // in half-foot steps. Double-tap it for 0. The value is kept (saved) until you change it.
 @interface BFLoftSlider : UIView
 @property (nonatomic) float value;                 // feet
+@property (nonatomic) float startValue;            // ...when the last touch began (a swipe that puts the panel away undoes it)
+@property (nonatomic) CFTimeInterval beganAt;
 @property (nonatomic) BOOL touching;
 @property (nonatomic, copy) void (^changed)(BOOL done);
 @end
@@ -1420,7 +1422,7 @@ static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) 
         if (self.changed) self.changed(done);
     }
 }
-- (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = YES; [self track:t.anyObject done:NO]; }
+- (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.startValue = self.value; self.beganAt = CACurrentMediaTime(); self.touching = YES; [self track:t.anyObject done:NO]; }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self track:t.anyObject done:NO]; }
 - (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = NO; [self track:t.anyObject done:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = NO; if (self.changed) self.changed(YES); }
@@ -1456,12 +1458,13 @@ static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) 
 - (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self lift:e]; }
 @end
 
-@interface BFLoftHud : NSObject
+@interface BFLoftHud : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIView *box;
 @property (nonatomic, strong) BFTouchWatch *watch;
 @property (nonatomic) BOOL fingerDown;
 @property (nonatomic) CFTimeInterval fingerUpAt;
-@property (nonatomic, strong) UIButton *stats, *backup;
+@property (nonatomic, strong) UIButton *stats, *backup, *close;
+@property (nonatomic) CFTimeInterval panAt;
 @property (nonatomic, strong) UIView *handle;      // "Swipe in from the right": the grip at the edge while it's tucked away
 @property (nonatomic) BOOL out;                    // ...swiped in (until swiped away, or the ball is thrown)
 @property (nonatomic, strong) UILabel *value;
@@ -1501,7 +1504,12 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     self.backup.layer.cornerRadius = 9;
     [self.backup addTarget:self action:@selector(backupTapped) forControlEvents:UIControlEventTouchUpInside];
     [self syncStats];
-    UIStackView *col = OStack(@[title, self.value, self.slider, self.stats, self.backup], UILayoutConstraintAxisVertical, 2);
+    self.close = [UIButton buttonWithType:UIButtonTypeSystem];       // "Swipe in from the right": put it away
+    [self.close setTitle:@"\u203A\u203A" forState:UIControlStateNormal];
+    self.close.titleLabel.font = OFont(17, UIFontWeightHeavy);
+    [self.close setTitleColor:ODim(0.55) forState:UIControlStateNormal];
+    [self.close addTarget:self action:@selector(swipedAway) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *col = OStack(@[self.close, title, self.value, self.slider, self.stats, self.backup], UILayoutConstraintAxisVertical, 2);
     col.translatesAutoresizingMaskIntoConstraints = NO;
     [box addSubview:col];
     [NSLayoutConstraint activateConstraints:@[
@@ -1514,9 +1522,14 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
         [col.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:2],
         [col.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-2],
     ]];
+    NSLayoutConstraint *ch = [self.close.heightAnchor constraintEqualToConstant:22];
+    ch.priority = 999;                                 // gives way to the stack view when the button is hidden
+    ch.active = YES;
     self.box = box;
-    UISwipeGestureRecognizer *away = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swipedAway)];
-    away.direction = UISwipeGestureRecognizerDirectionRight;        // "Swipe in from the right": put it away again
+    // "Swipe in from the right": drag it back to the right to put it away. Only a drag that starts out sideways and to
+    // the right takes over (the slider's up-and-down drags don't), and a slider move it interrupted is undone.
+    UIPanGestureRecognizer *away = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(boxPan:)];
+    away.delegate = self;
     [box addGestureRecognizer:away];
     // the grip: a strip at the right edge, as tall as the panel, with a little pill; swipe in from it (or tap it)
     UIView *handle = [UIView new];
@@ -1551,9 +1564,33 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     self.box.transform = CGAffineTransformMakeTranslation(80, 0);
     [UIView animateWithDuration:0.18 animations:^{ self.box.transform = CGAffineTransformIdentity; }];
 }
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (![g isKindOfClass:[UIPanGestureRecognizer class]] || g.view != self.box) return YES;
+    if (!gBF.loftSwipe) return NO;
+    CGPoint v = [(UIPanGestureRecognizer *)g velocityInView:g.view], t = [(UIPanGestureRecognizer *)g translationInView:g.view];
+    CGFloat dx = fabs(v.x) > 1 ? v.x : t.x, dy = fabs(v.x) > 1 ? v.y : t.y;
+    return dx > 0 && dx > 1.3 * fabs(dy);
+}
+- (void)boxPan:(UIPanGestureRecognizer *)g {
+    CGFloat tx = [g translationInView:self.box.superview].x;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        if (CACurrentMediaTime() - self.slider.beganAt < 1.5 && fabsf(self.slider.value - self.slider.startValue) > 0.01f) {
+            self.slider.value = self.slider.startValue;  // the drag began on the slider: put the loft back
+            gBF.loftFt = self.slider.value;
+            self.value.text = LoftText(gBF.loftFt);
+            [self.slider setNeedsDisplay];
+            BFSaveConfig();
+        }
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        self.box.transform = CGAffineTransformMakeTranslation(fmax(0, tx), 0);
+    } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        if (g.state == UIGestureRecognizerStateEnded && (tx > 36 || [g velocityInView:self.box].x > 300)) [self swipedAway];
+        else [UIView animateWithDuration:0.15 animations:^{ self.box.transform = CGAffineTransformIdentity; }];
+    }
+}
 - (void)swipedAway {
     if (!gBF.loftSwipe) return;
-    [UIView animateWithDuration:0.16 animations:^{ self.box.transform = CGAffineTransformMakeTranslation(80, 0); } completion:^(BOOL f) {
+    [UIView animateWithDuration:0.16 animations:^{ self.box.transform = CGAffineTransformMakeTranslation(90, 0); } completion:^(BOOL f) {
         self.out = NO;
         self.box.transform = CGAffineTransformIdentity;
         [self tick];
@@ -1620,6 +1657,7 @@ static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString str
     }
     self.value.text = LoftText(gBF.loftFt);
     [self syncStats];
+    self.close.hidden = !gBF.loftSwipe;
     // hidden while a finger is down on the game (a throw's swipe) and for a moment after: if it was a throw, the game
     // has left "holding the ball" by then and the panel stays away; if it was a tap, it comes back
     BOOL away = self.fingerDown || CACurrentMediaTime() - self.fingerUpAt < 0.4;

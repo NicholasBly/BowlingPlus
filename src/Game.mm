@@ -4947,11 +4947,10 @@ static BPQuat QAxis(float ax, float ay, float az, float rad) {
 
 // The game's own pin model: PinsRender/PinsRender/candlepin_graphicsN/pin_graphics/polySurface60 (the lane's visible
 // pins, "pin_diff" material). Taken from the one standing on the head pin's spot (its renderer's world box must be a
-// standing pin's), with where its model's origin sits relative to its foot, its turn, scale and height; cloned
-// (Object.Instantiate: just a MeshFilter and a MeshRenderer) and scaled up to kStoolPinH.
+// standing pin's), with its scale and height; cloned (Object.Instantiate: just a MeshFilter and a MeshRenderer), scaled
+// up to kStoolPinH and turned so its Brunswick side faces the bowler (RoStoolPin).
 static Ref sRoPinSrc;
-static BFVec3 sRoPinDelta = { 0, 0, 0 }, sRoPinScale = { 1, 1, 1 };
-static BPQuat sRoPinRot = { 0, 0, 0, 1 };
+static BFVec3 sRoPinScale = { 1, 1, 1 };
 static bool sRoPinKnown = false;
 static const MethodInfo *sRoFindGO = nullptr, *sRoInstantiate = nullptr, *sRoGetRot = nullptr, *sRoLossy = nullptr, *sRoBounds = nullptr;
 static float sRoPinTall = 0.381f;                 // the source pin's height on the lane (its renderer's bounds)
@@ -4998,8 +4997,6 @@ static void RoFindPinModel() {
         best = d;
         sRoPinSrc.set(go);
         sRoPinTall = 2 * box.e.z;
-        sRoPinDelta = { p.x - box.c.x, p.y - box.c.y, p.z - (box.c.z - box.e.z) };
-        sRoPinRot = *(BPQuat *)Unbox(rb);
         sRoPinScale = *(BFVec3 *)Unbox(sb);
         sRoPinKnown = true;
     }
@@ -5019,11 +5016,16 @@ static void *RoStoolPin(float x, float y, float z, int layer) {   // the post: a
     if (!ok || !tr) return go;
     const float k = kStoolPinH / sRoPinTall;
     BFVec3 sc = { sRoPinScale.x * k, sRoPinScale.y * k, sRoPinScale.z * k };
-    BFVec3 pos = { x - sRoPinDelta.x * k, y - sRoPinDelta.y * k, z + sRoPinDelta.z * k };   // (the turn moves the origin too)
+    // The lane's pins are set at random turns (BowlingPlus's own pin turns), so the source pin's turn says nothing about
+    // where its logo is. The mesh (polySurface60: 0.38 tall along its own y, centred on its origin) wears the pin
+    // picture's Brunswick logo toward its own -z (its USBC side toward +z; read from the mesh's UVs through the app's
+    // own wrap-to-layout converter). Turned so its y is up (world z) and its -z faces the bowler (world -y): its x goes
+    // to world -x, a half turn about (0, 1, 1)/sqrt(2).
+    BPQuat front = { 0, 0.70710678f, 0.70710678f, 0 };
+    BFVec3 pos = { x, y, z + 0.5f * kStoolPinH };   // the mesh's middle
     void *sa[] = { &sc };
     Invoke(sRoSetScale, tr, sa);
-    BPQuat rot = QMul(QAxis(0, 0, 1, 3.1415927f), sRoPinRot);   // turned half round: the Brunswick side faces the bowler
-    void *qa[] = { &rot };
+    void *qa[] = { &front };
     Invoke(sRoSetRot, tr, qa);
     void *pa[] = { &pos };
     Invoke(sRoSetPos, tr, pa);

@@ -276,7 +276,7 @@ New in 1.7.5:
 
 **Test:** 0, 4, 8 and 16 ft at slow and fast speeds; the ball should land where the slider says and not hop.
 
-**Backup ball (same panel):** mirror the ball's angular velocity at release across the lane's line, `w = (w.x, -w.y, -w.z)` (x across the lane, y down it, z up): the forward roll stays and the side roll and spin turn round, so the same hand's throw hooks the other way. Natively, flip the side-roll sign where you build the release spin. Practice only. **Swipe-in panel:** BowlingPlus can keep the panel tucked at the right edge behind a small grip that takes its own touches; swipe in to show it, swipe right to hide it.
+**Backup ball (same panel):** mirror the ball's angular velocity at release across the lane's line, `w = (w.x, -w.y, -w.z)` (x across the lane, y down it, z up): the forward roll stays and the side roll and spin turn round, so the same hand's throw hooks the other way. Natively, flip the side-roll sign where you build the release spin. Practice only. **Swipe-in panel:** BowlingPlus can keep the panel tucked at the right edge behind a small grip that takes its own touches; swipe in to show it, drag it right (or tap its » button) to hide it. Only a drag that starts sideways counts, and a slider move it interrupted is undone.
 
 ### 25. Ramps & obstacles (`bp.ramps`)
 
