@@ -1,4 +1,4 @@
-# Bowlscore: what the 25 % and 42-44 % figures measure
+# Bowlscore: what the 46.5 %, 44 % and 42-44 % figures measure
 
 ## The real-world number (USBC)
 
@@ -16,21 +16,22 @@ A strike here means all ten pins are down on the first ball.
 The same grid, run in `pinlab/` on NVIDIA PhysX 4.1 with the game's own pins, lane, rack and settings (see `PHYSICS_SETTINGS.md`):
 
 - Offsets `0.00, 0.25, ... 5.50` in, angles `0 ... 10` degrees, the same as above.
-- Ball (`ExpBowlscore` in `pinlab.cpp`): 6.80 kg (15 lb), radius 0.108 m, the game's ball material (bounce 0.65). It rolls without slipping in a straight line at 8.0 m/s, starting 1 m before the point where its centre would touch the head pin at the chosen offset and angle. It has no ramp, hook or spin beyond pure roll.
+- Ball (`ExpBowlscore` in `pinlab.cpp`): 6.80 kg (15 lb), radius 0.108 m, the game's ball material (0.3 / 0.3, bounce 0.65, combine Multiply, so 0.42 against a pin). It rolls without slipping in a straight line at 8.0 m/s, starting 1 m before the point where its centre would touch the head pin at the chosen offset and angle. It has no ramp, hook or spin beyond pure roll.
 - Pins: the game's rack, each pin given a random turn from the shot's seed.
 - Each shot is simulated for 4 seconds.
 - Shots per cell: 4 for the numbers in `results/SUMMARY.md` (1,012 shots per setup). The harness's default is 2.
 - Each shot's random seed is fixed (`77 + offset*1000 + angle*10 + shot`), so a rerun gives the same numbers.
 - A strike is `down == 10` in `bowlscore_<config>.csv`.
 - `results/summarize_bowlscore.py` builds the table in `results/SUMMARY.md` with 95 % intervals (Wilson).
-- The runs in `results/` were made on 8 October 2026. They're within the study's error of its published numbers: see `results/RERUN_NOTE.md`.
+- The runs in `results/` were made on 11 October 2026, with each material's own combine mode (Multiply). The first runs (1.7.0, and a rerun on 8 October) used Minimum and are replaced: see `results/CORRECTION.md`.
 
 ## What the two numbers can and can't tell you
 
+- **46.5 %** is the game as shipped; **44 %** is BowlingPlus 1.7.5's recommended pin friction (0.40 at the game's step, or 0.25 with the double physics rate); **42-44 %** (41.9-44.3 %) is real pins.
 - They compare **strike rates over the same grid**, nothing more. The model's ball is a straight, pure-rolling ball. The real Bowlscore ball comes off a ramp, so its speed and rolling state at contact differ from the model's. A real bowler's release, rev rate and axis tilt are not modelled either.
 - The model has no lane oil.
 - Bowlscore strike rate is one number. Two setups can match it and still leave different pins. That's why the study also reports full-rack and pocket-throw results and single-pin leaves (`PIN_PHYSICS_STUDY.md`, "Full racks" and the double-rate section).
-- USBC's balls had COR 0.668-0.800. The model's ball has COR set by the game's material, not measured. In the model, pin bounce barely changed strikes, as USBC found.
+- USBC's balls had COR 0.668-0.800. The model's ball has COR set by the game's material, not measured. In the model, a bouncier pin (0.75 instead of 0.65) adds about 6 points, more than USBC found for the ball's COR; the game can't change bounciness at runtime anyway.
 
 ## Reproducing it
 

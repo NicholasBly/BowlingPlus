@@ -60,6 +60,10 @@ Json BFConfigJson(void) {
     d.set("logHosts", Json::Bool_(gBF.logHosts));
     d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
     d.set("laneOther", Json::Bool_(gBF.laneOther));
+    d.set("hideBallStats", Json::Bool_(gBF.hideBallStats)); d.set("loftHud", Json::Bool_(gBF.loftHud)); d.set("loftFt", gBF.loftFt);
+    d.set("arsSort", gBF.arsSort); d.set("arsDesc", Json::Bool_(gBF.arsDesc)); d.set("rampsMode", Json::Bool_(gBF.rampsMode)); d.set("rampsBest", gBF.rampsBest);
+    d.set("roRamps", Json::Bool_(gBF.roRamps)); d.set("roStools", Json::Bool_(gBF.roStools)); d.set("roGates", Json::Bool_(gBF.roGates)); d.set("backupBall", Json::Bool_(gBF.backupBall)); d.set("loftSwipe", Json::Bool_(gBF.loftSwipe));
+    d.set("pinFricV2", 1);
     return d;
 }
 
@@ -70,6 +74,9 @@ static void Clamp() {
     if (gBF.spinMult > BF_MAX_SPIN) gBF.spinMult = BF_MAX_SPIN;
     gBF.lastPinMask &= BF_ALL_PINS;
     if (!gBF.lastPinMask) gBF.lastPinMask = BF_ALL_PINS;
+    if (std::isnan(gBF.loftFt) || gBF.loftFt < 0) gBF.loftFt = 0;
+    if (gBF.loftFt > BF_MAX_LOFT) gBF.loftFt = BF_MAX_LOFT;
+    if (gBF.arsSort < 0 || gBF.arsSort > 6) gBF.arsSort = 0;
 }
 
 bool BFConfigSet(const Str &k, double v) {
@@ -100,21 +107,40 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "pinRate2x") gBF.pinRate2x = on;
     else if (k == "oilShowOrig") gBF.oilShowOrig = (int)v;
     else if (k == "noTap9") gBF.noTap9 = on;
+    else if (k == "realOil") {}                    // was a setting up to 1.7.4: now managed (see BFLoadConfig)
     else if (k == "logHosts") gBF.logHosts = on;
     else if (k == "menuButton") gBF.menuButton = on;
     else if (k == "fbWebLogin") gBF.fbWebLogin = on;
     else if (k == "laneOther") gBF.laneOther = on;
+    else if (k == "hideBallStats") gBF.hideBallStats = on;
+    else if (k == "loftHud") gBF.loftHud = on;
+    else if (k == "loftFt") gBF.loftFt = (float)v;
+    else if (k == "arsSort") gBF.arsSort = (int)v;
+    else if (k == "arsDesc") gBF.arsDesc = on;
+    else if (k == "rampsMode") gBF.rampsMode = on;
+    else if (k == "rampsBest") gBF.rampsBest = (int)v;
+    else if (k == "roRamps") gBF.roRamps = on;
+    else if (k == "roStools") gBF.roStools = on;
+    else if (k == "roGates") gBF.roGates = on;
+    else if (k == "backupBall") gBF.backupBall = on;
+    else if (k == "loftSwipe") gBF.loftSwipe = on;
+    else if (k == "pinFricV2") {}                  // marker: pinFric 0 means recommended (1.7.5)
     else return false;
     Clamp();
     return true;
 }
 
 void BFLoadConfig(void) {
+    gBF.realOil = false;  // managed, not a setting: the game's own patterns keep the game's drawing (as online), custom patterns always get the real-life one
+    gBF.loftHud = true;
+    gBF.roRamps = gBF.roStools = gBF.roGates = true;
     std::vector<uint8_t> raw;
     if (!ReadFile(sDataDir + "/config.json", raw)) return;
     Json d = Json::Parse(Str(raw.begin(), raw.end()));
     if (!d.isObj()) return;
     for (auto &kv : d.o) BFConfigSet(kv.first, kv.second.num());
+    // 1.7.0-1.7.4 stored 0.25 for "recommended"; since 1.7.5 0 means recommended (0.40, or 0.25 with the double rate)
+    if (!d.has("pinFricV2") && fabsf(gBF.pinFric - 0.25f) < 0.001f) gBF.pinFric = 0;
     Clamp();
 }
 

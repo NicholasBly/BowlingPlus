@@ -2122,18 +2122,20 @@ static void BannerTopTick() {
 // ---- realistic pin physics (Practice) ----
 // What the game has (1.907, scene level1 + code; see VERIFIED_NOTES 5f and tools/dev/pinlab): the pins on the lane are
 // PinsPhys/PinUnity1..10 (InventaryData.kegels), each with seven colliders (five convex hulls, two capsules) whose
-// physics materials "Pin" / "PinButtom" have friction 0.5 dynamic / 0.3 static, combined by Minimum with whatever
-// they touch. InventaryData.ResetRigidBody rebuilds every pin's Rigidbody at each rack (DestroyImmediate + AddComponent,
-// then maxDepenetrationVelocity and maxAngularVelocity 100000); the colliders and their materials stay.
+// physics materials "Pin" / "PinButtom" have friction 0.5 dynamic / 0.3 static, combined by Multiply (Unity's
+// PhysicsMaterialCombine 1) with whatever they touch: pin on pin 0.25, pin on deck 0.30, pin on ball 0.15.
+// InventaryData.ResetRigidBody rebuilds every pin's Rigidbody at each rack (DestroyImmediate + AddComponent, then
+// maxDepenetrationVelocity and maxAngularVelocity 100000); the colliders and their materials stay.
 // A PhysX 4.1 model of exactly that setup (tools/dev/pinlab), run through the US Bowling Congress's Bowlscore test
-// (23 offsets x 11 entry angles), strikes 25% of the time where real pins strike about 42-44%, and entry angle makes no
-// difference. With the pins' friction at 0.25 it strikes 37%, entry angle matters again (31% at 0-3 degrees, 40% at
-// 6-10), and the 10 pin becomes the most common single-pin leave, as with real right-handed pocket hits. Restitution
-// barely matters (as USBC found with real balls), and it can't be set in this build anyway.
+// (23 offsets x 11 entry angles, 1,012 shots), strikes 46.5% (+-3.1) of the time; real pins strike 41.9-44.3%. With
+// the pins' material friction at 0.40 it strikes 44.0%, and with 0.25 plus the double physics rate also 44.0%; 0.25
+// at the game's own rate gives 38.4% (fewer strikes than real pins). Entry angle makes little difference either way.
+// (1.7.0-1.7.4 used 0.25 at any rate: that model combined the materials by Minimum, which was wrong, and put the game
+// at 25%. Rerun with Multiply in 1.7.5; VERIFIED_NOTES 5f.)
 // So, while it's on: every lane pin collider's material (Collider.material, a per-collider copy) gets the chosen
 // friction (static and dynamic), and the ball uses continuous collision. Off, outside Practice or on a new scene, the
 // materials get their own values back. It also counts first balls (from a full rack) with it on and off, and logs each.
-static const float kPinFricDefault = 0.25f;
+static float PinFricRecommended() { return gBF.pinRate2x ? 0.25f : 0.40f; }
 static const int kPPMax = 96;
 static Ref sPPMat[kPPMax];                    // the pin colliders' materials (per-collider copies)
 static float sPPSf0[kPPMax], sPPDf0[kPPMax];   // their own frictions
@@ -2146,7 +2148,7 @@ static bool sRateOn = false;                   // (the double physics rate, belo
 struct PPStats { int balls, strikes, pins, leaves[10]; };
 static PPStats sPPStats[3];                   // [0] the game's own pins, [1] realistic, [2] realistic + double rate
 
-static float PinFriction() { return gBF.pinFric >= 0.05f && gBF.pinFric <= 1.0f ? gBF.pinFric : kPinFricDefault; }
+static float PinFriction() { return gBF.pinFric >= 0.05f && gBF.pinFric <= 1.0f ? gBF.pinFric : PinFricRecommended(); }
 
 static bool PPResolve() {
     if (sPPTried) return sPPSetDf && sPPSetSf && sPPColMat;
@@ -3122,6 +3124,95 @@ Str BFFpsLine(void) {
     return Fmt("On: game asks for %d FPS (screen max %ld Hz).", cur, screenMax);
 }
 
+static void ArsNameC(void *item, char *buf, size_t size) {   // (for the shared Arsenal order block below)
+    Str n = ItemName(item);
+    snprintf(buf, size, "%s", n.c_str());
+}
+
+// ---- Arsenal order (1.7.5) ----
+// ArsenalBallManager._ballsData holds the player's balls (mdl_Item_Ball). Their stats are plain fields: power (and
+// extraPower from upgrades), hook, lenght (sic), RPM, conditionCurrent. BowlingPlus sorts that list in place, after
+// the search filter and the same way the filter edits it, so the game's own scroll view shows the new order each time
+// the Arsenal builds its list. ArsNameC (just above) gives a ball's name.
+enum { ARS_GAME = 0, ARS_NAME, ARS_POWER, ARS_HOOK, ARS_LENGTH, ARS_RPM, ARS_COND, ARS_KEYS };
+static const char *const kArsKeyName[ARS_KEYS] = { "the game's order", "name", "power", "hook", "length", "RPM", "condition" };
+static Il2CppClass *sArsItemClass = nullptr;
+static int sArsOff[6] = { -1, -1, -1, -1, -1, -1 };   // power, extraPower, hook, lenght, RPM, conditionCurrent
+static int sArsKind[6] = { 0, 0, 0, 0, 0, 0 };        // 1 float, 2 int
+
+static void ArsResolve(void *it) {
+    Il2CppClass *k = ClassOf(it);
+    if (k == sArsItemClass) return;
+    static const char *const names[6] = { "power", "extraPower", "hook", "lenght", "RPM", "conditionCurrent" };
+    for (int i = 0; i < 6; i++) {
+        char tn[64];
+        sArsOff[i] = -1;
+        sArsKind[i] = 0;
+        if (!FieldTypeName(k, names[i], tn, sizeof(tn))) continue;
+        if (!strcmp(tn, "System.Single")) sArsKind[i] = 1;
+        else if (!strcmp(tn, "System.Int32")) sArsKind[i] = 2;
+        else continue;
+        sArsOff[i] = FieldOffset(k, names[i]);
+    }
+    sArsItemClass = k;
+}
+
+static float ArsField(void *it, int i) {
+    if (sArsOff[i] < 0) return 0;
+    return sArsKind[i] == 1 ? At<float>(it, sArsOff[i]) : (float)At<int>(it, sArsOff[i]);
+}
+
+static float ArsValue(void *it, int key) {
+    ArsResolve(it);
+    switch (key) {
+        case ARS_POWER: return ArsField(it, 0) + ArsField(it, 1);
+        case ARS_HOOK: return ArsField(it, 2);
+        case ARS_LENGTH: return ArsField(it, 3);
+        case ARS_RPM: return ArsField(it, 4);
+        case ARS_COND: return ArsField(it, 5);
+    }
+    return 0;
+}
+
+#include <algorithm>
+
+static int ArsSortWanted() {                      // key | 0x100 for high to low (Z to A); 0 = the game's order
+    int k = gBF.arsSort;
+    if (k <= ARS_GAME || k >= ARS_KEYS) return 0;
+    return k | (gBF.arsDesc ? 0x100 : 0);
+}
+
+static void ArsSortItems(void **items, int n, int sort) {
+    int key = sort & 0xff;
+    bool desc = (sort & 0x100) != 0;
+    if (key <= ARS_GAME || key >= ARS_KEYS || n < 2) return;
+    struct E { void *it; float v; std::string name; };
+    std::vector<E> e((size_t)n);
+    for (int i = 0; i < n; i++) {
+        e[i].it = items[i];
+        e[i].v = 0;
+        if (!items[i]) continue;
+        if (key == ARS_NAME) {
+            char b[160];
+            ArsNameC(items[i], b, sizeof(b));
+            for (char *c = b; *c; c++) *c = (char)tolower((unsigned char)*c);
+            e[i].name = b;
+        } else e[i].v = ArsValue(items[i], key);
+    }
+    std::stable_sort(e.begin(), e.end(), [&](const E &a, const E &b) {
+        if (!a.it || !b.it) return a.it != nullptr && b.it == nullptr;     // empty slots last
+        int c = key == ARS_NAME ? a.name.compare(b.name) : (a.v < b.v ? -1 : a.v > b.v ? 1 : 0);
+        return desc ? c > 0 : c < 0;
+    });
+    for (int i = 0; i < n; i++) items[i] = e[i].it;
+}
+
+static void ArsSortDebug(char *buf, size_t size) {
+    snprintf(buf, size, "arsenal order: %s%s (fields %d/%d/%d/%d/%d/%d)", kArsKeyName[gBF.arsSort > 0 && gBF.arsSort < ARS_KEYS ? gBF.arsSort : 0],
+             gBF.arsSort > 0 && gBF.arsSort < ARS_KEYS ? (gBF.arsDesc ? ", high to low" : ", low to high") : "",
+             sArsOff[0], sArsOff[1], sArsOff[2], sArsOff[3], sArsOff[4], sArsOff[5]);
+}
+
 // ---------------------------------------------------------------------------
 // Arsenal search
 // The Arsenal list draws from ArsenalBallManager._ballsData (a List of your balls).
@@ -3152,48 +3243,55 @@ static void ResetArsenalScroll(void *ars) {
     if (m) Invoke(m, scroll, nullptr);
 }
 
+static int sAppliedSort = 0;
+
 static void ArsenalTick() {
     if (!N.Arsenal || N.ars_ballsData < 0 || !sSettled) return;
     if (!sArsenalDirty && sFrame % 15 != 0) return;
-    if (sQuery.empty() && sAppliedQuery.empty()) { sArsenalDirty = false; return; }
+    int sort = ArsSortWanted();
+    if (sQuery.empty() && sAppliedQuery.empty() && !sort && !sAppliedSort) { sArsenalDirty = false; return; }
     void *ars = sArsenal.get();
     if (!ars && (sArsenalDirty || sFrame % 30 == 0)) {
         ars = FirstAlive(FindAll(N.tArsenal));
         sArsenal.set(ars);
     }
     sArsenalDirty = false;
-    if (!ars) { sFilteredList = nullptr; sAppliedQuery.clear(); sShown = sTotal = -1; return; }
+    if (!ars) { sFilteredList = nullptr; sAppliedQuery.clear(); sAppliedSort = 0; sShown = sTotal = -1; return; }
 
-    if (sQuery.empty()) {                             // search cleared: put the full list back
+    if (sQuery.empty() && !sort) {                    // search cleared, no order: put the game's full list back
         if (N.Ars_InitScrollData) { Invoke(N.Ars_InitScrollData, ars, nullptr); ResetArsenalScroll(ars); }
-        sAppliedQuery.clear(); sFilteredList = nullptr; sShown = sTotal = -1;
+        sAppliedQuery.clear(); sAppliedSort = 0; sFilteredList = nullptr; sShown = sTotal = -1;
         return;
     }
     void *list = At<void *>(ars, N.ars_ballsData);
     ListView lv;
     if (!ReadList(list, lv)) return;
     bool rebuilt = list != sFilteredList || lv.version != sFilteredVersion;   // the game refreshed the list
-    if (!rebuilt && sQuery == sAppliedQuery) return;
-    if (!rebuilt) {                                    // new search on an already-filtered list
+    if (!rebuilt && sQuery == sAppliedQuery && sort == sAppliedSort) return;
+    if (!rebuilt) {                                    // new search or order on an already-changed list
         if (!N.Ars_InitScrollData) return;
         Invoke(N.Ars_InitScrollData, ars, nullptr);
         list = At<void *>(ars, N.ars_ballsData);
         if (!ReadList(list, lv)) return;
     }
-    std::vector<Str> words;
-    for (const Str &w : StrSplitWS(sQuery)) {
-        Str s = Squash(w);
-        if (!s.empty()) words.push_back(s);
+    int keep = lv.size;
+    if (!sQuery.empty()) {
+        std::vector<Str> words;
+        for (const Str &w : StrSplitWS(sQuery)) {
+            Str s = Squash(w);
+            if (!s.empty()) words.push_back(s);
+        }
+        keep = 0;
+        for (int i = 0; i < lv.size; i++) {
+            void *it = lv.items[i];
+            if (!it) continue;
+            Str name = Squash(ItemName(it));
+            bool match = true;
+            for (const Str &w : words) if (!StrHas(name, w)) { match = false; break; }
+            if (match) lv.items[keep++] = it;
+        }
     }
-    int keep = 0;
-    for (int i = 0; i < lv.size; i++) {
-        void *it = lv.items[i];
-        if (!it) continue;
-        Str name = Squash(ItemName(it));
-        bool match = true;
-        for (const Str &w : words) if (!StrHas(name, w)) { match = false; break; }
-        if (match) lv.items[keep++] = it;
-    }
+    ArsSortItems(lv.items, keep, sort);
     sTotal = lv.size;
     sShown = keep;
     At<int>(list, lv.sizeOff) = keep;
@@ -3202,7 +3300,9 @@ static void ArsenalTick() {
     sFilteredList = list;
     sFilteredVersion = lv.versionOff >= 0 ? At<int>(list, lv.versionOff) : 0;
     sAppliedQuery = sQuery;
-    BFLog("arsenal search '%s': %d of %d balls", sQuery, sShown, sTotal);
+    sAppliedSort = sort;
+    if (!sQuery.empty()) BFLog("arsenal search '%s': %d of %d balls%s", sQuery, sShown, sTotal, sort ? ", sorted" : "");
+    if (sort) BFLog("arsenal sorted by %s, %s", kArsKeyName[sort & 0xff], (sort & 0x100) ? "high to low" : "low to high");
 }
 
 // ---------------------------------------------------------------------------
@@ -4115,7 +4215,7 @@ static void BuiltinRestoreAll() {
         sBI[i] = BuiltinState();
     }
     sBuiltinPatched = 0;
-    BFLog("the game's own oil patterns are back (not in Practice)");
+    BFLog("the game's own oil patterns are back");
 }
 
 static void BuiltinApplyAll() {
@@ -4160,7 +4260,7 @@ static void BuiltinRedrawStep() {                 // lane pictures: the selected
 }
 
 static void OilBuiltinTick() {
-    bool want = InPracticeOil();
+    bool want = InPracticeOil() && gBF.realOil;    // realOil is false: the game's own patterns keep the game's drawing, as online
     if (!want) { if (sBuiltinPatched) BuiltinRestoreAll(); }
     else if (sFrame % 15 == 0 || !sBuiltinPatched) BuiltinApplyAll();
     if (sFrame % 3 == 0) BuiltinRedrawStep();
@@ -4372,6 +4472,1391 @@ static void LaneTick() {
     sLaneTarget = target; sLaneTries++; sLaneLastTry = sFrame;
     if (gBF.laneOther) sLaneMoved = true;
     BFLog(LANE_LOG_MOVE, cur, target, LaneNow());
+}
+
+#define BP175_LOG "%s"
+#define BP175_CLOCK BFNow()
+// ---- 1.7.5: ball stats off, loft, game modes, ramps & obstacles ----
+// (shared by src/Game.mm and android/native/Game.cpp; BP175_LOG and BP175_CLOCK are set just above this block)
+#include <stdarg.h>
+
+static void Bp175Log(const char *fmt, ...) {
+    char buf[300];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    BFLog(BP175_LOG, (const char *)buf);
+}
+
+static bool BpPractice() { return InPracticeOil() && sLoc != LOC_REPLAYER; }   // Practice, not its replays or the tutorial
+
+static bool BpBallPos(BFVec3 &p) {
+    void *rpt = sRPT.get();
+    if (!rpt || N.rpt_sphere < 0 || !X.tr_getPos) return false;
+    void *go = At<void *>(rpt, N.rpt_sphere);
+    bool ok = false;
+    void *tr = Alive(go) ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
+    Il2CppObject *b = ok && tr ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+    if (!ok || !b) return false;
+    p = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+static bool BpBallVel(void *rb, BFVec3 &v) {
+    bool ok = false;
+    Il2CppObject *b = rb && N.RB_getVel ? Invoke(N.RB_getVel, rb, nullptr, &ok) : nullptr;
+    if (!ok || !b) return false;
+    v = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+// ---- hide the ball stats (looks only, everywhere) ----
+// What the game has (1.907, level1): the ball in your hand shows its stats on BallManager/Canvas/Hook (Ball_Description
+// is on BallManager itself): the style name ("Belmo" for two-handed; stroker, tweener and cranker have their own), the
+// power / hook / length dots, the tilt / RPM / rotation arcs and the condition bar. The ball rack's balls are
+// ObjectsToShift/ObjectsOnBallSelect/ball1..ball10 (BallOnReturnerInfo); each one's stats are its child
+// "OBJ_arc_all_120x90" (the three arcs and the style name; "butt", the select button, stays). BallOnReturnerInfo.Update
+// calls SetActive on that child every frame (`+0x60`, CanShowBallInfo), so switching it off doesn't stick (1.7.5's first
+// build did that). BowlingPlus shrinks both to nothing instead (Transform.localScale 0, which the game never sets) and
+// puts each one's own scale back when the setting goes off.
+static const int kBsMax = 24;
+static Ref sBsTr[kBsMax];                 // the stats transforms we shrank
+static BFVec3 sBsScale[kBsMax];           // ...and their own scale
+static int sBsCount = 0, sBsSearches = 0;
+static Il2CppClass *sBsDesc = nullptr, *sBsRack = nullptr;
+static const MethodInfo *sBsGetScale = nullptr, *sBsSetScale = nullptr;
+static bool sBsLooked = false;
+
+static bool BsGetScale(void *tr, BFVec3 &s) {
+    bool ok = false;
+    Il2CppObject *b = sBsGetScale ? Invoke(sBsGetScale, tr, nullptr, &ok) : nullptr;
+    if (!ok || !b) return false;
+    s = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+static void BsSetScale(void *tr, BFVec3 s) {
+    void *a[] = { &s };
+    if (sBsSetScale) Invoke(sBsSetScale, tr, a);
+}
+
+static void BsHideUnder(void *comp, const char *path) {
+    if (!Alive(comp) || !X.tr_find) return;
+    void *go = GameObjectOf(comp);
+    bool ok = false;
+    void *tr = Alive(go) ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
+    if (!ok || !tr) return;
+    void *fa[] = { NewString(path) };
+    void *ch = (void *)Invoke(X.tr_find, tr, fa, &ok);
+    if (!ok || !Alive(ch)) return;
+    for (int i = 0; i < sBsCount; i++) if (sBsTr[i].get() == ch) return;   // already ours
+    BFVec3 s;
+    if (sBsCount >= kBsMax || !BsGetScale(ch, s)) return;
+    if (s.x == 0 && s.y == 0 && s.z == 0) s = { 1, 1, 1 };
+    sBsScale[sBsCount] = s;
+    sBsTr[sBsCount++].set(ch);
+    BsSetScale(ch, BFVec3{ 0, 0, 0 });
+}
+
+static void BallStatsTick() {
+    if (sFrame % 10 != 0) return;
+    if (!gBF.hideBallStats || !sSettled) {
+        if (!sBsCount) return;
+        for (int i = 0; i < sBsCount; i++) { void *tr = sBsTr[i].get(); if (tr) BsSetScale(tr, sBsScale[i]); sBsTr[i].set(nullptr); }
+        sBsCount = 0;
+        Bp175Log("ball stats: shown again");
+        return;
+    }
+    ExtraResolve();
+    if (!sBsLooked) {
+        sBsLooked = true;
+        sBsDesc = FindClass("", "Ball_Description");
+        sBsRack = FindClass("", "BallOnReturnerInfo");
+        sBsGetScale = XM(X.Transform, "get_localScale", 0);
+        sBsSetScale = XM(X.Transform, "set_localScale", 1, "UnityEngine.Vector3");
+    }
+    if (!sBsGetScale || !sBsSetScale) return;
+    // the ones already found, every 10 frames; a fresh search every 2 s (the rack's balls come and go)
+    bool search = sFrame % 120 == 0 || sBsCount == 0;
+    if (!search) {
+        for (int i = 0; i < sBsCount; i++) {
+            void *tr = sBsTr[i].get();
+            BFVec3 s;
+            if (tr && BsGetScale(tr, s) && (s.x != 0 || s.y != 0 || s.z != 0)) BsSetScale(tr, BFVec3{ 0, 0, 0 });
+        }
+        return;
+    }
+    if (sBsCount == 0 && sFrame % 60 != 0) return;     // nothing found yet: look once a second
+    int before = sBsCount;
+    Il2CppArray *d = sBsDesc ? FindAllLoaded(TypeOf(sBsDesc)) : nullptr;
+    for (size_t i = 0; i < Len(d); i++) BsHideUnder(Elem(d, i), "Canvas/Hook");
+    Il2CppArray *r = sBsRack ? FindAllLoaded(TypeOf(sBsRack)) : nullptr;
+    for (size_t i = 0; i < Len(r); i++) BsHideUnder(Elem(r, i), "OBJ_arc_all_120x90");
+    sBsSearches++;
+    if (sBsCount != before) Bp175Log("ball stats: hidden (%d stat panels)", sBsCount);
+}
+
+// ---- loft (Practice) ----
+// The ball leaves your hand with one push (see Ball speed). Loft adds an upward speed at that moment, worked out so
+// the ball comes down the chosen distance further on: a flight of d metres at forward speed v needs
+// vz = g d / (2 v). The lane's bounciness (0.65 x the ball's 0.65, Multiply) would bounce a ball that comes down from
+// the air, so while it's flying BowlingPlus watches it, and as it touches the lane its upward speed is taken away
+// (the "landing damper"; the ramps use it too). It only runs before the pins.
+static bool sLoftDone = false;
+static double sDampUntil = 0;
+static bool sDampAir = false;
+static float sLaneZ = 0, sLaneX = 0, sFoulY = 0, sHeadY = 18.263f;   // from the head pin while it stands
+static bool sLaneRef = false;
+static int sLoftThrows = 0, sDampHits = 0;
+static float sLoftLastVz = 0;
+
+static void LaneRefTick() {                      // where this lane is (the head pin, standing on its spot)
+    if (sFrame % 30 != 0 || !sSettled || sLoc == LOC_THROWING) return;
+    void *rpt = sRPT.get();
+    if (!rpt || N.rpt_kegsUp < 0) return;
+    Il2CppArray *up = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
+    if (!up || Len(up) < 1 || !((bool *)Data(up))[0]) return;
+    Il2CppArray *kegs = TurnKegels();
+    if (!kegs || Len(kegs) < 1) return;
+    void *go = Elem(kegs, 0);
+    bool ok = false;
+    void *tr = Alive(go) ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
+    Il2CppObject *pb = ok && tr && X.tr_getPos ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+    if (!ok || !pb) return;
+    BFVec3 p = *(BFVec3 *)Unbox(pb);
+    if (p.z < -0.05f || p.z > 0.05f) return;      // not on its spot
+    sLaneX = p.x;
+    sHeadY = p.y;
+    sFoulY = p.y - 18.263f;                       // Constants: the head pin is 18.263 m from the foul line
+    sLaneZ = p.z + 0.0005f;                       // pins stand 0.5 mm into the lane
+    sLaneRef = true;
+}
+
+static void DampStart(double seconds) {
+    double until = BP175_CLOCK + seconds;
+    if (until > sDampUntil) sDampUntil = until;
+    sDampAir = false;
+}
+
+static void LoftTick() {
+    if (!BpPractice() || sLoc != LOC_THROWING) { sLoftDone = false; return; }
+    if (sLoftDone || !N.RB_getVel || !N.RB_setVel) return;
+    float ft = gBF.loftFt;
+    if (!(ft > 0.05f)) return;
+    void *rb = BallBody();
+    if (!rb || InvokeBool(N.RB_isKinematic, rb, nullptr, true)) return;
+    BFVec3 v;
+    if (!BpBallVel(rb, v)) return;
+    float vh = sqrtf(v.x * v.x + v.y * v.y);
+    if (vh < 1.0f) return;                        // not launched yet
+    sLoftDone = true;
+    float d = fminf(ft, (float)BF_MAX_LOFT) * 0.3048f;
+    float vz = 9.81f * d / (2.0f * vh);
+    v.z = fmaxf(v.z, 0.0f) + vz;
+    void *a[] = { &v };
+    Invoke(N.RB_setVel, rb, a);
+    sLoftThrows++;
+    sLoftLastVz = vz;
+    DampStart(4.0);
+    Bp175Log("loft %.1f ft: +%.2f m/s up at %.1f m/s", ft, vz, vh);
+}
+
+bool BFLoftHudVisible(void) {                    // the loft slider: holding the ball in Practice
+    return N.ok && sSettled && gBF.loftHud && gBFStatus.offline && sMode == MODE_FUN && !sInTutorial && sLoc == LOC_START_POS;
+}
+
+// ---- game modes (Practice) ----
+// The game mode button on the practice pattern screen picks one of these and restarts the game at frame 1, the way
+// the game's own pattern screen does when you apply a pattern (PracticeOil.HandlePlayPracticeUpdated, 1.907): the
+// session's AddMode = 1, RunPsycsTest.restartGame(true), RunPsycsTest.StartFun(true, true, false), and the floating
+// window closes (FloatingMenu.closeClick).
+enum { GM_NORMAL = 0, GM_INVISIBLE = 1, GM_NOTAP = 2, GM_RAMPS = 3, GM_COUNT = 4 };
+static bool sGmRestart = false;
+static int sGmRestartAt = 0, sGmRestarts = 0;
+static const char *sGmWhy = "";
+
+int BFGameModeNow(void) {
+    if (gBF.rampsMode) return GM_RAMPS;
+    if (gBF.noTap9) return GM_NOTAP;
+    if (gBF.oilInvisible) return GM_INVISIBLE;
+    return GM_NORMAL;
+}
+
+void BFGameModeSelect(int m) {                    // from the UI; the restart happens on the next frames, on Unity's thread
+    if (m < 0 || m >= GM_COUNT) return;
+    gBF.oilInvisible = m == GM_INVISIBLE;
+    gBF.noTap9 = m == GM_NOTAP;
+    gBF.rampsMode = m == GM_RAMPS;
+    BFSaveConfig();
+    sGmRestart = true;
+    sGmRestartAt = sFrame;
+}
+
+static void *GmField(void *obj, const char *name) {
+    if (!obj) return nullptr;
+    int off = FieldOffset(ClassOf(obj), name);
+    void *v = off >= 0 ? At<void *>(obj, off) : nullptr;
+    return v;
+}
+
+static void *GmSession() {                       // InfoScreenManager.SessionP1 (the session Practice plays in)
+    void *im = GmField(sRPT.get(), "infoManager");
+    if (!im) return nullptr;
+    static const MethodInfo *get = nullptr;
+    if (!get) get = FindMethod(ClassOf(im), "get_SessionP1", 0);
+    bool ok = false;
+    void *s = get ? (void *)Invoke(get, im, nullptr, &ok) : nullptr;
+    return ok ? s : nullptr;
+}
+
+static void *GmGame() {                          // the game being played: SessionP1.GetLastGame()
+    void *s = GmSession();
+    if (!s) return nullptr;
+    static const MethodInfo *last = nullptr;
+    if (!last) last = FindMethod(ClassOf(s), "GetLastGame", 0);
+    bool ok = false;
+    void *g = last ? (void *)Invoke(last, s, nullptr, &ok) : nullptr;
+    return ok ? g : nullptr;
+}
+
+static int sGmCurOff = -2, sGmCountOff = -2, sGmEndOff = -2;
+static const MethodInfo *sGmScore = nullptr;
+static bool GmGameInfo(void *g, int &cur, int &count, bool &end) {
+    if (!g) return false;
+    if (sGmCurOff == -2) {
+        Il2CppClass *k = ClassOf(g);
+        char tn[64];
+        sGmCurOff = FieldTypeName(k, "curFrame", tn, sizeof(tn)) && !strcmp(tn, "System.Int32") ? FieldOffset(k, "curFrame") : -1;
+        sGmCountOff = FieldTypeName(k, "FRAME_COUNT", tn, sizeof(tn)) && !strcmp(tn, "System.Int32") ? FieldOffset(k, "FRAME_COUNT") : -1;
+        sGmEndOff = FieldTypeName(k, "endOfGame", tn, sizeof(tn)) && !strcmp(tn, "System.Boolean") ? FieldOffset(k, "endOfGame") : -1;
+        sGmScore = FindMethod(k, "GetGameScore", 0);
+    }
+    if (sGmCurOff < 0 || sGmCountOff < 0 || sGmEndOff < 0) return false;
+    cur = At<int>(g, sGmCurOff);
+    count = At<int>(g, sGmCountOff);
+    end = At<bool>(g, sGmEndOff);
+    return count > 0 && count <= 30;
+}
+
+static bool GmRestartGame() {
+    void *rpt = sRPT.get();
+    if (!rpt) { sGmWhy = "no lane"; return false; }
+    Il2CppClass *k = ClassOf(rpt);
+    static const MethodInfo *restart = nullptr, *startFun = nullptr;
+    if (!restart) restart = FindMethod(k, "restartGame", 1);
+    if (!startFun) startFun = FindMethod(k, "StartFun", 3);
+    if (!restart) { sGmWhy = "restartGame not found"; return false; }
+    void *s = GmSession();
+    static const MethodInfo *addMode = nullptr;
+    if (s && !addMode) addMode = FindMethod(ClassOf(s), "set_AddMode", 1);
+    int one = 1, zero = 0;
+    if (s && addMode) { void *a[] = { &one }; Invoke(addMode, s, a); }
+    bool ok = false;
+    void *ra[] = { &one };
+    Invoke(restart, rpt, ra, &ok);
+    if (!ok) { sGmWhy = "restartGame failed"; return false; }
+    if (startFun) { void *sa[] = { &one, &one, &zero }; Invoke(startFun, rpt, sa, &ok); }
+    if (BFPracticeLobbyOpen()) {                  // the pattern screen: close it, as the game's own Apply does
+        void *fm = GmField(rpt, "floatingMenuManager");
+        static const MethodInfo *close = nullptr;
+        if (fm && !close) close = FindMethod(ClassOf(fm), "closeClick", 0);
+        if (fm && close) Invoke(close, fm, nullptr);
+    }
+    sGmRestarts++;
+    sGmWhy = "restarted";
+    return true;
+}
+
+// ---- ramps & obstacles (Practice) ----
+// Each new rack gets a random layout (src/RampLayouts.h: 28 ramp layouts, 14 barstool layouts; never both at once).
+// Ramps: the ball has to roll over one, or the shot scores 0 (it's put in the gutter once it's past them without
+// climbing one). Barstools: touch one and the shot scores 0 the same way. In the last frame a ramp layout has a 45%
+// chance of sliding slowly from side to side. The best game played in this mode from frame 1 to the end is kept.
+// The pieces are Unity primitives (GameObject.CreatePrimitive): a ramp is a cube tilted up (its back face goes into
+// the lane, so it shows as a wedge; its BoxCollider is the ramp), a stool is three cylinders (base with a box collider,
+// post with its own capsule, seat without one). They use a copy of the pins' material with BowlingPlus's own
+// textures, on the lane's layer (drawn by the lane camera, hit by the ball and the pins). A ramp's collider gets its own
+// material with no friction and no bounce: "oiled", so the ball doesn't hook on it (1.7.5's first build left Unity's
+// default, 0.18 against the ball, and a spinning ball turned hard as it climbed).
+#include "RampLayouts.h"
+
+static const int kRoMaxParts = 180;                // up to 2 barstools of 40 pieces (room for more)
+static Ref sRoPart[kRoMaxParts];
+static int sRoParts = 0;
+static int sRoKind = 0, sRoLayout = -1, sRoLastLayout = -1, sRoLastStool = -1, sRoLastGate = -1;   // kind 1 ramps, 2 stools, 3 gates
+static bool sRoMoving = false;
+static double sRoMoveT0 = 0;
+static float sRoMoveA = 0, sRoMoveBaseX = 0;
+static bool sRoThrew = true, sRoThrow = false, sRoDecided = false, sRoHit = false, sRoAirEarly = false;
+static int sRoLastThrowFrame = -1000;
+static BFVec3 sRoPrev = { 0, 0, 0 };
+static int sRoHits = 0, sRoMisses = 0, sRoStoolHits = 0, sRoBuilds = 0, sRoFails = 0;
+enum { RO_RAMP = 0, RO_BAND, RO_TOP, RO_CHROME, RO_PIN, RO_GATE, RO_MATS };
+static Ref sRoMat[RO_MATS];                        // ramp, seat side, seat top, chrome, the stool's pin
+static uintptr_t sRoTex[RO_MATS] = { 0, 0, 0, 0, 0, 0 };
+static int sRoStoolPins = 0, sRoBounces = 0, sRoLateGutters = 0;
+static bool sRoStoolHit = false, sRoLateDone = false, sRoGateHit = false;
+static double sRoGateT = 0;
+static float sRoGateV = 0;
+static int sRoGateHits = 0;
+static Il2CppClass *sRoGO = nullptr, *sRoRenderer = nullptr, *sRoCollider = nullptr, *sRoBox = nullptr;
+static const MethodInfo *sRoCreate = nullptr, *sRoSetPos = nullptr, *sRoSetRot = nullptr, *sRoSetScale = nullptr, *sRoSetLayer = nullptr,
+                        *sRoSetMat = nullptr, *sRoColEnable = nullptr, *sRoAddComp = nullptr, *sRoBoxSize = nullptr,
+                        *sRoRbSetPos = nullptr, *sRoSetName = nullptr, *sRoColMat = nullptr, *sRoMatSetDf = nullptr, *sRoMatSetSf = nullptr;
+static int sRoOiled = 0;
+static bool sRoLooked = false;
+static const char *sRoWhy = "";
+static ObjRef sRoGame;                             // the game played in this mode from frame 1 (a plain C# object)
+static bool sRoClean = false, sRoScored = false;
+static int sRoLastScore = -1;
+static uint32_t sRoRand = 0;
+
+struct BPQuat { float x, y, z, w; };
+
+static uint32_t RoRand() {                         // xorshift, seeded from the clock
+    if (!sRoRand) sRoRand = (uint32_t)fmod(BP175_CLOCK * 1000.0, 4294967296.0) | 1u;
+    sRoRand ^= sRoRand << 13; sRoRand ^= sRoRand >> 17; sRoRand ^= sRoRand << 5;
+    return sRoRand;
+}
+
+static bool RoResolve() {
+    if (sRoLooked) return sRoCreate && sRoSetPos && sRoSetRot && sRoSetScale && sRoSetMat;
+    sRoLooked = true;
+    ExtraResolve();
+    sRoGO = FindClass("UnityEngine", "GameObject");
+    sRoRenderer = FindClass("UnityEngine", "Renderer");
+    sRoCollider = FindClass("UnityEngine", "Collider");
+    sRoBox = FindClass("UnityEngine", "BoxCollider");
+    Il2CppClass *tr = FindClass("UnityEngine", "Transform");
+    sRoCreate = XM(sRoGO, "CreatePrimitive", 1, "UnityEngine.PrimitiveType");
+    sRoSetPos = XM(tr, "set_position", 1, "UnityEngine.Vector3");
+    sRoSetRot = XM(tr, "set_rotation", 1, "UnityEngine.Quaternion");
+    sRoSetScale = XM(tr, "set_localScale", 1, "UnityEngine.Vector3");
+    sRoSetLayer = XM(sRoGO, "set_layer", 1, "System.Int32");
+    sRoSetMat = XM(sRoRenderer, "set_material", 1, "UnityEngine.Material");
+    sRoColEnable = XM(sRoCollider, "set_enabled", 1, "System.Boolean");
+    sRoAddComp = XM(sRoGO, "AddComponent", 1, "System.Type");
+    sRoBoxSize = XM(sRoBox, "set_size", 1, "UnityEngine.Vector3");
+    sRoRbSetPos = XM(N.Rigidbody, "set_position", 1, "UnityEngine.Vector3");
+    sRoSetName = XM(X.Object, "set_name", 1, "System.String");
+    Il2CppClass *pm = FindClass("UnityEngine", "PhysicsMaterial");
+    sRoColMat = XM(sRoCollider, "get_material", 0);
+    sRoMatSetDf = XM(pm, "set_dynamicFriction", 1, "System.Single");
+    sRoMatSetSf = XM(pm, "set_staticFriction", 1, "System.Single");
+    if (!sRoCreate || !sRoSetPos || !sRoSetRot || !sRoSetScale || !sRoSetMat) sRoWhy = "a Unity method is missing";
+    return sRoCreate && sRoSetPos && sRoSetRot && sRoSetScale && sRoSetMat;
+}
+
+static void *RoTexture(int i) {
+    void *t = sRoTex[i] ? Target(sRoTex[i]) : nullptr;
+    if (Alive(t)) return t;
+    if (!N.Texture2D || !N.T2D_ctor || !N.LoadImage || !N.Byte) return nullptr;
+    static const unsigned char *const pngs[RO_MATS] = { kRampPNG, kSeatBandPNG, kSeatTopPNG, kChromePNG, kStoolPinPNG, kGatePNG };
+    static const size_t lens[RO_MATS] = { sizeof(kRampPNG), sizeof(kSeatBandPNG), sizeof(kSeatTopPNG), sizeof(kChromePNG), sizeof(kStoolPinPNG), sizeof(kGatePNG) };
+    const unsigned char *png = pngs[i];
+    size_t len = lens[i];
+    Il2CppObject *tex = NewObject(N.Texture2D);
+    int w = 2, h = 2;
+    bool ok = false;
+    void *ca[] = { &w, &h };
+    if (tex) Invoke(N.T2D_ctor, tex, ca, &ok);
+    Il2CppArray *bytes = ok ? NewArray(N.Byte, len) : nullptr;
+    if (!bytes) return nullptr;
+    memcpy(Data(bytes), png, len);
+    void *la[] = { tex, bytes };
+    if (!InvokeBool(N.LoadImage, nullptr, la, false)) return nullptr;
+    DontUnload(tex);
+    if (sRoTex[i]) Release(sRoTex[i]);
+    sRoTex[i] = Keep(tex);
+    return tex;
+}
+
+static void *RoMaterial(int i) {                  // a copy of the pins' material with our texture
+    void *m = sRoMat[i].get();
+    if (m) return m;
+    void *inv = sInvData.get();
+    if (!inv && N.tInvData) { inv = FirstAlive(FindAll(N.tInvData)); sInvData.set(inv); }
+    void *src = inv && N.inv_pinMat >= 0 ? At<void *>(inv, N.inv_pinMat) : nullptr;
+    void *tex = RoTexture(i);
+    if (!Alive(src) || !tex || !X.mat_ctor || !X.mat_setTex || !X.Material) return nullptr;
+    Il2CppObject *mat = NewObject(X.Material);
+    bool ok = false;
+    void *ma[] = { src };
+    if (mat) Invoke(X.mat_ctor, mat, ma, &ok);
+    if (!ok) return nullptr;
+    void *ta[] = { tex };
+    Invoke(X.mat_setTex, mat, ta);
+    DontUnload(mat);
+    sRoMat[i].set(mat);
+    return mat;
+}
+
+static void RoClear(const char *why) {
+    for (int i = 0; i < sRoParts; i++) {
+        void *go = sRoPart[i].get();
+        if (go && X.obj_destroy) { void *a[] = { go }; Invoke(X.obj_destroy, nullptr, a); }
+        sRoPart[i].set(nullptr);
+    }
+    if (sRoParts && why) Bp175Log("ramps: cleared (%s)", why);
+    sRoParts = 0;
+    sRoKind = 0;
+    sRoLayout = -1;
+    sRoMoving = false;
+}
+
+// one piece: a primitive (3 cube, 2 cylinder) at a world position, turned, scaled, with a material and a layer
+static void *RoPiece(int type, BFVec3 pos, BPQuat q, BFVec3 scale, int mat, int layer, int collider, const char *name) {
+    if (sRoParts >= kRoMaxParts) return nullptr;
+    void *a[] = { &type };
+    bool ok = false;
+    void *go = (void *)Invoke(sRoCreate, nullptr, a, &ok);
+    if (!ok || !Alive(go)) return nullptr;
+    sRoPart[sRoParts++].set(go);
+    if (sRoSetName) { void *na[] = { NewString(name) }; Invoke(sRoSetName, go, na); }
+    void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+    if (!ok || !tr) return go;
+    void *sa[] = { &scale };
+    Invoke(sRoSetScale, tr, sa);
+    void *qa[] = { &q };
+    Invoke(sRoSetRot, tr, qa);
+    void *pa[] = { &pos };
+    Invoke(sRoSetPos, tr, pa);
+    if (layer >= 0 && sRoSetLayer) { void *la[] = { &layer }; Invoke(sRoSetLayer, go, la); }
+    void *m = RoMaterial(mat);
+    void *r = m && sRoRenderer ? GetComp(go, TypeOf(sRoRenderer)) : nullptr;
+    if (r) { void *ma[] = { m }; Invoke(sRoSetMat, r, ma); }
+    if (collider == 3 && sRoCollider && sRoColMat && sRoMatSetDf && sRoMatSetSf) {   // 3: its own, oiled (no friction)
+        // Collider.get_material gives this collider its own copy of the default material (bounce 0); friction 0 there
+        // means 0 against the ball too (the ball's Multiply wins), so a spinning ball doesn't hook on the ramp: it
+        // slides up it as on the oil, and the lane's own oil friction takes over again where it lands.
+        void *c = GetComp(go, TypeOf(sRoCollider));
+        void *pm = c ? (void *)Invoke(sRoColMat, c, nullptr, &ok) : nullptr;
+        if (ok && Alive(pm)) {
+            float zero = 0;
+            void *za[] = { &zero };
+            bool ok1 = false, ok2 = false;
+            Invoke(sRoMatSetDf, pm, za, &ok1);
+            Invoke(sRoMatSetSf, pm, za, &ok2);
+            if (ok1 && ok2) sRoOiled++;
+        }
+    }
+    if (collider != 1 && collider != 3 && sRoCollider && sRoColEnable) {   // 0: none, 2: a box instead of the primitive's own
+        void *c = GetComp(go, TypeOf(sRoCollider));
+        bool off = false;
+        if (c) { void *ea[] = { &off }; Invoke(sRoColEnable, c, ea); }
+        if (collider == 2 && sRoAddComp && sRoBox) {
+            void *ta[] = { TypeOf(sRoBox) };
+            void *box = (void *)Invoke(sRoAddComp, go, ta, &ok);
+            BFVec3 size = { 1.0f, 2.0f, 1.0f };           // the cylinder mesh: 1 wide, 2 tall (local y)
+            if (ok && Alive(box) && sRoBoxSize) { void *ba[] = { &size }; Invoke(sRoBoxSize, box, ba); }
+        }
+    }
+    return go;
+}
+
+// The lane's own layer: lane_2 and pindeck are on Default (0), which every lane camera draws and the ball and the pins
+// collide with (level1's layer collision matrix). The pins are on 15 "Kegels"; the game finds what the ball hit by tag.
+static int RoLayer() { return 0; }
+
+// a ramp's box: front top edge 2 mm under the lane at y0, back top edge h up, deep enough to reach under the lane
+static void RoRampPose(const BPRamp &r, float x, BFVec3 &pos, BPQuat &q, BFVec3 &scale) {
+    float th = r.deg * 0.0174533f, L = r.h / sinf(th), t = r.h / cosf(th) + 0.25f;
+    scale = { r.w, L, t };
+    q = { sinf(th * 0.5f), 0, 0, cosf(th * 0.5f) };
+    pos = { sLaneX + x, sFoulY + r.y0 + 0.5f * L * cosf(th) + 0.5f * t * sinf(th), sLaneZ - 0.002f + 0.5f * L * sinf(th) - 0.5f * t * cosf(th) };
+}
+
+// ---- the barstool: a Brunswick-style pin stool ----
+// A flat X of four chrome bars from a low hub, a bowling pin (the game's own pin model, wearing the pin library's
+// Brunswick Max Crown picture) standing on the hub as the post, a round chrome foot ring round the pin's belly on four
+// struts from the pin's foot, and a round seat on the pin's head: blue sides with white crowns, a grey vinyl top with the
+// Brunswick logo and three ball holes. The pieces have no colliders: a ball that reaches a stool is bounced off it
+// by BowlingPlus (RoStoolBounce), so the legs never trip it up and the shot always ends in a gutter.
+static const float kStoolLegR = 0.17f;             // the legs' reach from the post (metres)
+static const float kStoolReach = 0.245f;           // ball centre to the stool's middle when the ball meets a leg or the ring
+static const float kStoolPinH = 0.44f;             // the post: a pin 1.15 x real size
+static const float kStoolPinBase = 0.065f;         // ...standing on the hub
+
+static BPQuat QMul(BPQuat a, BPQuat b) {
+    return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
+}
+static BPQuat QAxis(float ax, float ay, float az, float rad) {
+    float s = sinf(rad * 0.5f);
+    return { ax * s, ay * s, az * s, cosf(rad * 0.5f) };
+}
+
+// The game's own pin model: PinsRender/PinsRender/candlepin_graphicsN/pin_graphics/polySurface60 (the lane's visible
+// pins, "pin_diff" material). Taken from the one standing on the head pin's spot (its renderer's world box must be a
+// standing pin's), with its scale and height; cloned (Object.Instantiate: just a MeshFilter and a MeshRenderer), scaled
+// up to kStoolPinH and turned so its Brunswick side faces the bowler (RoStoolPin).
+static Ref sRoPinSrc;
+static BFVec3 sRoPinScale = { 1, 1, 1 };
+static bool sRoPinKnown = false;
+static const MethodInfo *sRoFindGO = nullptr, *sRoInstantiate = nullptr, *sRoGetRot = nullptr, *sRoLossy = nullptr, *sRoBounds = nullptr;
+static float sRoPinTall = 0.381f;                 // the source pin's height on the lane (its renderer's bounds)
+
+static void RoFindPinModel() {
+    if (sRoPinKnown && sRoPinSrc.get()) return;
+    if (!sRoFindGO) {
+        sRoFindGO = XM(sRoGO, "Find", 1, "System.String");
+        sRoInstantiate = XM(X.Object, "Instantiate", 1, "UnityEngine.Object");
+        sRoGetRot = XM(X.Transform, "get_rotation", 0);
+        sRoLossy = XM(X.Transform, "get_lossyScale", 0);
+        sRoBounds = XM(sRoRenderer, "get_bounds", 0);
+    }
+    if (!sRoFindGO || !sRoInstantiate || !sRoGetRot || !sRoLossy || !sRoBounds || !X.tr_getPos || !sRoRenderer) return;
+    Il2CppArray *kegs = TurnKegels();
+    void *keg = kegs && Len(kegs) ? Elem(kegs, 0) : nullptr;
+    bool ok = false;
+    void *ktr = Alive(keg) ? (void *)Invoke(N.GO_getTransform, keg, nullptr, &ok) : nullptr;
+    Il2CppObject *kb = ok && ktr ? Invoke(X.tr_getPos, ktr, nullptr, &ok) : nullptr;
+    if (!ok || !kb) return;
+    BFVec3 kp = *(BFVec3 *)Unbox(kb);
+    float best = 0.5f;
+    for (int i = 1; i <= 10; i++) {
+        char path[96];
+        snprintf(path, sizeof(path), "PinsRender/PinsRender/candlepin_graphics%d/pin_graphics/polySurface60", i);
+        void *fa[] = { NewString(path) };
+        void *go = (void *)Invoke(sRoFindGO, nullptr, fa, &ok);
+        if (!ok || !Alive(go)) continue;
+        void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+        Il2CppObject *pb = ok && tr ? Invoke(X.tr_getPos, tr, nullptr, &ok) : nullptr;
+        if (!ok || !pb) continue;
+        BFVec3 p = *(BFVec3 *)Unbox(pb);
+        float dx = p.x - kp.x, dy = p.y - kp.y, d = sqrtf(dx * dx + dy * dy);
+        if (d >= best) continue;
+        Il2CppObject *rb = Invoke(sRoGetRot, tr, nullptr, &ok);
+        Il2CppObject *sb = ok && rb ? Invoke(sRoLossy, tr, nullptr, &ok) : nullptr;
+        if (!ok || !sb) continue;
+        // where the model stands: its renderer's world box (centre, half size); the pin's foot is the box's bottom
+        void *ren = GetComp(go, TypeOf(sRoRenderer));
+        Il2CppObject *bb = ren ? Invoke(sRoBounds, ren, nullptr, &ok) : nullptr;
+        if (!ok || !bb) continue;
+        struct { BFVec3 c, e; } box = *(decltype(box) *)Unbox(bb);
+        if (box.e.z < 0.15f || box.e.z > 0.25f || box.e.x > 0.1f || box.e.y > 0.1f) continue;   // not standing
+        best = d;
+        sRoPinSrc.set(go);
+        sRoPinTall = 2 * box.e.z;
+        sRoPinScale = *(BFVec3 *)Unbox(sb);
+        sRoPinKnown = true;
+    }
+}
+
+static void *RoStoolPin(float x, float y, float z, int layer) {   // the post: a clone of the game's pin, 1.15 x
+    RoFindPinModel();
+    void *src = sRoPinSrc.get();
+    if (!src || sRoParts >= kRoMaxParts) return nullptr;
+    void *a[] = { src };
+    bool ok = false;
+    void *go = (void *)Invoke(sRoInstantiate, nullptr, a, &ok);
+    if (!ok || !Alive(go)) return nullptr;
+    sRoPart[sRoParts++].set(go);
+    if (sRoSetName) { void *na[] = { NewString("BowlingPlus stool pin") }; Invoke(sRoSetName, go, na); }
+    void *tr = (void *)Invoke(N.GO_getTransform, go, nullptr, &ok);
+    if (!ok || !tr) return go;
+    const float k = kStoolPinH / sRoPinTall;
+    BFVec3 sc = { sRoPinScale.x * k, sRoPinScale.y * k, sRoPinScale.z * k };
+    // The lane's pins are set at random turns (BowlingPlus's own pin turns), so the source pin's turn says nothing about
+    // where its logo is. The mesh (polySurface60: 0.38 tall along its own y, centred on its origin) wears the pin
+    // picture's Brunswick logo toward its own -z (its USBC side toward +z; read from the mesh's UVs through the app's
+    // own wrap-to-layout converter). Turned so its y is up (world z) and its -z faces the bowler (world -y): its x goes
+    // to world -x, a half turn about (0, 1, 1)/sqrt(2).
+    BPQuat front = { 0, 0.70710678f, 0.70710678f, 0 };
+    BFVec3 pos = { x, y, z + 0.5f * kStoolPinH };   // the mesh's middle
+    void *sa[] = { &sc };
+    Invoke(sRoSetScale, tr, sa);
+    void *qa[] = { &front };
+    Invoke(sRoSetRot, tr, qa);
+    void *pa[] = { &pos };
+    Invoke(sRoSetPos, tr, pa);
+    if (layer >= 0 && sRoSetLayer) { void *la[] = { &layer }; Invoke(sRoSetLayer, go, la); }
+    void *m = RoMaterial(RO_PIN);
+    void *r = m && sRoRenderer ? GetComp(go, TypeOf(sRoRenderer)) : nullptr;
+    if (r) { void *ma[] = { m }; Invoke(sRoSetMat, r, ma); }
+    sRoStoolPins++;
+    return go;
+}
+
+static void RoStool(float x, float y, int layer) {
+    const float z = sLaneZ;
+    const BPQuat up = { 0.70710678f, 0, 0, 0.70710678f };   // a cylinder's own axis (local y) to world up (z)
+    // the base: four flat chrome bars in an X (diagonal to the lane), from a low hub down to the lane
+    const float hubZ = z + 0.04f, legLen = 0.18f, drop = 0.025f;
+    float slope = atanf(drop / kStoolLegR);
+    for (int k = 0; k < 4; k++) {
+        float phi = 0.7853982f + k * 1.5707963f;
+        BPQuat q = QMul(QAxis(0, 0, 1, phi - 1.5707963f), QAxis(1, 0, 0, -slope));   // local y: outwards and down
+        float c = cosf(slope) * legLen * 0.5f;
+        BFVec3 pos = { x + cosf(phi) * c, y + sinf(phi) * c, hubZ - sinf(slope) * legLen * 0.5f };
+        RoPiece(3, pos, q, BFVec3{ 0.034f, legLen, 0.013f }, RO_CHROME, layer, 0, "BowlingPlus stool leg");
+    }
+    RoPiece(2, BFVec3{ x, y, z + 0.045f }, up, BFVec3{ 0.07f, 0.02f, 0.07f }, RO_CHROME, layer, 0, "BowlingPlus stool hub");
+    // the post
+    if (!RoStoolPin(x, y, z + kStoolPinBase, layer))
+        RoPiece(2, BFVec3{ x, y, z + kStoolPinBase + kStoolPinH * 0.5f }, up, BFVec3{ 0.07f, kStoolPinH * 0.5f, 0.07f }, RO_CHROME, layer, 0, "BowlingPlus stool post");
+    // the foot ring round the pin's belly: a circle of short chrome tubes
+    const float ringR = 0.15f, ringZ = z + 0.18f;
+    const int segs = 28;
+    for (int k = 0; k < segs; k++) {
+        float th = (k + 0.5f) * 6.2831853f / segs;
+        BPQuat q = QAxis(0, 0, 1, th);                // local y along the ring
+        BFVec3 pos = { x + ringR * cosf(th), y + ringR * sinf(th), ringZ };
+        RoPiece(2, pos, q, BFVec3{ 0.014f, ringR * 3.1415927f / segs * 1.12f, 0.014f }, RO_CHROME, layer, 0, "BowlingPlus stool ring");
+    }
+    // ...held by four struts from the foot of the pin, out and up to the ring (over the legs)
+    const float r0 = 0.035f, z0 = z + kStoolPinBase + 0.025f;
+    float dr = ringR - r0, dz = ringZ - z0, len = sqrtf(dr * dr + dz * dz), lift = atan2f(dz, dr);
+    for (int k = 0; k < 4; k++) {
+        float phi = 0.7853982f + k * 1.5707963f, rm = r0 + 0.5f * dr;
+        BPQuat q = QMul(QAxis(0, 0, 1, phi - 1.5707963f), QAxis(1, 0, 0, lift));    // local y: outwards and up
+        RoPiece(2, BFVec3{ x + rm * cosf(phi), y + rm * sinf(phi), z0 + 0.5f * dz }, q, BFVec3{ 0.011f, len * 0.5f, 0.011f }, RO_CHROME, layer, 0, "BowlingPlus stool strut");
+    }
+    // the seat on the pin's head: blue sides with crowns; on top the grey vinyl with the logo and three ball holes
+    const float seatZ = z + kStoolPinBase + kStoolPinH - 0.01f;
+    RoPiece(2, BFVec3{ x, y, seatZ + 0.04f }, up, BFVec3{ 0.34f, 0.04f, 0.34f }, RO_BAND, layer, 0, "BowlingPlus stool seat");
+    RoPiece(2, BFVec3{ x, y, seatZ + 0.086f }, up, BFVec3{ 0.325f, 0.008f, 0.325f }, RO_TOP, layer, 0, "BowlingPlus stool cushion");
+}
+
+// ---- gates: barriers across part of the lane (as in Wii bowling) ----
+// One or two on one line across the lane. Each is a striped panel on two chrome posts with feet; a gate at the lane's
+// edge stops 2.7 cm short of it (the ball in the gutter would show through it). No colliders: BowlingPlus bounces a ball
+// that meets a panel back off its face and along it into the nearer gutter (RoGateBounce); the shot scores 0.
+static const float kGateThick = 0.05f, kGateBottom = 0.045f, kGateTall = 0.20f, kGateEdge = 0.50f;
+
+static void RoGates(const BPGateLayout &G, int layer) {
+    const BPQuat up = { 0.70710678f, 0, 0, 0.70710678f };   // local y up, local z toward the bowler (the cube's
+                                                            // +z face shows the picture upright: u = 0.5 - x, v = 0.5 + y)
+    const float y = sFoulY + G.y, z = sLaneZ;
+    for (int i = 0; i < G.n; i++) {
+        float x0 = fmaxf(G.g[i].x0, -kGateEdge), x1 = fminf(G.g[i].x1, kGateEdge), w = x1 - x0;
+        RoPiece(3, BFVec3{ sLaneX + 0.5f * (x0 + x1), y, z + kGateBottom + 0.5f * kGateTall }, up,
+                BFVec3{ w, kGateTall, kGateThick }, RO_GATE, layer, 0, "BowlingPlus gate");
+        for (int e = 0; e < 2; e++) {
+            float px = sLaneX + (e ? x1 : x0);
+            RoPiece(2, BFVec3{ px, y, z + 0.14f }, up, BFVec3{ 0.04f, 0.14f, 0.04f }, RO_CHROME, layer, 0, "BowlingPlus gate post");
+            RoPiece(3, BFVec3{ px, y, z + 0.008f }, BPQuat{ 0, 0, 0, 1 }, BFVec3{ 0.045f, 0.22f, 0.016f }, RO_CHROME, layer, 0, "BowlingPlus gate foot");
+        }
+    }
+}
+
+// one lane layout: what RoBuildShot puts on the lane (a rack's, or a replayed shot's)
+static float sRoReplayX = NAN;                    // a replayed sliding ramp's x (NAN: follow the clock)
+static float RoRampX(int i);
+struct RoShot { int kind, layout; bool moving; float moveA, moveBaseX; double moveT0; };
+static RoShot sRoLive = { 0, -1, false, 0, 0, 0 };   // the rack's own layout (put back after a replay)
+static int sRoShowing = -1;                        // what's on the lane: -1 the rack's, -2 nothing (a replay we
+                                                   // don't know), else the replayed shot's snapshot
+
+static bool RoBuildShot(const RoShot &sh, bool log) {
+    RoClear(nullptr);
+    if (!sLaneRef) { sRoWhy = "lane not found yet"; return false; }
+    if (sh.kind == 0 || sh.layout < 0) return false;
+    int layer = RoLayer();
+    sRoMoving = false;
+    if (sh.kind == 1) {
+        if (sh.layout >= kRampLayoutCount) return false;
+        const BPRampLayout &L = kRampLayouts[sh.layout];
+        sRoKind = 1; sRoLayout = sh.layout;
+        sRoMoving = sh.moving; sRoMoveA = sh.moveA; sRoMoveBaseX = sh.moveBaseX; sRoMoveT0 = sh.moveT0;
+        for (int i = 0; i < L.n; i++) {
+            BFVec3 pos, scale; BPQuat q;
+            RoRampPose(L.r[i], i == 0 && sRoMoving ? RoRampX(0) : L.r[i].x, pos, q, scale);
+            RoPiece(3, pos, q, scale, 0, layer, 3, "BowlingPlus ramp");
+        }
+        if (log) Bp175Log("ramps: \"%s\" (%d ramp%s)%s", L.name, L.n, L.n == 1 ? "" : "s", sRoMoving ? ", sliding" : "");
+    } else if (sh.kind == 3) {
+        if (sh.layout >= kGateLayoutCount) return false;
+        const BPGateLayout &G = kGateLayouts[sh.layout];
+        sRoKind = 3; sRoLayout = sh.layout;
+        RoGates(G, layer);
+        if (log) Bp175Log("ramps: gates \"%s\" (%d gate%s at %.1f m)", G.name, G.n, G.n == 1 ? "" : "s", G.y);
+    } else {
+        if (sh.layout >= kStoolLayoutCount) return false;
+        const BPStoolLayout &L = kStoolLayouts[sh.layout];
+        sRoKind = 2; sRoLayout = sh.layout;
+        for (int i = 0; i < L.n; i++) RoStool(sLaneX + L.s[i].x, sFoulY + L.s[i].y, layer);
+        if (log) Bp175Log("ramps: obstacles \"%s\" (%d barstool%s)", L.name, L.n, L.n == 1 ? "" : "s");
+    }
+    if (!sRoParts) { sRoKind = 0; sRoLayout = -1; sRoMoving = false; sRoFails++; sRoWhy = "couldn't make the pieces"; return false; }
+    sRoWhy = "on the lane";
+    return true;
+}
+
+static bool RoBuild(bool lastFrame) {              // a new random layout for a new rack
+    RoShot sh = { 0, -1, false, 0, 0, 0 };
+    // which kinds are on (Ramps, Barstools, Gates in the menu; all off counts as all on), picked in proportion to
+    // their number of layouts
+    bool useR = gBF.roRamps, useS = gBF.roStools, useG = gBF.roGates;
+    if (!useR && !useS && !useG) useR = useS = useG = true;
+    int nR = useR ? kRampLayoutCount : 0, nS = useS ? kStoolLayoutCount : 0, nG = useG ? kGateLayoutCount : 0;
+    int roll = (int)(RoRand() % (uint32_t)(nR + nS + nG));
+    int kind = roll < nR ? 1 : roll < nR + nS ? 2 : 3;
+    if (useR && lastFrame && RoRand() % 100 < 45) { kind = 1; sh.moving = true; }
+    if (kind == 3) {
+        int pick;
+        for (int tries = 0; ; tries++) { pick = (int)(RoRand() % (uint32_t)kGateLayoutCount); if (pick != sRoLastGate || tries > 20) break; }
+        sh.kind = 3; sh.layout = pick; sRoLastGate = pick;
+    } else if (kind == 1) {
+        int pick;
+        for (int tries = 0; ; tries++) {
+            pick = (int)(RoRand() % (uint32_t)kRampLayoutCount);
+            if (tries > 20) break;
+            if (pick == sRoLastLayout) continue;
+            if (sh.moving && kRampLayouts[pick].n != 1) continue;              // only single ramps slide
+            if (sh.moving && kRampLayouts[pick].r[0].w > 0.6f) continue;
+            break;
+        }
+        const BPRampLayout &L = kRampLayouts[pick];
+        if (sh.moving && L.n != 1) sh.moving = false;
+        sh.kind = 1; sh.layout = pick; sRoLastLayout = pick;
+        if (sh.moving) {
+            sh.moveA = 0.5f - 0.5f * L.r[0].w - 0.02f;
+            sh.moveBaseX = 0;
+            float s0 = sh.moveA > 0.01f ? fmaxf(-1.0f, fminf(1.0f, L.r[0].x / sh.moveA)) : 0.0f;
+            sh.moveT0 = BP175_CLOCK - asinf(s0) / 6.2831853f * 7.0;   // it starts where the layout puts it
+        }
+    } else {
+        int pick;
+        for (int tries = 0; ; tries++) { pick = (int)(RoRand() % (uint32_t)kStoolLayoutCount); if (pick != sRoLastStool || tries > 20) break; }
+        sh.kind = 2; sh.layout = pick; sRoLastStool = pick;
+    }
+    sRoLive = sh;
+    sRoShowing = -1;
+    if (!RoBuildShot(sh, true)) return false;
+    sRoBuilds++;
+    return true;
+}
+
+static float RoRampX(int i) {                       // a ramp's x now (lane-relative), sliding in the last frame
+    const BPRampLayout &L = kRampLayouts[sRoLayout];
+    if (!sRoMoving) return L.r[i].x;
+    if (sRoReplayX == sRoReplayX) return sRoReplayX;   // a replay: where it was when the ball was where it is now
+    double t = BP175_CLOCK - sRoMoveT0;
+    return sRoMoveBaseX + sRoMoveA * sinf((float)(t * 6.2831853 / 7.0));
+}
+
+static void RoMoveTick() {
+    if (!sRoMoving || sRoKind != 1 || sRoParts < 1) return;
+    void *go = sRoPart[0].get();
+    bool ok = false;
+    void *tr = go ? (void *)Invoke(N.GO_getTransform, go, nullptr, &ok) : nullptr;
+    if (!ok || !tr) return;
+    BFVec3 pos, scale; BPQuat q;
+    RoRampPose(kRampLayouts[sRoLayout].r[0], RoRampX(0), pos, q, scale);
+    void *pa[] = { &pos };
+    Invoke(sRoSetPos, tr, pa);
+}
+
+// the shot scores 0: the ball goes into the nearer gutter, keeping its speed down the lane. It's put just above the
+// gutter's middle (x +-0.649 m), clear of the lane edge, the planks and the dividers, and drops in: the engine would
+// push an overlapping ball out at any speed (InventaryData.ResetRigidBody sets its max depenetration to 100000).
+static void RoToGutter(const BFVec3 &p, const char *why, float speed = 0) {   // speed: down the gutter (0: the ball's own)
+    void *rb = BallBody();
+    BFVec3 v = { 0, 0, 0 };
+    if (!rb || !sRoRbSetPos || !BpBallVel(rb, v)) return;
+    float side = p.x - sLaneX >= 0 ? 1.0f : -1.0f;
+    BFVec3 to = { sLaneX + side * 0.649f, p.y, sLaneZ + 0.115f };
+    void *pa[] = { &to };
+    Invoke(sRoRbSetPos, rb, pa);
+    BFVec3 nv = { 0, speed > 0 ? speed : fmaxf(v.y, 2.0f) * 0.9f, 0 };
+    void *va[] = { &nv };
+    Invoke(N.RB_setVel, rb, va);
+    Bp175Log("ramps: %s, 0 for this shot", why);
+}
+
+static float SegDist2(float ax, float ay, float bx, float by, float px, float py) {   // point to segment, squared
+    float dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    float t = l2 > 1e-8f ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    float qx = ax + t * dx - px, qy = ay + t * dy - py;
+    return qx * qx + qy * qy;
+}
+
+static bool RoOnRamp(const BFVec3 &p) {           // over a ramp's footprint (or just before it)
+    if (sRoKind != 1 || sRoLayout < 0) return false;
+    const BPRampLayout &L = kRampLayouts[sRoLayout];
+    float lx = p.x - sLaneX, ly = p.y - sFoulY;
+    for (int i = 0; i < L.n; i++) {
+        const BPRamp &r = L.r[i];
+        float back = r.y0 + r.h / tanf(r.deg * 0.0174533f);
+        if (ly > r.y0 - 0.3f && ly < back + 0.05f && fabsf(lx - RoRampX(i)) < 0.5f * r.w + 0.12f) return true;
+    }
+    return false;
+}
+
+// the ball meets a barstool (it has no collider of its own): it bounces off the legs like off a heavy steel stand.
+// Put it where it touched (kStoolReach from the stool's middle), reflect its velocity off the contact normal with some
+// loss, scrub most of its spin (so the hook can't bring it back) and keep it going down the lane and off to the side the
+// contact points to, fast enough to reach the gutter before the pins: a shot that hits a barstool scores 0.
+static bool RoStoolBounce(const BFVec3 &p, int i) {
+    const BPStoolLayout &L = kStoolLayouts[sRoLayout];
+    void *rb = BallBody();
+    BFVec3 v = { 0, 0, 0 };
+    if (!rb || !BpBallVel(rb, v)) return false;
+    float sx = L.s[i].x, sy = L.s[i].y;
+    float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY, bx = p.x - sLaneX, by = p.y - sFoulY;
+    float R = kStoolReach, cx = bx, cy = by;
+    float fx = ax - sx, fy = ay - sy, dx = bx - ax, dy = by - ay;
+    float qa = dx * dx + dy * dy, qb = 2 * (fx * dx + fy * dy), qc = fx * fx + fy * fy - R * R;
+    if (qc <= 0) {                                  // already inside at the last frame: push straight out
+        float d = sqrtf(fx * fx + fy * fy);
+        if (d < 1e-4f) { fx = bx - ax; fy = 0.01f; d = sqrtf(fx * fx + fy * fy); }
+        if (d < 1e-4f) { fx = 1; fy = 0; d = 1; }
+        cx = sx + fx / d * R; cy = sy + fy / d * R;
+    } else if (qa > 1e-8f) {                        // first touch along the frame's path
+        float disc = qb * qb - 4 * qa * qc;
+        float t = disc > 0 ? (-qb - sqrtf(disc)) / (2 * qa) : 1;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        cx = ax + t * dx; cy = ay + t * dy;
+    }
+    float nx = cx - sx, ny = cy - sy, nl = sqrtf(nx * nx + ny * ny);
+    if (nl < 1e-4f) return false;
+    nx /= nl; ny /= nl;
+    float vn = v.x * nx + v.y * ny;
+    if (vn >= 0) return false;                      // moving away from it already
+    float speed = sqrtf(v.x * v.x + v.y * v.y);
+    if (speed < 0.3f) return false;
+    // reflect: restitution 0.45 along the normal, some friction along the leg
+    float e = 0.45f;
+    float tx = v.x - vn * nx, ty = v.y - vn * ny;
+    float vx = 0.85f * tx - e * vn * nx, vy = 0.85f * ty - e * vn * ny;
+    float side = fabsf(nx) > 0.05f ? (nx > 0 ? 1.0f : -1.0f) : (cx - sx >= 0 ? 1.0f : -1.0f);
+    if (fabsf(nx) <= 0.05f && fabsf(cx - sx) < 0.01f) side = (RoRand() & 1) ? 1.0f : -1.0f;
+    float out = 0.8f * speed;                       // what's left after the knock
+    vy = fmaxf(vy, 0.35f * speed);                  // never back up the lane
+    float pinsY = sLaneRef ? sHeadY - sFoulY : 18.263f;
+    float left = fmaxf(pinsY - 0.9f - cy, 0.3f);
+    float dist = 0.53f - side * cx + 0.05f;         // to just over the gutter's edge
+    float need = 1.2f * dist / (left / vy);
+    if (side * vx < need) vx = side * fmaxf(need, fabsf(vx));
+    vx = side * fabsf(vx);
+    if (sqrtf(vx * vx + vy * vy) > out) {
+        if (fabsf(vx) < out * 0.94f) vy = fmaxf(sqrtf(out * out - vx * vx), 0.34f * out);
+        else { vx = side * out * 0.94f; vy = out * 0.34f; }
+    }
+    BFVec3 to = { sLaneX + cx, sFoulY + cy, p.z };
+    BFVec3 nv = { vx, vy, v.z };
+    if (sRoRbSetPos) { void *pa[] = { &to }; Invoke(sRoRbSetPos, rb, pa); }
+    void *va[] = { &nv };
+    Invoke(N.RB_setVel, rb, va);
+    if (N.RB_getAngVel && N.RB_setAngVel) {         // the knock takes most of the spin off
+        bool ok = false;
+        Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+        if (ok && bw) {
+            BFVec3 w = *(BFVec3 *)Unbox(bw);
+            BFVec3 nw = { w.x * 0.3f, w.y * 0.3f, w.z * 0.3f };
+            void *wa[] = { &nw };
+            Invoke(N.RB_setAngVel, rb, wa);
+        }
+    }
+    if (!sRoStoolHit) sRoStoolHits++;
+    sRoStoolHit = true;
+    sRoBounces++;
+    Bp175Log("ramps: bounced off barstool %d (%.2f, %.2f) -> (%.2f, %.2f), 0 for this shot", i + 1, v.x, v.y, vx, vy);
+    return true;
+}
+
+static void RoSnapStart();
+static void RoSnapSample(const BFVec3 &p);
+
+// the ball meets a gate's panel: it's put against the face, bounces back a little and runs along the face toward the
+// nearer gutter, spin mostly gone; RoThrowTick sends it down the gutter once it's there. The shot scores 0.
+static bool RoGateBounce(const BFVec3 &p, float cx, float face, int i) {
+    void *rb = BallBody();
+    BFVec3 v = { 0, 0, 0 };
+    if (!rb || !BpBallVel(rb, v) || v.y <= 0.2f) return false;
+    float speed = sqrtf(v.x * v.x + v.y * v.y);
+    float side = fabsf(cx) > 0.01f ? (cx > 0 ? 1.0f : -1.0f) : ((RoRand() & 1) ? 1.0f : -1.0f);
+    float vx = side * fminf(fmaxf(0.55f * speed, 2.0f), 5.0f), vy = -fminf(0.15f * v.y, 0.8f);
+    BFVec3 to = { sLaneX + cx, sFoulY + face - 0.005f, p.z };
+    BFVec3 nv = { vx, vy, fminf(v.z, 0.0f) };
+    if (sRoRbSetPos) { void *pa[] = { &to }; Invoke(sRoRbSetPos, rb, pa); }
+    void *va[] = { &nv };
+    Invoke(N.RB_setVel, rb, va);
+    if (N.RB_getAngVel && N.RB_setAngVel) {
+        bool ok = false;
+        Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+        if (ok && bw) {
+            BFVec3 w = *(BFVec3 *)Unbox(bw);
+            BFVec3 nw = { w.x * 0.2f, w.y * 0.2f, w.z * 0.2f };
+            void *wa[] = { &nw };
+            Invoke(N.RB_setAngVel, rb, wa);
+        }
+    }
+    sRoGateHit = true;
+    sRoGateT = BP175_CLOCK;
+    sRoGateV = fmaxf(0.6f * speed, 3.0f);
+    sRoGateHits++;
+    Bp175Log("ramps: hit gate %d at x %.2f (%.2f m/s), off to the %s gutter, 0 for this shot", i + 1, cx, speed, side > 0 ? "2-pin side" : "7-pin side");
+    return true;
+}
+
+static void RoThrowTick() {
+    BFVec3 p;
+    if (!BpBallPos(p)) return;
+    if (!sRoThrow) {
+        void *rb = BallBody();
+        BFVec3 v;
+        if (!rb || !BpBallVel(rb, v) || v.x * v.x + v.y * v.y < 1.0f) return;   // not launched yet
+        sRoThrow = true; sRoThrew = true; sRoDecided = false; sRoHit = false; sRoAirEarly = false; sRoPrev = p;
+        sRoStoolHit = false; sRoLateDone = false; sRoGateHit = false;
+        DampStart(8.0);
+        RoSnapStart();
+    }
+    RoSnapSample(p);
+    if (sRoGateHit && !sRoDecided) {               // bounced off a gate: once it's over the gutter, down the gutter
+        if (fabsf(p.x - sLaneX) > 0.56f || BP175_CLOCK - sRoGateT > 1.5) {
+            sRoDecided = true;
+            RoToGutter(p, "hit a gate", sRoGateV);
+        }
+        sRoPrev = p;
+        return;
+    }
+    if (sRoDecided || sRoKind == 0 || sRoLayout < 0) { sRoPrev = p; return; }
+    float lx = p.x - sLaneX, ly = p.y - sFoulY, lz = p.z - sLaneZ;
+    if (fabsf(lx) > 0.53f) { sRoDecided = true; sRoPrev = p; return; }      // in a gutter already: 0 anyway
+    if (sRoKind == 1) {
+        const BPRampLayout &L = kRampLayouts[sRoLayout];
+        float lastBack = 0, firstY0 = 1e9f;
+        for (int i = 0; i < L.n; i++) firstY0 = fminf(firstY0, L.r[i].y0);
+        if (ly < firstY0 - 0.2f && lz > 0.16f) sRoAirEarly = true;          // lofted before the ramps
+        for (int i = 0; i < L.n; i++) {
+            const BPRamp &r = L.r[i];
+            float th = r.deg * 0.0174533f, back = r.y0 + r.h / tanf(th);
+            lastBack = fmaxf(lastBack, back);
+            float dx = fabsf(lx - RoRampX(i));
+            bool on = false;
+            if (ly >= r.y0 && ly <= back && dx <= 0.5f * r.w + 0.02f) {
+                float hs = (ly - r.y0) * tanf(th);              // the ramp's surface under the ball
+                on = hs > 0.025f && lz >= 0.108f + 0.5f * hs && lz <= 0.108f + hs + 0.15f;
+            }
+            // riding the ramp's side edge: the ball's centre is just outside the ramp but the ball sits on its corner,
+            // lifted off the lane (it rolls off the side, still going for the pins)
+            if (!on && ly >= r.y0 && ly <= back && dx <= 0.5f * r.w + 0.10f) {
+                float hs = (ly - r.y0) * tanf(th);
+                on = hs > 0.03f && lz >= 0.108f + 0.02f && lz <= 0.108f + hs + 0.15f;
+            }
+            // just past it and flying (a slow frame can skip the climb itself), unless it was lofted over everything
+            if (!on && !sRoAirEarly && ly > back && ly < back + 2.5f && dx < 0.5f * r.w + 0.3f && lz > 0.19f) on = true;
+            if (on) {
+                sRoHit = true;
+                sRoDecided = true;
+                sRoHits++;
+                Bp175Log("ramps: over ramp %d of \"%s\"", i + 1, L.name);
+                break;
+            }
+        }
+        if (!sRoDecided && ly > lastBack + 0.6f) {
+            sRoDecided = true;
+            sRoMisses++;
+            RoToGutter(p, "missed the ramp");
+        }
+    } else if (sRoKind == 3) {
+        const BPGateLayout &G = kGateLayouts[sRoLayout];
+        float face = G.y - 0.5f * kGateThick - 0.108f;   // the ball's centre when it meets a panel's face
+        float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY;
+        if (ay < face && ly >= face && lz - 0.108f < kGateBottom + kGateTall) {   // reached the line, not flying over
+            float t = (face - ay) / fmaxf(ly - ay, 1e-5f), cx = ax + t * (lx - ax);
+            for (int i = 0; i < G.n; i++) {
+                float x0 = fmaxf(G.g[i].x0, -kGateEdge), x1 = fminf(G.g[i].x1, kGateEdge);
+                if (cx >= x0 - 0.10f && cx <= x1 + 0.10f && RoGateBounce(p, cx, face, i)) break;
+            }
+        }
+        if (!sRoGateHit && ly > G.y + 0.5f) sRoDecided = true;           // through the opening
+    } else {
+        const BPStoolLayout &L = kStoolLayouts[sRoLayout];
+        float lastY = 0;
+        float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY;
+        for (int i = 0; i < L.n; i++) {
+            lastY = fmaxf(lastY, L.s[i].y);
+            if (lz < 0.70f && SegDist2(ax, ay, lx, ly, L.s[i].x, L.s[i].y) < kStoolReach * kStoolReach &&
+                RoStoolBounce(p, i)) break;
+        }
+        if (!sRoStoolHit && ly > lastY + 0.5f) sRoDecided = true;         // cleared them
+        // after a barstool the shot is 0: a ball that is somehow still on the lane near the pins goes in the gutter
+        float pinsY = sLaneRef ? sHeadY - sFoulY : 18.263f;
+        if (sRoStoolHit && !sRoDecided && ly > pinsY - 1.2f) {
+            sRoDecided = true;
+            sRoLateGutters++;
+            RoToGutter(p, "still on the lane after a barstool");
+        }
+    }
+    sRoPrev = p;
+}
+
+// ---- replays: show the layout each shot was bowled on ----
+// A new rack gets a new layout as soon as the pins are reset, so a replay watched later would show the wrong lane.
+// Every shot bowled on a layout keeps a snapshot: the layout, the replay's own frame and throw numbers, and where the
+// ball crossed the foul line and its breakpoint, read from the game's recording (RunPsycsTest.replayManager) through
+// ReplayManager's own getters. In the replayer, the playing ReplayManager (ReplayerInterfaceManager.replayManagers
+// [curRecordId], or any that is playing) is asked the same things; the snapshot that matches is put on the lane,
+// nothing if none does (a shot from before, or with no obstacles), and the rack's layout comes back after the replay.
+// A sliding ramp follows the ball: its x was sampled against the ball's distance down the lane while it was bowled.
+struct RoSnap {
+    RoShot shot;
+    int frame, thr;                                // ReplayData.FrameIndex / ThrowIndex
+    BFVec3 foul, brk;                              // the ball after the foul line, at the breakpoint
+    int n;                                         // a sliding ramp's x against the ball's y
+    float sy[96], sx[96];
+    bool used, keyed;
+    uint32_t seq;
+};
+static const int kRoSnaps = 24;
+static RoSnap sRoSnaps[kRoSnaps];
+static uint32_t sRoSnapSeq = 0;
+static int sRoSnapNext = 0, sRoCurSnap = -1, sRoSnapsMade = 0, sRoReplayMatches = 0, sRoReplayUnknown = 0;
+static ObjRef sRoRecMgr, sRoRecData, sRoPlayData;
+static bool sRoRpLooked = false;
+static int sRoOffRec = -1, sRoOffPrac = -1, sRoOffIface = -1, sRoOffMgrs = -1, sRoOffCur = -1;
+static const MethodInfo *sRmData = nullptr, *sRmPlayed = nullptr, *sRmFoul = nullptr, *sRmBrk = nullptr, *sRmNow = nullptr,
+                        *sRdFrame = nullptr, *sRdThrow = nullptr, *sRdCount = nullptr;
+static int sRoRecFrames = 0;
+
+static int RoTypedOff(Il2CppClass *k, const char *name, const char *type) {
+    char tn[160];
+    return k && FieldTypeName(k, name, tn, sizeof(tn)) && !strcmp(tn, type) ? FieldOffset(k, name) : -1;
+}
+
+static bool RoReplayResolve() {
+    if (sRoRpLooked) return sRmData && sRdFrame;
+    sRoRpLooked = true;
+    Il2CppClass *rm = FindClass("", "ReplayManager"), *rd = FindClass("", "ReplayData"), *ri = FindClass("", "ReplayerInterfaceManager");
+    if (!rm || !rd || !N.RunPsycsTest) return false;
+    sRoOffRec = RoTypedOff(N.RunPsycsTest, "replayManager", "ReplayManager");
+    sRoOffPrac = RoTypedOff(N.RunPsycsTest, "replayPractice", "ReplayManager");
+    sRoOffIface = RoTypedOff(N.RunPsycsTest, "manReplayInterface", "ReplayerInterfaceManager");
+    sRoOffMgrs = RoTypedOff(ri, "replayManagers", "ReplayManager[]");
+    sRoOffCur = RoTypedOff(ri, "curRecordId", "System.Int32");
+    sRmData = XM(rm, "get_Data", 0);
+    sRmPlayed = XM(rm, "get_IsPlayed", 0);
+    sRmFoul = XM(rm, "GetBallPositionAfterFoulFrame", 0);
+    sRmBrk = XM(rm, "GetBallPositionAtBreakpointFrame", 0);
+    sRmNow = XM(rm, "GetBallPositionAtCurrentFrame", 0);
+    sRdFrame = XM(rd, "get_FrameIndex", 0);
+    sRdThrow = XM(rd, "get_ThrowIndex", 0);
+    sRdCount = XM(rd, "get_FrameCount", 0);
+    Bp175Log("ramps: replay lookup rec %d practice %d iface %d managers %d cur %d methods %d", sRoOffRec, sRoOffPrac, sRoOffIface,
+             sRoOffMgrs, sRoOffCur, (sRmData && sRmPlayed && sRmFoul && sRmBrk && sRmNow && sRdFrame && sRdThrow) ? 1 : 0);
+    return sRmData && sRdFrame;
+}
+
+static bool RoZero(const BFVec3 &a) { return a.x == 0 && a.y == 0 && a.z == 0; }
+
+static bool RoVecOf(const MethodInfo *m, void *obj, BFVec3 &out) {
+    if (!m || !obj) return false;
+    bool ok = false;
+    Il2CppObject *b = Invoke(m, obj, nullptr, &ok);
+    if (!ok || !b) return false;
+    out = *(BFVec3 *)Unbox(b);
+    return true;
+}
+
+// the shot's key, from a ReplayManager holding its data
+static bool RoReplayKey(void *mgr, void *&data, int &frame, int &thr, BFVec3 &foul, BFVec3 &brk) {
+    bool ok = false;
+    data = mgr && sRmData ? (void *)Invoke(sRmData, mgr, nullptr, &ok) : nullptr;
+    if (!ok || !data) return false;
+    frame = sRdFrame ? InvokeInt(sRdFrame, data, nullptr, -1) : -1;
+    thr = sRdThrow ? InvokeInt(sRdThrow, data, nullptr, -1) : -1;
+    foul = brk = BFVec3{ 0, 0, 0 };
+    RoVecOf(sRmFoul, mgr, foul);
+    RoVecOf(sRmBrk, mgr, brk);
+    return true;
+}
+
+static void RoSnapStart() {                       // a throw on a layout begins
+    if (sRoKind == 0 || sRoShowing != -1 || !RoReplayResolve()) { sRoCurSnap = -1; return; }
+    RoSnap &sn = sRoSnaps[sRoSnapNext];
+    sRoCurSnap = sRoSnapNext;
+    sRoSnapNext = (sRoSnapNext + 1) % kRoSnaps;
+    sn.shot = sRoLive;
+    sn.frame = sn.thr = -1;
+    sn.foul = sn.brk = BFVec3{ 0, 0, 0 };
+    sn.n = 0;
+    sn.used = true;
+    sn.keyed = false;
+    sn.seq = ++sRoSnapSeq;
+    sRoSnapsMade++;
+    void *rpt = sRPT.get();
+    void *mgr = rpt && sRoOffRec >= 0 ? At<void *>(rpt, sRoOffRec) : nullptr;
+    sRoRecMgr.set(mgr);
+    bool ok = false;
+    void *data = mgr ? (void *)Invoke(sRmData, mgr, nullptr, &ok) : nullptr;
+    sRoRecData.set(ok ? data : nullptr);
+    sRoRecFrames = 0;
+}
+
+static void RoSnapSample(const BFVec3 &p) {      // a sliding ramp's x against the ball's distance down the lane
+    if (sRoCurSnap < 0 || !sRoMoving) return;
+    RoSnap &sn = sRoSnaps[sRoCurSnap];
+    float ly = p.y - sFoulY;
+    if (sn.n >= 96 || (sn.n && ly < sn.sy[sn.n - 1] + 0.2f)) return;
+    sn.sy[sn.n] = ly;
+    sn.sx[sn.n] = RoRampX(0);
+    sn.n++;
+}
+
+static void RoSnapKeyTick() {                     // after the throw: read the recording's key (kept up to date until
+    if (sRoCurSnap < 0 || sFrame % 10 != 0) return;   // the next throw, in case the game fills it in late)
+    void *mgr = sRoRecMgr.get();
+    void *data = nullptr, *was = sRoRecData.get();
+    RoSnap &sn = sRoSnaps[sRoCurSnap];
+    int frame, thr;
+    BFVec3 foul, brk;
+    if (!RoReplayKey(mgr, data, frame, thr, foul, brk)) return;
+    // the recording moved on (the game reuses its ReplayData: StartRecord clears it): keep what we read
+    int count = sRdCount ? InvokeInt(sRdCount, data, nullptr, -1) : -1;
+    if ((was && data != was) || count < sRoRecFrames) { sRoCurSnap = -1; return; }
+    sRoRecFrames = count;
+    sn.frame = frame; sn.thr = thr; sn.foul = foul; sn.brk = brk;
+    sn.keyed = frame >= 0 || !RoZero(foul) || !RoZero(brk);
+}
+
+static void *RoReplayPlayer() {                   // the ReplayManager the replayer is playing
+    void *rpt = sRPT.get();
+    if (!rpt) return nullptr;
+    void *first = nullptr;
+    void *iface = sRoOffIface >= 0 ? At<void *>(rpt, sRoOffIface) : nullptr;
+    if (iface && Alive(iface) && sRoOffMgrs >= 0) {
+        Il2CppArray *a = At<Il2CppArray *>(iface, sRoOffMgrs);
+        int cur = sRoOffCur >= 0 ? At<int>(iface, sRoOffCur) : -1;
+        if (a && cur >= 0 && (size_t)cur < Len(a)) {
+            first = ((void **)Data(a))[cur];
+            if (first && sRmPlayed && InvokeBool(sRmPlayed, first, nullptr, false)) return first;
+        }
+        for (size_t i = 0; a && i < Len(a); i++) {
+            void *m = ((void **)Data(a))[i];
+            if (m && sRmPlayed && InvokeBool(sRmPlayed, m, nullptr, false)) return m;
+        }
+    }
+    int offs[2] = { sRoOffPrac, sRoOffRec };
+    for (int o : offs) {
+        void *m = o >= 0 ? At<void *>(rpt, o) : nullptr;
+        if (m && sRmPlayed && InvokeBool(sRmPlayed, m, nullptr, false)) return m;
+    }
+    return first;
+}
+
+static void RoReplayTick() {
+    if (!RoReplayResolve()) return;
+    void *mgr = RoReplayPlayer();
+    void *data = nullptr;
+    int frame = -1, thr = -1;
+    BFVec3 foul, brk;
+    if (!mgr) return;
+    if (sFrame % 5 == 0 || sRoShowing == -1) {
+        if (!RoReplayKey(mgr, data, frame, thr, foul, brk)) return;
+        bool fresh = data != sRoPlayData.get() || sRoShowing == -1;
+        if (fresh) {
+            sRoPlayData.set(data);
+            int best = -2;
+            float bestD = 0.06f;
+            for (int k = 0; k < kRoSnaps; k++) {
+                const RoSnap &sn = sRoSnaps[k];
+                if (!sn.used || !sn.keyed || sn.frame != frame || sn.thr != thr) continue;
+                // across the lane and up only: a saved replay may keep fewer frames (its compression), so the frame
+                // nearest the foul line or the breakpoint can sit a step further down the lane, but hardly to the side
+                float d = 0;
+                if (!RoZero(foul) && !RoZero(sn.foul)) d += fabsf(foul.x - sn.foul.x) + fabsf(foul.z - sn.foul.z);
+                if (!RoZero(brk) && !RoZero(sn.brk)) d += fabsf(brk.x - sn.brk.x);
+                if (RoZero(foul) && RoZero(brk)) d = 0.05f;   // no positions to go by: the latest shot with these numbers
+                if (d < bestD || (d == bestD && best >= 0 && sn.seq > sRoSnaps[best].seq)) { bestD = d; best = k; }
+            }
+            if (best != sRoShowing) {
+                sRoReplayX = NAN;
+                if (best >= 0) {
+                    if (RoBuildShot(sRoSnaps[best].shot, false)) sRoReplayMatches++;
+                    Bp175Log("ramps: replay of frame %d throw %d shows its layout (snapshot %d, off by %.3f m)", frame + 1, thr + 1, best, bestD);
+                } else {
+                    RoClear(nullptr);
+                    sRoReplayUnknown++;
+                    Bp175Log("ramps: replay of frame %d throw %d: no layout recorded for it, lane left clear", frame + 1, thr + 1);
+                }
+                sRoShowing = best;
+            }
+        }
+    }
+    if (sRoShowing >= 0 && sRoMoving && sRoKind == 1) {   // the sliding ramp, where it was when the ball was here
+        const RoSnap &sn = sRoSnaps[sRoShowing];
+        BFVec3 b;
+        if (sn.n > 0 && RoVecOf(sRmNow, mgr, b)) {
+            float ly = b.y - sFoulY, x = sn.sx[0];
+            if (ly >= sn.sy[sn.n - 1]) x = sn.sx[sn.n - 1];
+            else for (int i = 1; i < sn.n; i++)
+                if (ly < sn.sy[i]) {
+                    float t = (ly - sn.sy[i - 1]) / fmaxf(sn.sy[i] - sn.sy[i - 1], 1e-4f);
+                    t = t < 0 ? 0 : t;
+                    x = sn.sx[i - 1] + t * (sn.sx[i] - sn.sx[i - 1]);
+                    break;
+                }
+            sRoReplayX = x;
+            RoMoveTick();
+        }
+    }
+}
+
+static void RoReplayDone() {                      // out of the replayer: the rack's own layout again
+    if (sRoShowing == -1) return;
+    sRoShowing = -1;
+    sRoReplayX = NAN;
+    sRoPlayData.set(nullptr);
+    if (sRoLive.kind) RoBuildShot(sRoLive, false);
+    else RoClear(nullptr);
+}
+
+static void DampTick() {
+    if (sLoc != LOC_THROWING && sLoc != LOC_ON_PINDECK) { sDampUntil = 0; return; }
+    if (BP175_CLOCK > sDampUntil || !N.RB_getVel || !N.RB_setVel) return;
+    BFVec3 p, v;
+    void *rb = BallBody();
+    if (!rb || !BpBallPos(p) || !BpBallVel(rb, v)) return;
+    float rest = sLaneZ + 0.108f;
+    if (sLaneRef && p.y > sHeadY - 0.7f) return;  // the pins: leave the ball alone
+    if (fabsf(p.x - sLaneX) > 0.55f) return;      // in a gutter
+    if (RoOnRamp(p)) return;                      // climbing a ramp
+    if (p.z > rest + 0.03f) sDampAir = true;
+    if (sDampAir && p.z < rest + 0.02f && v.z > 0.25f) {
+        v.z = 0;
+        void *a[] = { &v };
+        Invoke(N.RB_setVel, rb, a);
+        sDampHits++;
+    }
+}
+
+static bool RoFullRack() {
+    void *rpt = sRPT.get();
+    if (!rpt || N.rpt_kegsUp < 0) return false;
+    Il2CppArray *up = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
+    if (!up || Len(up) < 10) return false;
+    for (int i = 0; i < 10; i++) if (!((bool *)Data(up))[i]) return false;
+    return true;
+}
+
+static void RampsTick() {
+    bool want = gBF.rampsMode && InPracticeOil() && sSettled && N.ok;
+    if (!want) {
+        if (sRoParts) RoClear(gBF.rampsMode ? "left Practice" : "mode off");
+        sRoThrow = false; sRoShowing = -1; sRoReplayX = NAN; sRoLive.kind = 0; sRoCurSnap = -1;
+        return;
+    }
+    if (!RoResolve()) return;
+    if (sRoParts && !sRoPart[0].get()) { sRoParts = 0; sRoKind = 0; sRoLayout = -1; sRoThrew = true; }   // a new scene took them
+    if (sLoc == LOC_REPLAYER) { RoReplayTick(); return; }   // replays show the shot's own layout
+    RoReplayDone();
+    if (sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK) { sRoLastThrowFrame = sFrame; RoMoveTick(); RoThrowTick(); return; }
+    sRoThrow = false;
+    RoSnapKeyTick();
+    RoMoveTick();
+    // a new layout for every new rack: all ten pins up after a throw, once the rack is surely done (holding the ball,
+    // or a second and a half after the throw at the rack or the top screen)
+    bool calm = sLoc == LOC_START_POS || ((sLoc == LOC_BALL_RETURNER || sLoc == LOC_UPPER_SCREEN) && sFrame - sRoLastThrowFrame > 90);
+    if (calm && sFrame % 15 == 0 && (sRoThrew || !sRoParts) && RoFullRack() && sLaneRef) {
+        int cur = 0, count = 10;
+        bool end = false;
+        bool last = GmGameInfo(GmGame(), cur, count, end) && cur >= count - 1;
+        if (RoBuild(last)) sRoThrew = false;
+    }
+}
+
+static void RampsScoreTick() {                    // the best game in this mode, frame 1 to the end
+    if (sFrame % 30 != 0 || !sSettled) return;
+    void *g = GmGame();
+    int cur = 0, count = 0;
+    bool end = false;
+    if (!GmGameInfo(g, cur, count, end)) return;
+    bool on = gBF.rampsMode && BpPractice();
+    if (on && g != sRoGame.get()) {               // a game we haven't seen: counts only if it starts in this mode
+        static const MethodInfo *empty = nullptr;
+        if (!empty) empty = FindMethod(ClassOf(g), "isCurFrameEmpty", 0);
+        sRoGame.set(g);
+        sRoClean = cur == 0 && !end && (!empty || InvokeBool(empty, g, nullptr, false));
+        sRoScored = false;
+    } else if (!gBF.rampsMode && g == sRoGame.get() && !end) sRoClean = false;
+    if (end && g == sRoGame.get() && sRoClean && !sRoScored) {
+        sRoScored = true;
+        int score = sGmScore ? InvokeInt(sGmScore, g, nullptr, -1) : -1;
+        if (score < 0) return;
+        sRoLastScore = score;
+        if (score > gBF.rampsBest) {
+            gBF.rampsBest = score;
+            BFSaveConfig();
+            Bp175Log("ramps: new best game %d", score);
+        } else Bp175Log("ramps: game over, %d (best %d)", score, gBF.rampsBest);
+    }
+}
+
+int BFRampsLastScore(void) { return sRoLastScore; }
+
+static void GameModeTick() {
+    if (sGmRestart && sFrame - sGmRestartAt >= 2) {
+        // between shots only (the pattern screen, the rack, holding the ball); asked for elsewhere, it waits a while
+        bool between = sLoc == LOC_UPPER_SCREEN || sLoc == LOC_BALL_RETURNER || sLoc == LOC_START_POS || sLoc == LOC_BOTTOM_MONITOR;
+        if (BpPractice() && between) {
+            sGmRestart = false;
+            RoClear("restart");
+            sRoThrew = true;
+            sRoGame.set(nullptr);
+            bool ok = GmRestartGame();
+            Bp175Log("game mode %d: %s", BFGameModeNow(), ok ? "the game starts again at frame 1" : sGmWhy);
+        } else if (sFrame - sGmRestartAt > 600) {
+            sGmRestart = false;
+            sGmWhy = "not in Practice between shots";
+            Bp175Log("game mode %d: set, no restart (%s)", BFGameModeNow(), sGmWhy);
+        }
+    }
+    RampsScoreTick();
+}
+
+// ---- backup ball (Practice): the spin mirrored, so the ball hooks the other way from the same hand ----
+// Once per throw, as soon as the released ball spins (within a third of a second), its angular velocity is mirrored
+// across the lane's centre line: w -> (w.x, -w.y, -w.z). The forward roll (about x, across the lane) stays; the side
+// roll (about y, down the lane) and the spin (about z, up) change direction, so the friction that makes it hook pushes
+// the other way. Speed, launch angle and RPM stay as thrown.
+static bool sBkDone = false;
+static int sBkFrames = 0, sBkThrows = 0;
+static BFVec3 sBkLast = { 0, 0, 0 };
+
+static void BackupTick() {
+    if (!gBF.backupBall || !BpPractice() || sLoc != LOC_THROWING) { sBkDone = false; sBkFrames = 0; return; }
+    if (sBkDone || !N.RB_getAngVel || !N.RB_setAngVel || !N.RB_getVel) return;
+    void *rb = BallBody();
+    if (!rb || InvokeBool(N.RB_isKinematic, rb, nullptr, true)) return;
+    BFVec3 v;
+    if (!BpBallVel(rb, v) || v.x * v.x + v.y * v.y < 1.0f) return;   // not released yet
+    bool ok = false;
+    Il2CppObject *bw = Invoke(N.RB_getAngVel, rb, nullptr, &ok);
+    if (!ok || !bw) return;
+    BFVec3 w = *(BFVec3 *)Unbox(bw);
+    if (fabsf(w.y) + fabsf(w.z) < 0.5f && ++sBkFrames < 20) return;   // the spin may land a frame or two after the throw
+    sBkDone = true;
+    BFVec3 nw = { w.x, -w.y, -w.z };
+    void *a[] = { &nw };
+    Invoke(N.RB_setAngVel, rb, a);
+    sBkLast = w;
+    sBkThrows++;
+    Bp175Log("backup ball: spin (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f)", w.x, w.y, w.z, nw.x, nw.y, nw.z);
+}
+
+static void Bp175Tick() {                         // after SpeedTick and SpinTick
+    LaneRefTick();
+    BallStatsTick();
+    LoftTick();
+    BackupTick();
+    RampsTick();
+    DampTick();
+    GameModeTick();
+}
+
+static void Bp175Debug(char *buf, size_t size) {
+    snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d | gates hit %d | kinds r%d s%d g%d | backup ball %d throws %d last spin (%.1f, %.1f, %.1f) | loft swipe %d",
+             sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
+             BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
+             sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0,
+             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown, sRoGateHits, gBF.roRamps ? 1 : 0, gBF.roStools ? 1 : 0, gBF.roGates ? 1 : 0,
+             gBF.backupBall ? 1 : 0, sBkThrows, sBkLast.x, sBkLast.y, sBkLast.z, gBF.loftSwipe ? 1 : 0);
 }
 
 static void OilTick() {
@@ -4639,6 +6124,7 @@ void BFEngineTick(void) {
             BallCCDTick();
             SpeedTick();
             SpinTick();
+            Bp175Tick();
             SpareTick();
             CurrentBallTick();
             SkinDataTick();
@@ -4815,6 +6301,6 @@ Str BFDebugInfo(void) {
                     N.RB_getLinDamp ? InvokeFloat(N.RB_getLinDamp, rb, -1) : -1.f,
                     N.RB_getAngDamp ? InvokeFloat(N.RB_getAngDamp, rb, -1) : -1.f, lv.size);
     }
-    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; TurnDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; BgDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; PinPhysDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; RateDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; NoTapDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; }
+    { char lanes[1024]; LaneDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; TurnDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; BgDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; PinPhysDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; RateDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; NoTapDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; Bp175Debug(lanes, sizeof(lanes)); s += lanes; s += "\n"; ArsSortDebug(lanes, sizeof(lanes)); s += lanes; s += "\n"; }
     return s;
 }

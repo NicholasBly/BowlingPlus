@@ -9,12 +9,16 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Feature | What it does | Where it works |
 |---|---|---|
 | Match Up skin fix | Match Up Pearl and Match Up BP get their real skins on the rack, in the Arsenal, previews, your hand and replays | Everywhere (looks only) |
-| Realistic pin physics | Pins grip each other less (friction 0.25 instead of 0.5/0.3), which brings the game's strike rate on the bowling congress's Bowlscore test from 25% toward real pins' 42-44% and makes entry angle matter again (see PIN_PHYSICS_STUDY.md). Counts first-ball strikes with it on and off | Practice only |
+| Realistic pin physics | Sets the pins' friction so the game's strike rate on the bowling congress's Bowlscore test lands inside real pins' 42-44% (0.40, or 0.25 with the double physics rate: 44% in a PhysX copy of the game, which strikes 46.5% as it comes; see PIN_PHYSICS_STUDY.md). Counts first-ball strikes with it on and off | Practice only |
 | Ball speed | Slider from 1x to 5x | Practice only |
+| Loft | A LOFT slider on the right edge of the screen while you hold the ball (it gets out of the way as you swipe): 0 to 16 ft, kept until you change it. The ball comes down that far past your release, without bouncing. It can stay tucked at the edge until you swipe it in | Practice only |
+| Backup ball | The ball spins the other way while you throw with the same hand, so it hooks the other way (menu, or the BACKUP button under the LOFT slider) | Practice only |
 | Ball spin (RPM) | Slider from 1x to 17x: past the game's ~600 rpm cap, up to about 10,000 rpm, with the extra grip (hook) that much spin gives | Practice only |
 | Spare shooting mode | Pick which pins are standing at the start of every frame, or auto-rack the same pins every frame | Practice only |
 | Tap the pin layout | Tap the top-right pin layout (holding the ball) or the little screen under the ball return (overhead view) to pick pins for just that one shot, without turning on Spare mode. The picker has an X to leave without changes | Practice only |
 | Arsenal search | Filter your Arsenal by ball name | Everywhere |
+| Arsenal order | Sort your Arsenal by name or by power, hook, length, RPM or condition, high to low or low to high, every time you open it | Everywhere |
+| Hide ball stats | Hides the stat circles on the ball in your hand and on the ball rack (menu, or the STATS button under the LOFT slider) | Everywhere (looks only) |
 | Skip tutorial | A button during the first-launch tutorial that runs the game's own skip, so you can log in right away | Tutorial only |
 | 120 FPS mode | Menus and gameplay at 120 FPS on 120 Hz screens (the game normally uses 30/60). Off by default | Everywhere |
 | Privacy popup, once | Accept the My.Games privacy page yourself one time. From then on it is hidden the moment it appears and its Sign up button is pressed for you, so you never see it again. Updated-terms pages are never pressed and are left for you to read | Startup |
@@ -24,15 +28,17 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Show oil breakdown | Redraws the lane oil after every shot | Practice |
 | Invisible oil | Hidden oil, random unlocked game pattern each game | Practice |
 | Custom oil patterns | Real Kegel-style forward/reverse steps, drawn by BowlingPlus's copy of the game's oil engine; share via QR | Practice |
-| Real-life oil (always on) | In Practice the game's own 48 patterns and yours are drawn from their real Kegel data, not the game's simplified engine: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane (details below). The game's own oil is back whenever you're not in Practice | Practice |
+| Real-life oil | Your custom patterns are drawn from real Kegel-style data, not the game's simplified engine: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane (details below). Automatic: the game's own patterns (Taj Mahal, Big Ben...) are played as the game draws them, the same oil as online | Practice |
 | (how it works) | Custom patterns lay oil like the sheet: exact distances on the lane's quarter-foot rows, microliters per step, reverse oil adding on top, the brush carrying oil back to the foul line, and Kegel's brushed film over the whole lane. Checked against four Kegel charts (99.9% of cells). On by default | Practice |
 | Kegel pattern import | Pick a pattern downloaded from the Kegel Pattern Library app or website (the .pdf data sheet, or a .zip / .Pattern / .txt) and it's added: steps, distances and drop brush | Practice |
 | BowlingPlus collection | Real Kegel patterns ready to play: Baton Rouge (2012 USBC Open), PBA Regional 37 (2026) | Practice |
 | Oil color | Pick the color the lane shows oil in, or keep the game's | Everywhere (looks only) |
 | Custom pins | A library of pin pictures: Brunswick Max Crown built in, plus as many of your own as you like (draw on the 2:1 wrap template: one sheet that wraps around the pin, so no seams). Each one turns in 3D before you choose it | Everywhere (looks only) |
 | Alley background | Your own picture behind the lanes instead of the room's (Orange Tenpin Bowl...): fill, fit, stretch or tile, with or without the alley name | Everywhere (looks only) |
+| Game mode button | A 🎲 Mode button on the practice pattern screen (under Custom oil): Normal, Invisible oil, 9-pin no-tap, or Ramps & obstacles. Picking one starts the game again at frame 1 | Practice only |
 | 9-pin no-tap | Game mode: 9 or more on a full rack is a strike; the game scores it itself | Practice only |
-| Double physics rate (experimental) | The game's physics runs every 3.75 ms instead of 7.5, with a speed check on every throw that undoes it if anything's off. In the model: 37.5% to 40.5% Bowlscore strikes, entry angle matters more | Practice only |
+| Ramps & obstacles | Game mode: every frame gets a random lane (56 layouts): roll over a ramp, miss the Brunswick pin barstools, or get through the gates (one or two barriers across the lane), or the shot scores 0 (a ball that hits a stool or a gate bounces off into the gutter). Switch ramps, barstools or gates off to leave them out. In the 10th frame a ramp may slide across the lane. Replays show the lane each shot was bowled on. Your best game is kept | Practice only |
+| Double physics rate (experimental) | The game's physics runs every 3.75 ms instead of 7.5, with a speed check on every throw that undoes it if anything's off. In the model it halves the error of every hit; with pin friction 0.25 it strikes 44% on Bowlscore | Practice only |
 | Sweeper banner fix | The blue banner on the pin sweeper no longer goes black at the back of the lane or gets its ends cut off | Everywhere (looks only) |
 | Copy debug info / Copy log | Copies what the tweak sees, plus a log of loading, the connection and network checks, for bug reports | Menu |
 
@@ -123,6 +129,8 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.7.5:** Ramps & obstacles mode (ramps, Brunswick pin barstools and gates, each can be switched off), a game mode button that restarts at frame 1, a loft slider (can tuck away at the edge), backup ball, Arsenal order, hide ball stats; the pin physics study corrected (the game's materials multiply), so the recommended pin friction is now 0.40 (0.25 with the double rate); real-life oil is automatic (custom patterns only).
+- **1.7.4:** Real-life oil can be turned off, so Practice can use the same oil as online play; a `Port/` folder for the game's team.
 - **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.
 - **1.7.1:** double physics rate (experimental); pattern and pin library rows line up; the Android APK is signed with BowlingPlus's own key from now on.
 - **1.7.0:** a new Pin physics category: realistic pin physics (pin friction 0.25, tested in a PhysX copy of the game against real-pin data), with first-ball counts on and off; the old pin fix (which never reached the lane pins) is gone.
@@ -176,6 +184,7 @@ Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 | `src/BPTexture.mm` | Draws the Match Up BP look-alike skin |
 | `src/OilUI.mm` | Custom oil: pattern library, editor, QR share, Kegel file import, oil color picker |
 | `src/OilCollection.mm` | The BowlingPlus collection of real Kegel patterns |
+| `src/RampLayouts.h` | Ramps & obstacles: the 42 lane layouts and their textures (generated by `tools/dev/ramps/make_ramps.py`, which checks every ramp in the PhysX model) |
 | `patterns/README.md` | How to add a pattern from a Kegel data sheet |
 | `pins/` | Pin picture guides and templates (wrap and game layout), 3D checks, and `BowlingPlus-pin-preview.html` (preview your pin picture on a 3D pin on your PC) |
 | `tools/oil_verify/` | Checks the oil model against Kegel's PDF charts, cell by cell |

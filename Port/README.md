@@ -1,13 +1,14 @@
 # Port: BowlingPlus features for the official game
 
-Everything here is for porting features from BowlingPlus into Bowling by Jason Belmonte. It's based on BowlingPlus 1.7.2 (GitHub `main`, commit `7304f4b`).
+Everything here is for porting features from BowlingPlus into Bowling by Jason Belmonte. It's based on BowlingPlus 1.7.5.
 
 Read in this order:
 
 1. **`PORTING_GUIDE.md`**: every feature, its effort and gate, Practice gating, and how to avoid applying a fix twice.
 2. **`features/120-fps.md`**: 120 FPS mode. This describes how BowlingPlus does it at runtime; the guide has the native version.
 3. **`features/ipv6-loading-fix.md`**: the IPv6 loading fix and the loading watchdogs, as BowlingPlus runs them. The guide has the native version.
-4. **`pin-physics/`**: the pin physics study. Start with `BOWLSCORE_REFERENCE.md`, which says what the 25 % and 42-44 % figures measure.
+4. **`features/startup-and-connection.md`**: why loading stops at 84 %, why the connection starts late, and what would make startup faster in the game itself.
+5. **`pin-physics/`**: the pin physics study. Start with `results/CORRECTION.md` (1.7.5: the first version of the study combined the materials the wrong way, and its main numbers changed), then `BOWLSCORE_REFERENCE.md`, which says what the 46.5 %, 44 % and 42-44 % figures measure.
 
 ## Folder layout
 
@@ -18,6 +19,7 @@ Port/
   features/
     120-fps.md
     ipv6-loading-fix.md
+    startup-and-connection.md
   pin-physics/
     PIN_PHYSICS_STUDY.md         the study (results and method)
     PHYSICS_SETTINGS.md          the game's exact pin, ball, lane and step values
@@ -25,7 +27,7 @@ Port/
     ENGINE_STEP.md               how the double physics rate changes the engine's step
     docs/                        the two charts used in the study
     pinlab/                      the PhysX 4.1 harness (build_physx.sh, pinlab.cpp, scene.txt)
-    results/                     Bowlscore runs (CSV), SUMMARY.md, RERUN_NOTE.md, summarize_bowlscore.py
+    results/                     every run (CSV), SUMMARY.md, CORRECTION.md, summarize_bowlscore.py, make_charts.py
 ```
 
 ## What's not in here

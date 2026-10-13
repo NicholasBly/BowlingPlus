@@ -4,9 +4,10 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.7.2"
+#define BF_VERSION @"1.7.5"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
+#define BF_MAX_LOFT 16             // loft slider top, in feet
 
 // Settings (saved in NSUserDefaults)
 typedef struct {
@@ -35,10 +36,21 @@ typedef struct {
     bool     bgImage;      // the alley background uses the player's own picture (looks only)
     bool     bgTitle;      // ...and the room's name stays on it
     bool     pinPhys;      // realistic pin physics (Practice): pin collider friction, ball continuous collision
-    float    pinFric;      // ...the pins' friction (0 = the recommended 0.25)
+    float    pinFric;      // ...the pins' friction (0 = recommended: 0.40, or 0.25 with pinRate2x; see Game PinFriction)
     bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
     int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
     bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
+    bool     realOil;      // Practice: the game's own patterns drawn from their Kegel files. Always false (BFLoadConfig): they keep the game's drawing, as online; custom patterns always use the real-life drawing
+    bool     hideBallStats; // hide the ball stats, in your hand and on the ball rack (looks only, everywhere)
+    bool     loftHud;      // Practice: the loft slider while you hold the ball (on by default, set in BFLoadConfig)
+    float    loftFt;       // ...loft in feet, 0 = the game's own release (0...BF_MAX_LOFT)
+    int      arsSort;      // Arsenal order: 0 the game's, 1 name, 2 power, 3 hook, 4 length, 5 RPM, 6 condition
+    bool     arsDesc;      // ...high to low (Z to A for names)
+    bool     rampsMode;    // game mode: ramps & obstacles (Practice)
+    int      rampsBest;    // ...the best game played in it
+    bool     roRamps, roStools, roGates;   // ...which obstacles it uses (all on by default, set in BFLoadConfig)
+    bool     backupBall;   // Practice: the ball's spin mirrored at release (hooks the other way)
+    bool     loftSwipe;    // ...the LOFT slider hides at the right edge until swiped in
 } BFConfig;
 
 // Live game status for the menu
@@ -103,6 +115,11 @@ void BFOilSetCustom(NSDictionary *pattern);
 NSDictionary *BFOilBuiltinSpec(int index);        // Game.mm: a game pattern's Kegel file as steps ({fwd, rev, drop, feet, ul, name}) or nil
 NSArray<NSDictionary *> *BFOilCollection(void);   // OilCollection.mm: built-in BowlingPlus patterns
 bool BFPracticeLobbyOpen(void);
+bool BFLoftHudVisible(void);                         // Game.mm: holding the ball in Practice with the loft slider on
+int BFGameModeNow(void);                             // Game.mm: 0 normal, 1 invisible oil, 2 9-pin no-tap, 3 ramps & obstacles
+void BFGameModeSelect(int mode);                     // Game.mm: sets it, saves, and restarts the game at frame 1 (next frames)
+int BFRampsLastScore(void);                          // Game.mm: the last finished ramps game (-1: none yet)
+void BFShowChoices(NSString *title, NSString *subtitle, NSArray<NSString *> *titles, NSInteger current, void (^picked)(NSInteger index));   // OilUI.mm: our own choice panel
 NSString *BFOilStatusLine(void);
 
 // OilUI.mm - custom oil pattern library

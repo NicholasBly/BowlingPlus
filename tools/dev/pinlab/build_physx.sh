@@ -12,6 +12,8 @@ if [ ! -d "$WORK/physx/physx/source" ]; then
     (cd "$WORK/physx" && git sparse-checkout set --no-cone '/physx/source/' '/physx/include/' '/physx/compiler/' '/physx/buildtools/' '/pxshared/' '/externals/cmakemodules/')
 fi
 R="$WORK/physx/physx"
+# PhysX's CMake reads these from the environment (the -D forms below are not enough)
+export PHYSX_ROOT_DIR="$R" PM_CMakeModules_PATH="$WORK/physx/externals/cmakemodules" PM_PxShared_PATH="$WORK/physx/pxshared"
 if [ ! -f "$R/bin/linux.clang/release/libPhysX_static_64.a" ]; then
     mkdir -p "$R/build" && cd "$R/build"
     CC=${CC:-clang-18}; CXX=${CXX:-clang++-18}

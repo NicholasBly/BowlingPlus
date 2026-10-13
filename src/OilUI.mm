@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
 #import <AVFoundation/AVFoundation.h>
 #import <PhotosUI/PhotosUI.h>
 #import <CoreImage/CoreImage.h>
@@ -209,6 +210,16 @@ static void OChoose(NSString *title, NSString *subtitle, NSArray<NSDictionary *>
     [cancel addAction:[UIAction actionWithHandler:^(UIAction *a) { ODismiss(weakOverlay); }] forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:cancel];
     OPresent(overlay, card, NO);
+}
+
+// For the menu (Menu.mm): a list of choices on our own panel, the current one marked
+void BFShowChoices(NSString *title, NSString *subtitle, NSArray<NSString *> *titles, NSInteger current, void (^picked)(NSInteger index)) {
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)titles.count; i++) {
+        NSString *t = i == current ? [titles[i] stringByAppendingString:@"  \u2713"] : titles[i];
+        [items addObject:@{ @"title": t, @"primary": @(i == current), @"action": ^{ if (picked) picked(i); } }];
+    }
+    OChoose(title, subtitle, items);
 }
 
 // Show a system screen (share sheet, photo picker) from a small window of our own, so it doesn't
@@ -1213,35 +1224,119 @@ static void LibraryRowLayout(UIView *dot, UIView *thumb, UIView *texts, UIView *
 }
 @end
 
-#pragma mark - the pull-down tab on the practice pattern screen
+#pragma mark - the game mode sheet (1.7.5)
+
+static NSString *const kModeNames[4] = { @"Normal", @"Invisible oil", @"9-pin no-tap", @"Ramps & obstacles" };
+static NSString *const kModeIcons[4] = { @"\U0001F3B3", @"\U0001F441", @"9️⃣", @"\U0001F6F9" };
+
+@interface BFModeSheet : NSObject
+@property (nonatomic, strong) UIView *overlay, *card;
+@property (nonatomic) BOOL showing;
+@end
+
+@implementation BFModeSheet
++ (instancetype)shared { static BFModeSheet *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [BFModeSheet new]; }); return s; }
+
+static NSString *ModeHelp(int m) {
+    switch (m) {
+        case 1: return @"The oil is hidden and each game plays a random unlocked pattern. Read the lane like the real thing.";
+        case 2: return @"9 or more on a full rack counts as a strike.";
+        case 3: {
+            NSString *best = gBF.rampsBest > 0 ? [NSString stringWithFormat:@" Best game: %d.", gBF.rampsBest] : @"";
+            return [NSString stringWithFormat:@"Every frame gets a random lane: ramps to roll over, barstools to miss or gates to get through. Miss the ramp, or hit a stool or a gate, and the shot scores 0. In the 10th frame a ramp may slide across the lane. Pick which ones you get in the menu (Game modes).%@", best];
+        }
+    }
+    return @"The game as it comes, with your other BowlingPlus settings.";
+}
+
+- (void)show {
+    if (self.showing) return;
+    UIView *overlay, *card;
+    UIStackView *stack = OSheet(&overlay, &card, YES);
+    self.overlay = overlay;
+    self.card = card;
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close setTitleColor:ODim(0.7) forState:UIControlStateNormal];
+    close.titleLabel.font = OFont(20, UIFontWeightBold);
+    [close addTarget:self action:@selector(hide) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:OStack(@[OLabel(@"Game mode", 22, UIFontWeightHeavy, UIColor.whiteColor), [UIView new], close], UILayoutConstraintAxisHorizontal, 8)];
+    [stack addArrangedSubview:OLabel(@"Practice only. Picking a mode starts the game again at frame 1.", 12, UIFontWeightRegular, ODim(0.55))];
+    int now = BFGameModeNow();
+    for (int m = 0; m < 4; m++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        b.tag = m;
+        b.backgroundColor = m == now ? OYellow() : ODim(0.08);
+        b.layer.cornerRadius = 14;
+        [b addTarget:self action:@selector(pick:) forControlEvents:UIControlEventTouchUpInside];
+        UIColor *fg = m == now ? [UIColor colorWithWhite:0.08 alpha:1] : UIColor.whiteColor;
+        UILabel *t = OLabel([NSString stringWithFormat:@"%@  %@%@", kModeIcons[m], kModeNames[m], m == now ? @"  ✓" : @""], 16, UIFontWeightHeavy, fg);
+        UILabel *h = OLabel(ModeHelp(m), 12, UIFontWeightRegular, m == now ? [UIColor colorWithWhite:0.15 alpha:1] : ODim(0.55));
+        UIStackView *col = OStack(@[t, h], UILayoutConstraintAxisVertical, 3);
+        col.userInteractionEnabled = NO;
+        col.translatesAutoresizingMaskIntoConstraints = NO;
+        [b addSubview:col];
+        [NSLayoutConstraint activateConstraints:@[
+            [col.topAnchor constraintEqualToAnchor:b.topAnchor constant:11],
+            [col.bottomAnchor constraintEqualToAnchor:b.bottomAnchor constant:-11],
+            [col.leadingAnchor constraintEqualToAnchor:b.leadingAnchor constant:14],
+            [col.trailingAnchor constraintEqualToAnchor:b.trailingAnchor constant:-14],
+        ]];
+        [stack addArrangedSubview:b];
+    }
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(outside:)];
+    tap.cancelsTouchesInView = NO;
+    [overlay addGestureRecognizer:tap];
+    self.showing = YES;
+    OPresent(overlay, card, YES);
+}
+- (void)outside:(UITapGestureRecognizer *)g { if (![self.card pointInside:[g locationInView:self.card] withEvent:nil]) [self hide]; }
+- (void)hide { if (!self.showing) return; self.showing = NO; ODismiss(self.overlay); }
+- (void)pick:(UIButton *)b {
+    int m = (int)b.tag;
+    [self hide];
+    BFGameModeSelect(m);
+    OToast([NSString stringWithFormat:@"%@: starting again at frame 1", kModeNames[m]]);
+}
+@end
+
+#pragma mark - the pull-down tabs on the practice pattern screen
 
 @interface BFOilTab : NSObject
-@property (nonatomic, strong) UIButton *tab;
+@property (nonatomic, strong) UIButton *tab, *modeTab;
 @property (nonatomic, strong) NSTimer *timer;
 @end
+
+static UIButton *TabButton(NSString *title, BOOL filled, id target, SEL action) {
+    UIButton *b = OButton(title, filled, target, action);
+    b.titleLabel.font = OFont(14, UIFontWeightHeavy);
+    b.contentEdgeInsets = UIEdgeInsetsMake(7, 16, 7, 16);
+    b.layer.cornerRadius = 16;
+    b.layer.shadowColor = UIColor.blackColor.CGColor;
+    b.layer.shadowOpacity = 0.4;
+    b.layer.shadowRadius = 6;
+    b.layer.shadowOffset = CGSizeMake(0, 3);
+    b.translatesAutoresizingMaskIntoConstraints = NO;
+    if (!filled) b.backgroundColor = [UIColor colorWithRed:0.10 green:0.11 blue:0.14 alpha:0.94];
+    return b;
+}
 
 @implementation BFOilTab
 - (void)tick {
     UIWindow *w = OHostWindow();
-    BOOL show = w && BFPracticeLobbyOpen() && ![BFOilLibrary shared].showing && !sEditor;
-    if (!show) { [self.tab removeFromSuperview]; return; }
+    BOOL show = w && BFPracticeLobbyOpen() && ![BFOilLibrary shared].showing && !sEditor && ![BFModeSheet shared].showing;
+    if (!show) { [self.tab removeFromSuperview]; [self.modeTab removeFromSuperview]; return; }
     if (!self.tab) {
-        UIButton *b = OButton(@"\U0001F6E2 Custom oil \u25BE", YES, self, @selector(open));
-        b.titleLabel.font = OFont(14, UIFontWeightHeavy);
-        b.contentEdgeInsets = UIEdgeInsetsMake(7, 16, 7, 16);
-        b.layer.cornerRadius = 16;
-        b.layer.shadowColor = UIColor.blackColor.CGColor;
-        b.layer.shadowOpacity = 0.4;
-        b.layer.shadowRadius = 6;
-        b.layer.shadowOffset = CGSizeMake(0, 3);
-        b.translatesAutoresizingMaskIntoConstraints = NO;
+        self.tab = TabButton(@"\U0001F6E2 Custom oil ▾", YES, self, @selector(open));
         UISwipeGestureRecognizer *down = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(open)];
         down.direction = UISwipeGestureRecognizerDirectionDown;
-        [b addGestureRecognizer:down];
-        self.tab = b;
+        [self.tab addGestureRecognizer:down];
     }
+    if (!self.modeTab) self.modeTab = TabButton(@"", NO, self, @selector(openModes));
     NSDictionary *act = PatternById(ActiveId());
-    [self.tab setTitle:act ? [NSString stringWithFormat:@"\U0001F6E2 %@ \u25BE", act[@"name"]] : @"\U0001F6E2 Custom oil \u25BE" forState:UIControlStateNormal];
+    [self.tab setTitle:act ? [NSString stringWithFormat:@"\U0001F6E2 %@ ▾", act[@"name"]] : @"\U0001F6E2 Custom oil ▾" forState:UIControlStateNormal];
+    int m = BFGameModeNow();
+    [self.modeTab setTitle:[NSString stringWithFormat:@"\U0001F3B2 Mode: %@ ▾", kModeNames[m]] forState:UIControlStateNormal];
     if (self.tab.superview != w) {
         [self.tab removeFromSuperview];
         [w addSubview:self.tab];
@@ -1251,15 +1346,330 @@ static void LibraryRowLayout(UIView *dot, UIView *thumb, UIView *texts, UIView *
             [self.tab.widthAnchor constraintLessThanOrEqualToAnchor:w.widthAnchor constant:-120],
         ]];
     }
+    if (self.modeTab.superview != w) {
+        [self.modeTab removeFromSuperview];
+        [w addSubview:self.modeTab];
+        [NSLayoutConstraint activateConstraints:@[
+            [self.modeTab.centerXAnchor constraintEqualToAnchor:w.centerXAnchor],
+            [self.modeTab.topAnchor constraintEqualToAnchor:self.tab.bottomAnchor constant:6],
+            [self.modeTab.widthAnchor constraintLessThanOrEqualToAnchor:w.widthAnchor constant:-120],
+        ]];
+    }
     [w bringSubviewToFront:self.tab];
+    [w bringSubviewToFront:self.modeTab];
 }
 - (void)open {
     [self.tab removeFromSuperview];
+    [self.modeTab removeFromSuperview];
     [[BFOilLibrary shared] show];
+}
+- (void)openModes {
+    [self.tab removeFromSuperview];
+    [self.modeTab removeFromSuperview];
+    [[BFModeSheet shared] show];
+}
+@end
+
+#pragma mark - the loft slider (holding the ball, Practice)
+
+// A vertical slider on the left edge while you hold the ball: 0 (the game's own release) up to BF_MAX_LOFT feet,
+// in half-foot steps. Double-tap it for 0. The value is kept (saved) until you change it.
+@interface BFLoftSlider : UIView
+@property (nonatomic) float value;                 // feet
+@property (nonatomic) float startValue;            // ...when the last touch began (a swipe that puts the panel away undoes it)
+@property (nonatomic) CFTimeInterval beganAt;
+@property (nonatomic) BOOL touching;
+@property (nonatomic, copy) void (^changed)(BOOL done);
+@end
+
+@implementation BFLoftSlider
+- (instancetype)initWithFrame:(CGRect)f {
+    if ((self = [super initWithFrame:f])) {
+        self.backgroundColor = UIColor.clearColor;
+        UITapGestureRecognizer *two = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(reset)];
+        two.numberOfTapsRequired = 2;
+        [self addGestureRecognizer:two];
+    }
+    return self;
+}
+- (void)reset { self.value = 0; [self setNeedsDisplay]; if (self.changed) self.changed(YES); }
+- (CGRect)track { return CGRectMake(CGRectGetMidX(self.bounds) - 5, 14, 10, self.bounds.size.height - 28); }
+- (void)drawRect:(CGRect)r {
+    CGRect t = [self track];
+    [[UIColor colorWithWhite:1 alpha:0.18] setFill];
+    [[UIBezierPath bezierPathWithRoundedRect:t cornerRadius:5] fill];
+    float frac = self.value / (float)BF_MAX_LOFT;
+    CGFloat y = CGRectGetMaxY(t) - frac * t.size.height;
+    [OAccent() setFill];
+    [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(t.origin.x, y, t.size.width, CGRectGetMaxY(t) - y) cornerRadius:5] fill];
+    for (int ft = 4; ft < BF_MAX_LOFT; ft += 4) {   // a tick every 4 ft
+        CGFloat ty = CGRectGetMaxY(t) - (float)ft / BF_MAX_LOFT * t.size.height;
+        [[UIColor colorWithWhite:1 alpha:0.35] setFill];
+        UIRectFill(CGRectMake(t.origin.x - 5, ty - 0.5, 4, 1));
+    }
+    [OYellow() setFill];
+    [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(CGRectGetMidX(t) - 12, y - 12, 24, 24)] fill];
+}
+- (void)track:(UITouch *)touch done:(BOOL)done {
+    CGRect t = [self track];
+    CGFloat y = [touch locationInView:self].y;
+    float frac = (float)((CGRectGetMaxY(t) - y) / t.size.height);
+    frac = fmaxf(0, fminf(1, frac));
+    float v = roundf(frac * BF_MAX_LOFT * 2) / 2;
+    if (v != self.value || done) {
+        self.value = v;
+        [self setNeedsDisplay];
+        if (self.changed) self.changed(done);
+    }
+}
+- (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.startValue = self.value; self.beganAt = CACurrentMediaTime(); self.touching = YES; [self track:t.anyObject done:NO]; }
+- (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self track:t.anyObject done:NO]; }
+- (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = NO; [self track:t.anyObject done:YES]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { self.touching = NO; if (self.changed) self.changed(YES); }
+@end
+
+// Watches every touch on the game's window without taking part: it never recognizes, never cancels or delays the game's
+// touches, and only reports a finger going down (outside the LOFT panel) and the last finger coming up. The game hides
+// its own buttons the moment a throw's swipe starts; the LOFT panel goes with them.
+@interface BFTouchWatch : UIGestureRecognizer
+@property (nonatomic, copy) void (^down)(UITouch *touch);
+@property (nonatomic, copy) void (^up)(void);
+@end
+
+@implementation BFTouchWatch
+- (instancetype)init {
+    if ((self = [super initWithTarget:nil action:nil])) {
+        self.cancelsTouchesInView = NO;
+        self.delaysTouchesBegan = NO;
+        self.delaysTouchesEnded = NO;
+    }
+    return self;
+}
+- (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
+- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
+- (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { if (self.down) self.down(t.anyObject); }
+- (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e {}
+- (void)lift:(UIEvent *)e {
+    for (UITouch *x in e.allTouches) if (x.phase != UITouchPhaseEnded && x.phase != UITouchPhaseCancelled) return;   // fingers still down
+    if (self.up) self.up();
+    self.state = UIGestureRecognizerStateFailed;   // back to "possible" for the next touch
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self lift:e]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self lift:e]; }
+@end
+
+@interface BFLoftHud : NSObject <UIGestureRecognizerDelegate>
+@property (nonatomic, strong) UIView *box;
+@property (nonatomic, strong) BFTouchWatch *watch;
+@property (nonatomic) BOOL fingerDown;
+@property (nonatomic) CFTimeInterval fingerUpAt;
+@property (nonatomic, strong) UIButton *stats, *backup, *close;
+@property (nonatomic) CFTimeInterval panAt;
+@property (nonatomic, strong) UIView *handle;      // "Swipe in from the right": the grip at the edge while it's tucked away
+@property (nonatomic) BOOL out;                    // ...swiped in (until swiped away, or the ball is thrown)
+@property (nonatomic, strong) UILabel *value;
+@property (nonatomic, strong) BFLoftSlider *slider;
+@property (nonatomic, strong) NSTimer *timer;
+@end
+
+static NSString *LoftText(float ft) { return ft < 0.25f ? @"Off" : [NSString stringWithFormat:@"%g ft", ft]; }
+
+@implementation BFLoftHud
+- (void)build {
+    UIView *box = [UIView new];
+    box.translatesAutoresizingMaskIntoConstraints = NO;
+    box.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:0.82];
+    box.layer.cornerRadius = 18;
+    box.layer.borderWidth = 1;
+    box.layer.borderColor = ODim(0.10).CGColor;
+    UILabel *title = OLabel(@"LOFT", 11, UIFontWeightHeavy, OYellow());
+    title.textAlignment = NSTextAlignmentCenter;
+    self.value = OLabel(@"", 13, UIFontWeightBold, UIColor.whiteColor);
+    self.value.textAlignment = NSTextAlignmentCenter;
+    self.value.adjustsFontSizeToFitWidth = YES;
+    self.slider = [[BFLoftSlider alloc] initWithFrame:CGRectZero];
+    self.slider.translatesAutoresizingMaskIntoConstraints = NO;
+    __weak BFLoftHud *weak = self;
+    self.slider.changed = ^(BOOL done) {
+        gBF.loftFt = weak.slider.value;
+        weak.value.text = LoftText(gBF.loftFt);
+        if (done) BFSaveConfig();
+    };
+    self.stats = [UIButton buttonWithType:UIButtonTypeSystem];       // the ball stats on and off, right here
+    self.stats.titleLabel.font = OFont(10, UIFontWeightHeavy);
+    self.stats.layer.cornerRadius = 9;
+    [self.stats addTarget:self action:@selector(statsTapped) forControlEvents:UIControlEventTouchUpInside];
+    self.backup = [UIButton buttonWithType:UIButtonTypeSystem];      // backup ball: the spin mirrored at release
+    self.backup.titleLabel.font = OFont(10, UIFontWeightHeavy);
+    self.backup.layer.cornerRadius = 9;
+    [self.backup addTarget:self action:@selector(backupTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self syncStats];
+    self.close = [UIButton buttonWithType:UIButtonTypeSystem];       // "Swipe in from the right": put it away
+    [self.close setTitle:@"\u203A\u203A" forState:UIControlStateNormal];
+    self.close.titleLabel.font = OFont(17, UIFontWeightHeavy);
+    [self.close setTitleColor:ODim(0.55) forState:UIControlStateNormal];
+    [self.close addTarget:self action:@selector(swipedAway) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *col = OStack(@[self.close, title, self.value, self.slider, self.stats, self.backup], UILayoutConstraintAxisVertical, 2);
+    col.translatesAutoresizingMaskIntoConstraints = NO;
+    [box addSubview:col];
+    [NSLayoutConstraint activateConstraints:@[
+        [box.widthAnchor constraintEqualToConstant:58],
+        [self.slider.heightAnchor constraintEqualToConstant:170],
+        [self.stats.heightAnchor constraintEqualToConstant:26],
+        [self.backup.heightAnchor constraintEqualToConstant:26],
+        [col.topAnchor constraintEqualToAnchor:box.topAnchor constant:8],
+        [col.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-4],
+        [col.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:2],
+        [col.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-2],
+    ]];
+    NSLayoutConstraint *ch = [self.close.heightAnchor constraintEqualToConstant:22];
+    ch.priority = 999;                                 // gives way to the stack view when the button is hidden
+    ch.active = YES;
+    self.box = box;
+    // "Swipe in from the right": drag it back to the right to put it away. Only a drag that starts out sideways and to
+    // the right takes over (the slider's up-and-down drags don't), and a slider move it interrupted is undone.
+    UIPanGestureRecognizer *away = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(boxPan:)];
+    away.delegate = self;
+    [box addGestureRecognizer:away];
+    // the grip: a strip at the right edge, as tall as the panel, with a little pill; swipe in from it (or tap it)
+    UIView *handle = [UIView new];
+    handle.translatesAutoresizingMaskIntoConstraints = NO;
+    handle.backgroundColor = [UIColor colorWithWhite:0 alpha:0.011];   // clear, but still takes the touch
+    UIView *pill = [UIView new];
+    pill.translatesAutoresizingMaskIntoConstraints = NO;
+    pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.45];
+    pill.layer.cornerRadius = 2.5;
+    pill.userInteractionEnabled = NO;
+    [handle addSubview:pill];
+    [NSLayoutConstraint activateConstraints:@[
+        [handle.widthAnchor constraintEqualToConstant:24],
+        [handle.heightAnchor constraintEqualToConstant:230],
+        [pill.widthAnchor constraintEqualToConstant:5],
+        [pill.heightAnchor constraintEqualToConstant:46],
+        [pill.centerYAnchor constraintEqualToAnchor:handle.centerYAnchor],
+        [pill.trailingAnchor constraintEqualToAnchor:handle.trailingAnchor constant:-4],
+    ]];
+    [handle addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)]];
+    [handle addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(reveal)]];
+    self.handle = handle;
+}
+- (void)handlePan:(UIPanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateChanged && [g translationInView:g.view].x < -20) [self reveal];
+}
+- (void)reveal {
+    if (self.out) return;
+    self.out = YES;
+    self.fingerDown = NO; self.fingerUpAt = 0;
+    [self tick];
+    self.box.transform = CGAffineTransformMakeTranslation(80, 0);
+    [UIView animateWithDuration:0.18 animations:^{ self.box.transform = CGAffineTransformIdentity; }];
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (![g isKindOfClass:[UIPanGestureRecognizer class]] || g.view != self.box) return YES;
+    if (!gBF.loftSwipe) return NO;
+    CGPoint v = [(UIPanGestureRecognizer *)g velocityInView:g.view], t = [(UIPanGestureRecognizer *)g translationInView:g.view];
+    CGFloat dx = fabs(v.x) > 1 ? v.x : t.x, dy = fabs(v.x) > 1 ? v.y : t.y;
+    return dx > 0 && dx > 1.3 * fabs(dy);
+}
+- (void)boxPan:(UIPanGestureRecognizer *)g {
+    CGFloat tx = [g translationInView:self.box.superview].x;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        if (CACurrentMediaTime() - self.slider.beganAt < 1.5 && fabsf(self.slider.value - self.slider.startValue) > 0.01f) {
+            self.slider.value = self.slider.startValue;  // the drag began on the slider: put the loft back
+            gBF.loftFt = self.slider.value;
+            self.value.text = LoftText(gBF.loftFt);
+            [self.slider setNeedsDisplay];
+            BFSaveConfig();
+        }
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        self.box.transform = CGAffineTransformMakeTranslation(fmax(0, tx), 0);
+    } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        if (g.state == UIGestureRecognizerStateEnded && (tx > 36 || [g velocityInView:self.box].x > 300)) [self swipedAway];
+        else [UIView animateWithDuration:0.15 animations:^{ self.box.transform = CGAffineTransformIdentity; }];
+    }
+}
+- (void)swipedAway {
+    if (!gBF.loftSwipe) return;
+    [UIView animateWithDuration:0.16 animations:^{ self.box.transform = CGAffineTransformMakeTranslation(90, 0); } completion:^(BOOL f) {
+        self.out = NO;
+        self.box.transform = CGAffineTransformIdentity;
+        [self tick];
+    }];
+}
+- (void)syncStats {
+    [self.stats setTitle:gBF.hideBallStats ? @"STATS\nOFF" : @"STATS\nON" forState:UIControlStateNormal];
+    self.stats.titleLabel.numberOfLines = 2;
+    self.stats.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [self.stats setTitleColor:gBF.hideBallStats ? ODim(0.6) : [UIColor colorWithWhite:0.08 alpha:1] forState:UIControlStateNormal];
+    self.stats.backgroundColor = gBF.hideBallStats ? ODim(0.10) : OYellow();
+    [self.backup setTitle:gBF.backupBall ? @"BACKUP\nON" : @"BACKUP\nOFF" forState:UIControlStateNormal];
+    self.backup.titleLabel.numberOfLines = 2;
+    self.backup.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [self.backup setTitleColor:gBF.backupBall ? [UIColor colorWithWhite:0.08 alpha:1] : ODim(0.6) forState:UIControlStateNormal];
+    self.backup.backgroundColor = gBF.backupBall ? OYellow() : ODim(0.10);
+}
+- (void)statsTapped { gBF.hideBallStats = !gBF.hideBallStats; BFSaveConfig(); [self syncStats]; }
+- (void)backupTapped { gBF.backupBall = !gBF.backupBall; BFSaveConfig(); [self syncStats]; }
+- (void)tick {
+    UIWindow *w = OHostWindow();
+    BOOL show = w && BFLoftHudVisible() && !BFMenuVisible() && !BFMenuPickerVisible() && ![BFOilLibrary shared].showing && !sEditor && ![BFModeSheet shared].showing;
+    if (!show) { [self.box removeFromSuperview]; [self.handle removeFromSuperview]; self.out = NO; return; }
+    if (!self.box) [self build];
+    if (self.watch.view != w) {                     // watch the window's touches (see BFTouchWatch)
+        [self.watch.view removeGestureRecognizer:self.watch];
+        self.watch = [BFTouchWatch new];
+        __weak BFLoftHud *weak = self;
+        self.watch.down = ^(UITouch *t) {
+            BFLoftHud *me = weak;
+            BOOL boxUp = me.box.superview && !me.box.hidden, gripUp = me.handle.superview && !me.handle.hidden;
+            if (!boxUp && !gripUp) return;
+            if (boxUp && [me.box pointInside:[t locationInView:me.box] withEvent:nil]) return;   // on the panel itself
+            if (gripUp && [me.handle pointInside:[t locationInView:me.handle] withEvent:nil]) return;   // on the grip
+            me.fingerDown = YES;
+            me.box.hidden = YES;                          // at once, like the game's own buttons
+            me.handle.hidden = YES;
+        };
+        self.watch.up = ^{ BFLoftHud *me = weak; if (me.fingerDown) { me.fingerDown = NO; me.fingerUpAt = CACurrentMediaTime(); } };
+        [w addGestureRecognizer:self.watch];
+    }
+    if (self.box.superview != w) {
+        [self.box removeFromSuperview];
+        [w addSubview:self.box];
+        [NSLayoutConstraint activateConstraints:@[   // the right edge: the left one has the game's blue tab
+            [self.box.trailingAnchor constraintEqualToAnchor:w.safeAreaLayoutGuide.trailingAnchor constant:-8],
+            [self.box.centerYAnchor constraintEqualToAnchor:w.centerYAnchor constant:-30],
+        ]];
+        self.slider.value = fmaxf(0, fminf(gBF.loftFt, BF_MAX_LOFT));
+        [self.slider setNeedsDisplay];
+    }
+    BOOL tucked = gBF.loftSwipe && !self.out;
+    if (tucked && self.handle.superview != w) {
+        [self.handle removeFromSuperview];
+        [w addSubview:self.handle];
+        [NSLayoutConstraint activateConstraints:@[
+            [self.handle.trailingAnchor constraintEqualToAnchor:w.trailingAnchor],
+            [self.handle.centerYAnchor constraintEqualToAnchor:w.centerYAnchor constant:-30],
+        ]];
+    } else if (!tucked && self.handle.superview) [self.handle removeFromSuperview];
+    if (!self.slider.touching && fabsf(self.slider.value - gBF.loftFt) > 0.01f) {   // changed in the menu
+        self.slider.value = fmaxf(0, fminf(gBF.loftFt, BF_MAX_LOFT));
+        [self.slider setNeedsDisplay];
+    }
+    self.value.text = LoftText(gBF.loftFt);
+    [self syncStats];
+    self.close.hidden = !gBF.loftSwipe;
+    // hidden while a finger is down on the game (a throw's swipe) and for a moment after: if it was a throw, the game
+    // has left "holding the ball" by then and the panel stays away; if it was a tap, it comes back
+    BOOL away = self.fingerDown || CACurrentMediaTime() - self.fingerUpAt < 0.4;
+    self.box.hidden = away || tucked;
+    self.handle.hidden = away;
+    [w bringSubviewToFront:self.box];
+    if (self.handle.superview) [w bringSubviewToFront:self.handle];
 }
 @end
 
 static BFOilTab *sTab;
+static BFLoftHud *sLoftHud;
 
 static void PinImageUpgrade(void);
 static void PinLibMigrate(void);
@@ -1270,6 +1680,8 @@ void BFOilUIStart(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ PinImageUpgrade(); PinLibMigrate(); });
     sTab = [BFOilTab new];
     sTab.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:sTab selector:@selector(tick) userInfo:nil repeats:YES];
+    sLoftHud = [BFLoftHud new];
+    sLoftHud.timer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:sLoftHud selector:@selector(tick) userInfo:nil repeats:YES];
 }
 
 void BFOilShowLibrary(void) { [[BFOilLibrary shared] show]; }

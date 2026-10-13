@@ -32,6 +32,9 @@ void BFLog(NSString *fmt, ...) {
 static NSString *const kCfgKey = @"BowlingPlus.config.v1";
 
 void BFLoadConfig(void) {
+    gBF.realOil = false;  // managed, not a setting: the game's own patterns keep the game's drawing (as online), custom patterns always get the real-life one
+    gBF.loftHud = true;
+    gBF.roRamps = gBF.roStools = gBF.roGates = true;
     NSDictionary *d = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kCfgKey]
         ?: [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"BowlingFix.config.v1"];   // saved before the rename
     if (![d isKindOfClass:[NSDictionary class]]) return;
@@ -59,9 +62,23 @@ void BFLoadConfig(void) {
     if (d[@"bgTitle"])   gBF.bgTitle = [d[@"bgTitle"] boolValue];
     if (d[@"pinPhys"])   gBF.pinPhys = [d[@"pinPhys"] boolValue];
     if (d[@"pinFric"])   gBF.pinFric = [d[@"pinFric"] floatValue];
+    // 1.7.0-1.7.4 stored 0.25 for "recommended"; since 1.7.5 0 means recommended (0.40, or 0.25 with the double rate)
+    if (!d[@"pinFricV2"] && fabsf(gBF.pinFric - 0.25f) < 0.001f) gBF.pinFric = 0;
     if (d[@"pinRate2x"]) gBF.pinRate2x = [d[@"pinRate2x"] boolValue];
     if (d[@"oilShowOrig"]) gBF.oilShowOrig = [d[@"oilShowOrig"] intValue];
     if (d[@"noTap9"])    gBF.noTap9 = [d[@"noTap9"] boolValue];
+    if (d[@"hideBallStats"]) gBF.hideBallStats = [d[@"hideBallStats"] boolValue];
+    if (d[@"loftHud"])   gBF.loftHud = [d[@"loftHud"] boolValue];
+    if (d[@"loftFt"])    gBF.loftFt = [d[@"loftFt"] floatValue];
+    if (d[@"arsSort"])   gBF.arsSort = [d[@"arsSort"] intValue];
+    if (d[@"arsDesc"])   gBF.arsDesc = [d[@"arsDesc"] boolValue];
+    if (d[@"rampsMode"]) gBF.rampsMode = [d[@"rampsMode"] boolValue];
+    if (d[@"rampsBest"]) gBF.rampsBest = [d[@"rampsBest"] intValue];
+    if (d[@"roRamps"])  gBF.roRamps = [d[@"roRamps"] boolValue];
+    if (d[@"roStools"]) gBF.roStools = [d[@"roStools"] boolValue];
+    if (d[@"roGates"])  gBF.roGates = [d[@"roGates"] boolValue];
+    if (d[@"backupBall"]) gBF.backupBall = [d[@"backupBall"] boolValue];
+    if (d[@"loftSwipe"]) gBF.loftSwipe = [d[@"loftSwipe"] boolValue];
     if (d[@"privacyOK"]) gBF.privacyOK = [d[@"privacyOK"] boolValue];
     else if ([d[@"privacy"] boolValue]) gBF.privacyOK = true;     // auto-accept was on: you had accepted before
     if (isnan(gBF.speedMult) || gBF.speedMult < 1.f) gBF.speedMult = 1.f;
@@ -70,6 +87,9 @@ void BFLoadConfig(void) {
     if (gBF.spinMult > BF_MAX_SPIN) gBF.spinMult = BF_MAX_SPIN;
     gBF.lastPinMask &= BF_ALL_PINS;
     if (!gBF.lastPinMask) gBF.lastPinMask = BF_ALL_PINS;
+    if (isnan(gBF.loftFt) || gBF.loftFt < 0) gBF.loftFt = 0;
+    if (gBF.loftFt > BF_MAX_LOFT) gBF.loftFt = BF_MAX_LOFT;
+    if (gBF.arsSort < 0 || gBF.arsSort > 6) gBF.arsSort = 0;
 }
 
 void BFSaveConfig(void) {
@@ -78,7 +98,8 @@ void BFSaveConfig(void) {
                          @"auto": @(gBF.spareAuto),
                          @"fps120": @(gBF.fps120), @"pinSpec2": @(gBF.pinSpec), @"privacyOK": @(gBF.privacyOK),
                          @"unstick": @(gBF.unstick), @"ipv4": @(gBF.gameIPv4),
-                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle), @"pinPhys": @(gBF.pinPhys), @"pinFric": @(gBF.pinFric), @"pinRate2x": @(gBF.pinRate2x), @"oilShowOrig": @(gBF.oilShowOrig), @"noTap9": @(gBF.noTap9) };
+                         @"oilMirror": @(gBF.oilMirrorFix), @"oilBreak": @(gBF.oilBreakdown), @"oilInvis": @(gBF.oilInvisible), @"oilThick2": @(gBF.oilThickness), @"oilHue": @(gBF.oilHue), @"pinImage": @(gBF.pinImage), @"bgImage": @(gBF.bgImage), @"bgTitle": @(gBF.bgTitle), @"pinPhys": @(gBF.pinPhys), @"pinFric": @(gBF.pinFric), @"pinRate2x": @(gBF.pinRate2x), @"oilShowOrig": @(gBF.oilShowOrig), @"noTap9": @(gBF.noTap9),
+                         @"hideBallStats": @(gBF.hideBallStats), @"loftHud": @(gBF.loftHud), @"loftFt": @(gBF.loftFt), @"arsSort": @(gBF.arsSort), @"arsDesc": @(gBF.arsDesc), @"rampsMode": @(gBF.rampsMode), @"rampsBest": @(gBF.rampsBest), @"roRamps": @(gBF.roRamps), @"roStools": @(gBF.roStools), @"roGates": @(gBF.roGates), @"backupBall": @(gBF.backupBall), @"loftSwipe": @(gBF.loftSwipe), @"pinFricV2": @1 };
     [[NSUserDefaults standardUserDefaults] setObject:d forKey:kCfgKey];
 }
 
