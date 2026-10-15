@@ -354,7 +354,8 @@ public final class BP {
     // ---- High frame rate: ask the window for the display's fastest mode (120, 144 Hz...) while it's on, and while a
     // BowlingPlus panel is open. The game caps itself to 30 FPS behind a panel (and to its own 30 FPS in its menus), and
     // Unity's frame pacing then lets the screen drop to a slow refresh rate, so a panel scrolled at 30-60 Hz. The
-    // minimum refresh rate (Android 14+) keeps the screen at its top rate; the mode id does it on older versions.
+    // window asks for the fastest mode and its rate (public API only: the SDK has no public minimum refresh rate);
+    // on Android 15+ the panels also ask for a high frame rate themselves (UiKit.Overlay).
     static void applyFps() {
         try {
             Activity act = activity;
@@ -364,13 +365,11 @@ public final class BP {
             boolean want = Config.b("fps120", false) || UiKit.overlayOpen();
             Display.Mode best = bestMode(act);
             int id = want && best != null ? best.getModeId() : 0;
-            float min = want && best != null ? best.getRefreshRate() : 0f;
-            boolean changed = lp.preferredDisplayModeId != id;
+            float hz = want && best != null ? best.getRefreshRate() : 0f;
+            if (lp.preferredDisplayModeId == id && lp.preferredRefreshRate == hz) return;
             lp.preferredDisplayModeId = id;
-            if (Build.VERSION.SDK_INT >= 34) {
-                try { changed |= lp.preferredMinDisplayRefreshRate != min; lp.preferredMinDisplayRefreshRate = min; } catch (Throwable ignored) {}
-            }
-            if (changed) w.setAttributes(lp);
+            lp.preferredRefreshRate = hz;
+            w.setAttributes(lp);
         } catch (Throwable ignored) {}
     }
 

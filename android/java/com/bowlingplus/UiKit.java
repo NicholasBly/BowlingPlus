@@ -141,8 +141,11 @@ final class UiKit {
         private boolean counted;
         Overlay(Context c) {
             super(c);
-            // Android 15+: scrolling a panel asks for the screen's top refresh rate
-            if (android.os.Build.VERSION.SDK_INT >= 35) { try { setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH); } catch (Throwable ignored) {} }
+            // Android 15+: the panel asks for the screen's top refresh rate (View.setRequestedFrameRate with
+            // REQUESTED_FRAME_RATE_CATEGORY_HIGH = -4; called by name so the build doesn't depend on the SDK's flagged API)
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                try { View.class.getMethod("setRequestedFrameRate", float.class).invoke(this, -4f); } catch (Throwable ignored) {}
+            }
         }
         @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (!counted) { counted = true; overlayChanged(+1); } }
         @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); if (counted) { counted = false; overlayChanged(-1); } }
