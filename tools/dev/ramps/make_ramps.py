@@ -344,13 +344,15 @@ def textures():
         b = io.BytesIO(); img.save(b, 'PNG', optimize=True); return b.getvalue()
     orange, cream = (255, 122, 26, 90), (255, 236, 200, 90)        # alpha: how much of the pin shader's reflection shows
     ramp = png(32, 32, lambda x, y: orange if ((x + y) // 8) % 2 == 0 else cream)
-    # the seat's side: royal blue with white crowns all the way round (the cylinder's side wraps the width once). The side
-    # is 1.07 m round and 0.08 m tall, 13:1 against the picture's 8:1, so the crowns are drawn 0.6 wide to look right
+    # the seat's side: royal blue with white crowns, spaced like the real stool's (about five across the front). Unity's
+    # cylinder wraps the picture round its side twice (u 0 to 1 per half turn, read from the game's built-in mesh), so
+    # five crowns here make ten round the seat. Half the side is 0.53 m wide and 0.08 m tall, 6.7:1 against the
+    # picture's 8:1, so the crowns are drawn 0.83 wide to keep their shape
     k = 4
     band = Image.new('RGBA', (512 * k, 64 * k), (24, 74, 196, 70))
     d = ImageDraw.Draw(band)
-    for i in range(10):
-        crown(d, (i + 0.5) * 512 * k / 10, 35 * k, 20 * k, (250, 250, 255, 70), 0.6)
+    for i in range(5):
+        crown(d, (i + 0.5) * 512 * k / 5, 35 * k, 20 * k, (250, 250, 255, 70), 0.83)
     band = band.resize((512, 64), Image.LANCZOS)
     top = seat_top()
     chrome = png(8, 8, lambda x, y: (214, 218, 224, 255) if y % 4 else (170, 176, 184, 255))   # full reflection

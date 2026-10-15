@@ -59,7 +59,6 @@ Json BFConfigJson(void) {
     d.set("oilShowOrig", gBF.oilShowOrig); d.set("noTap9", Json::Bool_(gBF.noTap9));
     d.set("logHosts", Json::Bool_(gBF.logHosts));
     d.set("menuButton", Json::Bool_(gBF.menuButton)); d.set("fbWebLogin", Json::Bool_(gBF.fbWebLogin));
-    d.set("laneOther", Json::Bool_(gBF.laneOther));
     d.set("hideBallStats", Json::Bool_(gBF.hideBallStats)); d.set("loftHud", Json::Bool_(gBF.loftHud)); d.set("loftFt", gBF.loftFt);
     d.set("arsSort", gBF.arsSort); d.set("arsDesc", Json::Bool_(gBF.arsDesc)); d.set("rampsMode", Json::Bool_(gBF.rampsMode)); d.set("rampsBest", gBF.rampsBest);
     d.set("roRamps", Json::Bool_(gBF.roRamps)); d.set("roStools", Json::Bool_(gBF.roStools)); d.set("roGates", Json::Bool_(gBF.roGates)); d.set("backupBall", Json::Bool_(gBF.backupBall)); d.set("loftSwipe", Json::Bool_(gBF.loftSwipe));
@@ -107,11 +106,9 @@ bool BFConfigSet(const Str &k, double v) {
     else if (k == "pinRate2x") gBF.pinRate2x = on;
     else if (k == "oilShowOrig") gBF.oilShowOrig = (int)v;
     else if (k == "noTap9") gBF.noTap9 = on;
-    else if (k == "realOil") {}                    // was a setting up to 1.7.4: now managed (see BFLoadConfig)
     else if (k == "logHosts") gBF.logHosts = on;
     else if (k == "menuButton") gBF.menuButton = on;
     else if (k == "fbWebLogin") gBF.fbWebLogin = on;
-    else if (k == "laneOther") gBF.laneOther = on;
     else if (k == "hideBallStats") gBF.hideBallStats = on;
     else if (k == "loftHud") gBF.loftHud = on;
     else if (k == "loftFt") gBF.loftFt = (float)v;
@@ -131,7 +128,6 @@ bool BFConfigSet(const Str &k, double v) {
 }
 
 void BFLoadConfig(void) {
-    gBF.realOil = false;  // managed, not a setting: the game's own patterns keep the game's drawing (as online), custom patterns always get the real-life one
     gBF.loftHud = true;
     gBF.roRamps = gBF.roStools = gBF.roGates = true;
     std::vector<uint8_t> raw;

@@ -255,7 +255,7 @@ public final class Menu {
         // ---- Pins & display
         fpsLabel = UiKit.label(c, "", 12, UiKit.dim(0.5f), false);
         LinearLayout fpsStack = UiKit.row(c, false);
-        fpsStack.addView(rowView(c, "120 FPS mode", "Runs menus and gameplay at 120 FPS on 120 Hz screens: smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery.", toggle(c, "fps120", () -> tickRefresh())));
+        fpsStack.addView(rowView(c, "High frame rate", "Runs menus and gameplay at your screen's top refresh rate (120 Hz, 144 Hz...): smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery.", toggle(c, "fps120", () -> tickRefresh())));
         fpsStack.addView(fpsLabel, mt(c, 6));
         pinImageLabel = UiKit.label(c, "", 12, UiKit.ACCENT, true);
         Switch pinImageSwitch = toggle(c, "pinImage", () -> {

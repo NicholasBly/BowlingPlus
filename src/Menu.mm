@@ -631,7 +631,7 @@ static NSComparisonResult BPCompareVersions(NSString *a, NSString *b) {
     // ---- Pins & display
     self.fpsSwitch = [self switchOn:gBF.fps120 action:@selector(fpsChanged:)];
     self.fpsLabel = [self label:@"" size:12 weight:UIFontWeightRegular color:Dim(0.5)];
-    UIStackView *fpsStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"120 FPS mode" help:@"Runs menus and gameplay at 120 FPS on 120 Hz screens: smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery." control:self.fpsSwitch], self.fpsLabel]];
+    UIStackView *fpsStack = [[UIStackView alloc] initWithArrangedSubviews:@[[self row:@"High frame rate" help:@"Runs menus and gameplay at your screen's top refresh rate (120 Hz on ProMotion iPhones and iPads): smoother, with faster touch response. The game normally uses 30 FPS menus / 60 FPS play. Uses more battery." control:self.fpsSwitch], self.fpsLabel]];
     fpsStack.axis = UILayoutConstraintAxisVertical;
     fpsStack.spacing = 6;
     self.pinImageSwitch = [self switchOn:gBF.pinImage action:@selector(pinImageChanged:)];

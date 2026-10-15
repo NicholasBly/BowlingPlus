@@ -2,6 +2,28 @@
 
 Every change to BowlingFix, newest first.
 
+## [1.7.6] - 2026-10-15
+
+### Changed
+- **High frame rate** (was "120 FPS mode") runs at your screen's top refresh rate: 144 Hz on a 144 Hz Android phone (the fastest display mode at the screen's resolution, read from the display), 120 Hz on ProMotion iPhones. It was always 120. Android asks the window for that mode and, on Android 14 and up, sets it as the window's minimum refresh rate, so the screen can't drop below it.
+- **BowlingPlus's panels scroll at the screen's top refresh rate on Android**, with or without High frame rate. While a panel (the menu, the pattern library, the editor...) is open, the game behind it is capped to 30 FPS, and Unity's frame pacing then let the screen drop to a slow refresh rate, so the menu scrolled at about 30-60 Hz. The window now asks for the fastest mode (and that minimum) while a panel is open, and Android 15's per-view frame rate is set to "high" on the panels.
+- **Barstool seats: fewer, wider-spaced crowns**, like the real stool (five across the front, ten round the seat). Unity's cylinder wraps the picture round its side twice, so the ten crowns drawn for 1.7.5 made twenty; they were also drawn too narrow for that.
+- `.github/workflows/build.yml`: with the repository secret `SIGNULOUS_UDID`, a branch build that makes the IPA sends it to Signulous (`tools/signulous_upload.py`, the same upload as GlowRedux), signed for that device and ready in the Signulous app, under the game's own name, version and bundle ID, with push notifications on. Tag builds don't upload, a newer push to the same branch cancels a build still running, and a Signulous problem doesn't fail the build. Changes to `Port/` alone don't start an iOS build.
+
+### Performance
+- Scene searches back off: an object that isn't there (the tutorial, the loading window once the game has started...) was searched for every 1-2 seconds for as long as the game ran, each search a scan of the scene; now each miss waits twice as long as the last, up to 5-10 seconds.
+- The replay screen's oil texture is checked every frame only in the replayer (it was every frame everywhere).
+- The sweeper banner's "draw on top" check runs every frame only around a throw (until 10 s after); otherwise 6 times a second.
+- The startup and connection log is built every 2 s once the game is up (it was twice a second all the time).
+- The privacy-page watcher checks 30 times a second for the first 90 s, then 4 times a second until it stops at 5 minutes (it was 30 a second for 5 minutes).
+- Android: the loft panel / pattern-screen poll slows to every 0.6 s when nothing of BowlingPlus's can be on screen (not in Practice, no pattern screen, no ball in hand).
+
+### Removed
+- The code that drew the game's own patterns from their Kegel files, unused since 1.7.5 made real-life oil custom-only (the editor's "Start from" still reads those files), and the other-lane experiment, switched off since 1.6.5 (its settings `realOil` and `laneOther` are ignored if they're still in a saved config). About 150 lines fewer on each platform.
+
+### Not tested on a device when this was written
+All of 1.7.6. Checked without a device: both platforms compile (iOS with Theos and the iPhoneOS 16.5 SDK, Android with the offline build and the host check); the shared native blocks are identical on both platforms; the pin simulation passes all 41 checks; the Signulous step was run locally against a 1.7.5 IPA with the upload itself stubbed out (the real upload runs in GitHub Actions); the APK is signed with the BowlingPlus key and the IPA has the 120 Hz key.
+
 ## [1.7.5] - 2026-10-11
 
 ### Added

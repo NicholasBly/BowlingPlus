@@ -20,7 +20,7 @@ Nothing shows up on screen until you **shake your phone**. Shake again (or tap o
 | Arsenal order | Sort your Arsenal by name or by power, hook, length, RPM or condition, high to low or low to high, every time you open it | Everywhere |
 | Hide ball stats | Hides the stat circles on the ball in your hand and on the ball rack (menu, or the STATS button under the LOFT slider) | Everywhere (looks only) |
 | Skip tutorial | A button during the first-launch tutorial that runs the game's own skip, so you can log in right away | Tutorial only |
-| 120 FPS mode | Menus and gameplay at 120 FPS on 120 Hz screens (the game normally uses 30/60). Off by default | Everywhere |
+| High frame rate | Menus and gameplay at your screen's top refresh rate: 120 Hz on ProMotion iPhones, up to 144 Hz on Android (the game normally uses 30/60). Off by default | Everywhere |
 | Privacy popup, once | Accept the My.Games privacy page yourself one time. From then on it is hidden the moment it appears and its Sign up button is pressed for you, so you never see it again. Updated-terms pages are never pressed and are left for you to read | Startup |
 | Don't get stuck connecting | Shows the game's gray offline button after 30 s stuck connecting, and hides a loading circle that's been up 30 s. On by default | Everywhere |
 | Game server over IPv4 | The game always picks its servers' IPv6 addresses, which don't answer (hangs with NextDNS). Uses IPv4 instead. On by default | Everywhere |
@@ -81,7 +81,7 @@ Use an IPA that already has the tweak inside (see "Make a patched IPA" below), t
 - **Pick pins for one shot:** in Practice, tap the pin layout in the top right while you hold the ball, or the little screen under the ball return in the overhead view. The pin picker opens, starting from the pins that are standing now. Tap pins, hit **Rack 'em**, and they're set up right now. It only lasts until you throw: the next frame is a normal full rack unless Spare shooting mode is on. The **X** closes the picker without changing anything (this works in Spare mode too).
 - **Auto-rack:** in the pin picker, tap **Auto (every frame)** instead of Rack 'em. Those pins get set up every frame without asking. Shake for the menu and turn off **Auto-rack** to get the picker back.
 - **Skip tutorial:** on a fresh install, a **Skip tutorial** button shows at the top right during the tutorial. It uses the game's own skip, then you can log in.
-- **120 FPS mode:** shake for the menu, turn on **120 FPS mode** under Display & startup. The line under the switch tells you if it's working. It needs the patched IPA from this repo (it allows 120 Hz in Info.plist); a dylib-only install stays at 60 Hz.
+- **High frame rate:** shake for the menu, turn on **High frame rate** under Display & startup. The line under the switch tells you if it's working. It needs the patched IPA from this repo (it allows 120 Hz in Info.plist); a dylib-only install stays at 60 Hz.
   - Heads up: pins you removed count as already knocked down, so the scoreboard will look weird (clearing your pins can show up as a strike). Scores in this mode are just for fun.
 - Your settings are saved.
 
@@ -106,7 +106,7 @@ Everything is found by name while the game runs (no hard-coded memory addresses)
 
 ## Make a patched IPA (for Signulous)
 
-The iOS workflow makes it for you if you give it a direct link to the decrypted game IPA: the repository secret `GAME_IPA_URL`, or the `ipa_url` box when you start the workflow by hand. The artifact then has `BowlingPlus-<version>.ipa` too, already checked for the 120 Hz setting. Or make it yourself; you just need Python 3:
+The iOS workflow makes it for you if you give it a direct link to the decrypted game IPA: the repository secret `GAME_IPA_URL`, or the `ipa_url` box when you start the workflow by hand. The artifact then has `BowlingPlus-<version>.ipa` too, already checked for the 120 Hz setting. Add your device's UDID as the repository secret `SIGNULOUS_UDID` and each branch build also sends the IPA to Signulous, signed for your device and ready to install from the Signulous app. Or make it yourself; you just need Python 3:
 
 ```
 python3 tools/inject_ipa.py YourGame.ipa BowlingPlus.dylib BowlingPlus.ipa
@@ -129,6 +129,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
+- **1.7.6:** High frame rate uses the screen's top rate (144 Hz on Android phones that have it); BowlingPlus's panels scroll at full refresh on Android; fewer crowns on the barstool seats; lighter background work; builds can go straight to Signulous.
 - **1.7.5:** Ramps & obstacles mode (ramps, Brunswick pin barstools and gates, each can be switched off), a game mode button that restarts at frame 1, a loft slider (can tuck away at the edge), backup ball, Arsenal order, hide ball stats; the pin physics study corrected (the game's materials multiply), so the recommended pin friction is now 0.40 (0.25 with the double rate); real-life oil is automatic (custom patterns only).
 - **1.7.4:** Real-life oil can be turned off, so Practice can use the same oil as online play; a `Port/` folder for the game's team.
 - **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.

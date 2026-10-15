@@ -45,13 +45,15 @@ final class OilTab {
     static void start() {
         if (poller != null) return;
         poller = new Thread(() -> {
+            boolean busy = true;
             for (;;) {
                 try {
-                    Thread.sleep(250);
+                    Thread.sleep(busy ? 250 : 600);              // a slower look when nothing of ours can be on screen
                     if (BP.activity == null) continue;
                     String r = N.call("hud");
                     if (r == null || r.length() < 2) continue;   // Unity didn't answer in time (loading, paused): keep what we know
                     final boolean l = r.charAt(0) == '1', h = r.charAt(1) == '1';
+                    busy = l || h || (r.length() > 2 && r.charAt(2) == '1');   // the pattern screen, the ball in hand, Practice
                     BP.UI.post(() -> { lobby = l; holding = h; update(); });
                 } catch (InterruptedException e) {
                     return;

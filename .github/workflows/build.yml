@@ -9,6 +9,12 @@
 #   * as the repository secret GAME_IPA_URL (Settings > Secrets and variables > Actions), or
 #   * in the ipa_url box when you start it by hand (Actions > Build BowlingPlus > Run workflow).
 # Without one, it still builds and uploads the dylib + .deb, so you see whether the code compiles.
+#
+# Signulous: with the repository secret SIGNULOUS_UDID (your device's UDID), every branch build that makes the IPA
+# also sends it to Signulous, which signs it for that device: it then shows up in the Signulous app to install
+# (tools/signulous_upload.py, the same upload GlowRedux uses). Tag pushes don't upload (they build a commit a branch
+# push already built), and a newer push to the same branch cancels a build still running. A Signulous problem
+# doesn't fail the build: the IPA is still in the artifact.
 name: Build BowlingPlus
 
 on:
@@ -17,19 +23,31 @@ on:
       - "android/**"
       - ".github/workflows/build-android.yml"
       - "**.md"
+      - "Port/**"
   workflow_dispatch:
     inputs:
       ipa_url:
         description: "Direct link to the decrypted game .ipa (overrides the GAME_IPA_URL secret)"
         required: false
         type: string
+      display_name:
+        description: "App name on Signulous and the home screen (blank = the game's own name)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      # Mapped here so a step can check it (the secrets context isn't allowed in `if:`, env is)
+      SIGNULOUS_UDID: ${{ secrets.SIGNULOUS_UDID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,6 +93,37 @@ jobs:
           sys.exit(0 if ok120 and dylib else 1)
           PY
           ls -la out
+
+      - name: Upload to Signulous
+        id: signulous
+        # Only with the SIGNULOUS_UDID secret, only when the IPA was made, never for a tag. Signs the app for your
+        # device; it then appears in the Signulous app. Non-fatal: the IPA is still in the artifact below.
+        if: ${{ env.SIGNULOUS_UDID != '' && !startsWith(github.ref, 'refs/tags/') }}
+        continue-on-error: true
+        env:
+          INPUT_NAME: ${{ github.event.inputs.display_name }}
+        run: |
+          set -euo pipefail
+          IPA="$(ls out/*.ipa 2>/dev/null | head -n 1 || true)"
+          if [ -z "$IPA" ]; then
+            echo "::notice::No IPA in this build (no game link), so nothing to send to Signulous."
+            exit 0
+          fi
+          # the game's own name, version and bundle ID, so Signulous installs it as the game
+          eval "$(python3 -I - "$IPA" <<'PY'
+          import plistlib, re, shlex, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          n = next(x for x in z.namelist() if re.fullmatch(r'Payload/[^/]+\.app/Info\.plist', x))
+          p = plistlib.loads(z.read(n))
+          for k, v in (('APP_NAME', p.get('CFBundleDisplayName') or p.get('CFBundleName') or 'Bowling'),
+                       ('APP_VERSION', p.get('CFBundleShortVersionString', '1.0')),
+                       ('APP_BUNDLE', p['CFBundleIdentifier'])):
+              print('%s=%s' % (k, shlex.quote(str(v))))
+          PY
+          )"
+          echo "BowlingPlus $(sed -n 's/^Version: //p' control) on ${APP_NAME} ${APP_VERSION} (${APP_BUNDLE})"
+          python3 -I tools/signulous_upload.py --ipa "$IPA" --name "${INPUT_NAME:-$APP_NAME}" \
+            --version "$APP_VERSION" --bundle "$APP_BUNDLE" --push
 
       - uses: actions/upload-artifact@v4
         with:

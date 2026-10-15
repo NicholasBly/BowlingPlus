@@ -60,14 +60,14 @@ New in 1.7.5:
 
 ### 1. 120 FPS mode (`bp.fps120`)
 
-**What it does:** runs menus and gameplay at 120 FPS on 120 Hz phones. The game draws menus at 30 and gameplay at 60 on phones.
+**What it does:** runs menus and gameplay at the screen's top refresh rate: 120 Hz on ProMotion iPhones, 120 or 144 Hz on fast Android phones (BowlingPlus 1.7.6 reads it from the display; 1.7.5 and earlier always asked for 120). The game draws menus at 30 and gameplay at 60 on phones.
 
 **Native implementation:**
 - Read the setting and set `Application.targetFrameRate` from one place: the code that already sets it in `Loading.Start`, `RunPsycsTest.StartFun`, `RunPsycsTest.restartGameComplite`, `FloatingMenu` and `HTHLobbyManager`. Keep `QualitySettings.vSyncCount = 0`.
 - Set the menu and game rates from the setting, not from fixed constants. The stock values are `MENU_FRAME_RATE` = 30 and `GAME_FRAME_RATE` = 60 in `Client.Core.Constants`.
 - **iOS:** the stock `Info.plist` has `CADisableMinimumFrameDurationOnPhone` set to `false`, so iOS holds the app at 60 Hz whatever the game asks for. Set it to `true` in your iOS build. **(confirm)** The usual way is a post-build step that edits the plist (`PostProcessBuild` with `PlistDocument`). Check that it's in the built app, not only in your source.
-- **Android:** Unity doesn't expose a refresh-rate request. Ask for the display's fastest mode with `Window.getAttributes().preferredDisplayModeId` from a small Android plugin, choosing the mode with the same resolution and the highest refresh rate. **(confirm)** Check the current API for Android 6.0+ and Unity 6's plugin setup.
-- If an overlay scrolls over the lane, cap the lane's rate while it's open. Drawing the lane at 120 FPS behind a scrolling menu was slow.
+- **Android:** Unity doesn't expose a refresh-rate request. Ask for the display's fastest mode with `Window.getAttributes().preferredDisplayModeId` from a small Android plugin, choosing the mode with the same resolution and the highest refresh rate, and target that mode's rate. On Android 14+ also set `preferredMinDisplayRefreshRate` to it: with only the mode id, the screen can still drop to a slower rate when the game draws slowly (behind an overlay or in a 30 FPS menu). **(confirm)** Check the current API for Android 6.0+ and Unity 6's plugin setup.
+- If an overlay scrolls over the lane, cap the lane's rate while it's open (drawing the lane at 120 FPS behind a scrolling menu was slow), but keep asking for the screen's top refresh rate while the overlay is up, or the overlay scrolls at the lane's capped rate.
 
 **Watch out:** the physics runs on a fixed timestep, so the render rate shouldn't change shots. Confirm with a test: the same shot at 60 and 120 FPS should match.
 

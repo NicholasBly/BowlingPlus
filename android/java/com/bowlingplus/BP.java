@@ -351,42 +351,48 @@ public final class BP {
         }
     }
 
-    // ---- 120 FPS: ask the window for the display's fastest mode while it's on ----
+    // ---- High frame rate: ask the window for the display's fastest mode (120, 144 Hz...) while it's on, and while a
+    // BowlingPlus panel is open. The game caps itself to 30 FPS behind a panel (and to its own 30 FPS in its menus), and
+    // Unity's frame pacing then lets the screen drop to a slow refresh rate, so a panel scrolled at 30-60 Hz. The
+    // minimum refresh rate (Android 14+) keeps the screen at its top rate; the mode id does it on older versions.
     static void applyFps() {
         try {
             Activity act = activity;
-            if (act == null) return;
+            if (act == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
             Window w = act.getWindow();
             WindowManager.LayoutParams lp = w.getAttributes();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                int best = bestModeId(act);
-                if (Config.b("fps120", false) && best > 0) lp.preferredDisplayModeId = best;
-                else lp.preferredDisplayModeId = 0;
-                w.setAttributes(lp);
+            boolean want = Config.b("fps120", false) || UiKit.overlayOpen();
+            Display.Mode best = bestMode(act);
+            int id = want && best != null ? best.getModeId() : 0;
+            float min = want && best != null ? best.getRefreshRate() : 0f;
+            boolean changed = lp.preferredDisplayModeId != id;
+            lp.preferredDisplayModeId = id;
+            if (Build.VERSION.SDK_INT >= 34) {
+                try { changed |= lp.preferredMinDisplayRefreshRate != min; lp.preferredMinDisplayRefreshRate = min; } catch (Throwable ignored) {}
             }
+            if (changed) w.setAttributes(lp);
         } catch (Throwable ignored) {}
     }
 
-    static int bestModeId(Activity act) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return 0;
+    // the fastest mode at the screen's current resolution (120, 144 Hz...), or null before Android 6
+    static Display.Mode bestMode(Activity act) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null;
         Display d = displayOf(act);
-        if (d == null) return 0;
-        Display.Mode cur = d.getMode();
-        Display.Mode best = cur;
+        if (d == null) return null;
+        Display.Mode cur = d.getMode(), best = cur;
         for (Display.Mode m : d.getSupportedModes())
             if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
                     && m.getRefreshRate() > best.getRefreshRate() + 0.5f) best = m;
-        return best.getRefreshRate() > cur.getRefreshRate() + 0.5f ? best.getModeId() : 0;
+        return best;
     }
 
+    // the top refresh rate this screen can run at its resolution: the frame rate High frame rate asks the game for
     static int maxHz(Activity act) {
         try {
+            Display.Mode m = bestMode(act);
+            if (m != null) return Math.round(m.getRefreshRate());
             Display d = displayOf(act);
-            if (d == null) return 60;
-            float max = d.getRefreshRate();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                for (Display.Mode m : d.getSupportedModes()) max = Math.max(max, m.getRefreshRate());
-            return Math.round(max);
+            return d != null ? Math.round(d.getRefreshRate()) : 60;
         } catch (Throwable t) { return 60; }
     }
 

@@ -1,6 +1,6 @@
 # Port: BowlingPlus features for the official game
 
-Everything here is for porting features from BowlingPlus into Bowling by Jason Belmonte. It's based on BowlingPlus 1.7.5.
+Everything here is for porting features from BowlingPlus into Bowling by Jason Belmonte. It's based on BowlingPlus 1.7.6.
 
 Read in this order:
 

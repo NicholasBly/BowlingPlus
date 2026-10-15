@@ -445,14 +445,28 @@ static void NotReady() {
     gBFStatus.gameMode = gBFStatus.location = -1;
 }
 
-static Ref sCoreLoop;                   // MonoCoreLoop: the game's startup / menu state machine
+// A scene object that isn't there (no tutorial, no loading window once the game has started...) used to be searched
+// for every second or two for as long as the game ran, and each search scans the scene. Now each failed search waits
+// twice as long as the last before the next one (from `base` up to `cap` frames); a hit resets it.
+struct Seek { int next = 0, wait = 0; };
+static void *SeekFirst(Seek &k, Il2CppObject *type, int base, int cap) {
+    if (!type || sFrame < k.next) return nullptr;
+    void *o = FirstAlive(FindAll(type));
+    if (o) { k.wait = 0; return o; }
+    k.wait = k.wait ? (k.wait * 2 < cap ? k.wait * 2 : cap) : base;
+    k.next = sFrame + k.wait;
+    return nullptr;
+}
+
+static Ref sCoreLoop;
+static Seek sCoreLoopSeek;                   // MonoCoreLoop: the game's startup / menu state machine
 
 // The game's own main menu is up, so its startup (scene, data, login) is done. Exact name only: any other
 // state keeps the plain 4 s wait. (The game has many "...State" classes; this is the one seen on a device.)
 static bool AtMainMenu() {
     if (!N.tMonoCoreLoop || N.mcl_sm < 0 || N.sm_state < 0) return false;
     void *mcl = sCoreLoop.get();
-    if (!mcl && sFrame % 30 == 0) { mcl = FirstAlive(FindAll(N.tMonoCoreLoop)); sCoreLoop.set(mcl); }
+    if (!mcl) { mcl = SeekFirst(sCoreLoopSeek, N.tMonoCoreLoop, 30, 600); sCoreLoop.set(mcl); }
     void *sm = mcl ? At<void *>(mcl, N.mcl_sm) : nullptr;
     void *state = sm ? At<void *>(sm, N.sm_state) : nullptr;
     const char *name = state ? ClassName(ClassOf(state)) : nullptr;
@@ -1066,6 +1080,7 @@ static void PinImageRestore() {
     sPinMatCount = 0;
 }
 
+static Seek sInvDataSeek;                  // (InventaryData searches for the pin image, below)
 static void PinImageTick() {
     if (!sSettled || !N.M_getMainTex || !N.M_setMainTex || !N.R_getSharedMat) return;
     bool full = sFrame % 30 == 0;
@@ -1082,7 +1097,7 @@ static void PinImageTick() {
     }
     if (!full) return;
     void *inv = sInvData.get();                   // the pinsetter / pin deck / reflection / Arsenal pins
-    if (!inv && N.tInvData && sFrame % 120 == 0) { inv = FirstAlive(FindAll(N.tInvData)); sInvData.set(inv); }
+    if (!inv) { inv = SeekFirst(sInvDataSeek, N.tInvData, 120, 600); sInvData.set(inv); }
     if (inv) {
         if (N.inv_pinMat >= 0) PinImageOn(At<void *>(inv, N.inv_pinMat), tex);
         if (N.inv_mirrorMat >= 0) PinImageOn(At<void *>(inv, N.inv_mirrorMat), tex);
@@ -2078,6 +2093,11 @@ static void BannerTopFind(void *logo, void *bar) {
 
 static void BannerTopTick() {
     if (!sSettled) return;
+    // The sweeper's banner only moves around a throw (the sweep, the pinsetter after it): every frame then, and
+    // for 10 s after; a few times a second the rest of the time.
+    static int lastPlay = -100000;
+    if (sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK) lastPlay = sFrame;
+    if (sFrame - lastPlay > 600 && sFrame % 10 != 0) return;
     void *panel = sBannerPanel.get();
     if (!Alive(panel) || sBannerLogoOff < 0x10) return;
     ExtraResolve();
@@ -2752,6 +2772,7 @@ static void InHandFallbackTick() {           // every frame, so a wrong skin nev
 // The game's own "tutorial completed" flag is the reliable part.
 // ---------------------------------------------------------------------------
 static Ref sTutorial;
+static Seek sTutorialSeek;
 static bool sInTutorial = false, sSkipRequested = false, sSkipDone = false;
 
 void BFRequestSkipTutorial(void) { sSkipRequested = true; }
@@ -2774,7 +2795,7 @@ static void TutorialTick() {
     if (!N.Tutorial || !N.TM_IsInTutorial) return;
     if (!sSkipRequested && sFrame % 30 != 0) return;
     void *tm = sTutorial.get();
-    if (!tm && !sSkipDone && sFrame % 60 == 0) { tm = FirstAlive(FindAll(N.tTutorial)); sTutorial.set(tm); }
+    if (!tm && !sSkipDone) { tm = SeekFirst(sTutorialSeek, N.tTutorial, 60, 600); sTutorial.set(tm); }
     bool in = sSettled && tm && !sSkipDone && InvokeBool(N.TM_IsInTutorial, tm, nullptr, false);
     if (in && N.CSM_TutorialDone && InvokeBool(N.CSM_TutorialDone, nullptr, nullptr, false)) in = false;
     if (sSkipRequested) {
@@ -2807,6 +2828,7 @@ static void TutorialTick() {
 //  - privacy SDK silent for 20 s while no privacy page is on screen -> mark the wait done, which
 //    is what happens when the SDK can't reach its server.
 // ---------------------------------------------------------------------------
+static Seek sLoadingWndSeek;
 static Ref sLoadingWnd;   // (sCoreLoop is declared before UpdateState, which uses it)
 static CFAbsoluteTime sGdprWaitSince = 0, sConnectingSince = 0;
 static int sUnstuckCount = 0;
@@ -2824,7 +2846,7 @@ static void StuckTick() {
     // 1) startup wait for the privacy SDK
     if (!sSettled && N.MonoCoreLoop && N.InitState && N.mcl_sm >= 0 && N.sm_state >= 0 && N.is_gdpr >= 0) {
         void *mcl = sCoreLoop.get();
-        if (!mcl && sFrame % 60 == 0) { mcl = FirstAlive(FindAll(N.tMonoCoreLoop)); sCoreLoop.set(mcl); }
+        if (!mcl) { mcl = SeekFirst(sCoreLoopSeek, N.tMonoCoreLoop, 30, 600); sCoreLoop.set(mcl); }
         void *sm = mcl ? At<void *>(mcl, N.mcl_sm) : nullptr;
         void *state = sm ? At<void *>(sm, N.sm_state) : nullptr;
         bool waiting = state && ClassOf(state) == N.InitState && !At<bool>(state, N.is_gdpr);
@@ -2841,7 +2863,7 @@ static void StuckTick() {
     // 2) loading screen stuck on "connecting"
     if (!N.LoadingWindow || !N.LW_Switch || N.lw_offline < 0) return;
     void *lw = sLoadingWnd.get();
-    if (!lw && sFrame % 60 == 0) { lw = FirstAlive(FindAll(N.tLoadingWindow)); sLoadingWnd.set(lw); }
+    if (!lw) { lw = SeekFirst(sLoadingWndSeek, N.tLoadingWindow, 60, 600); sLoadingWnd.set(lw); }
     bool stuck = lw && (SectionActive(lw, N.lw_conn) || SectionActive(lw, N.lw_noConn)) &&
                  !SectionActive(lw, N.lw_offline) && !SectionActive(lw, N.lw_login) && !SectionActive(lw, N.lw_online);
     if (!stuck) { sConnectingSince = 0; return; }
@@ -2954,13 +2976,15 @@ static void GameLoggerTick() {   // more game output for the first 2 minutes
 }
 
 static void DiagTick() {
-    if (sFrame % 30 != 0) return;
+    // twice a second while the game starts (the startup log); once the game is up, every 2 s is enough to log
+    // a connection change
+    if (sFrame % (sHealthy && !BFMenuVisible() ? 120 : 30) != 0) return;
     GameLoggerTick();
     // where startup is
     NSString *core = @"-";
     bool pastInit = sSettled;
     void *mcl = sCoreLoop.get();
-    if (!mcl && N.tMonoCoreLoop && sFrame % 60 == 0) { mcl = FirstAlive(FindAll(N.tMonoCoreLoop)); sCoreLoop.set(mcl); }
+    if (!mcl) { mcl = SeekFirst(sCoreLoopSeek, N.tMonoCoreLoop, 30, 600); sCoreLoop.set(mcl); }
     void *sm = (mcl && N.mcl_sm >= 0) ? At<void *>(mcl, N.mcl_sm) : nullptr;
     void *state = (sm && N.sm_state >= 0) ? At<void *>(sm, N.sm_state) : nullptr;
     if (state) {
@@ -2969,7 +2993,7 @@ static void DiagTick() {
         else pastInit = true;
     }
     void *lw = sLoadingWnd.get();
-    if (!lw && N.tLoadingWindow && sFrame % 60 == 0) { lw = FirstAlive(FindAll(N.tLoadingWindow)); sLoadingWnd.set(lw); }
+    if (!lw) { lw = SeekFirst(sLoadingWndSeek, N.tLoadingWindow, 60, 600); sLoadingWnd.set(lw); }
     NSString *load = @"-";
     if (lw) {
         pastInit = true;
@@ -3050,6 +3074,13 @@ static void SetTargetFps(int v) {
     Invoke(N.App_setFps, nullptr, a);
 }
 
+// High frame rate mode's target: the screen's top rate (120 on ProMotion), or 120 on a 60 Hz screen (it then just asks
+// for more than it can show)
+static int HighFps() {
+    long hz = (long)[UIScreen mainScreen].maximumFramesPerSecond;
+    return hz >= 90 && hz <= 240 ? (int)hz : 120;
+}
+
 static void FpsTick() {
     if (!sSettled || sFrame % 30 != 0 || !N.Constants || !N.App_setFps) return;
     if (!sGameFpsF) sGameFpsF = StaticField(N.Constants, "GAME_FRAME_RATE");
@@ -3059,27 +3090,28 @@ static void FpsTick() {
         if (!sFpsApplied) {
             StaticRead(sGameFpsF, &sOrigGameFps);
             StaticRead(sMenuFpsF, &sOrigMenuFps);
-            int v = 120;
+            int v = HighFps();
             StaticWrite(sGameFpsF, &v);
             StaticWrite(sMenuFpsF, &v);
             sFpsApplied = true;
-            BFLog(@"120 FPS: frame rate table menu %d / game %d -> 120", sOrigMenuFps, sOrigGameFps);
+            BFLog(@"high frame rate: frame rate table menu %d / game %d -> %d", sOrigMenuFps, sOrigGameFps, v);
         }
-        if (InvokeInt(N.App_getFps, nullptr, nullptr, 120) != 120) SetTargetFps(120);
+        int hi = HighFps();
+        if (InvokeInt(N.App_getFps, nullptr, nullptr, hi) != hi) SetTargetFps(hi);
     } else if (sFpsApplied) {
         int game = sOrigGameFps > 0 ? sOrigGameFps : 60, menu = sOrigMenuFps > 0 ? sOrigMenuFps : 30;
         StaticWrite(sGameFpsF, &game);
         StaticWrite(sMenuFpsF, &menu);
         SetTargetFps(game);   // the game sets its own value again at the next screen change
         sFpsApplied = false;
-        BFLog(@"120 FPS: off, frame rate table back to %d / %d", menu, game);
+        BFLog(@"high frame rate: off, frame rate table back to %d / %d", menu, game);
     }
 }
 
 NSString *BFFpsLine(void) {
     long screenMax = (long)[UIScreen mainScreen].maximumFramesPerSecond;
-    if (!PlistAllows120()) return @"This copy of the game isn't allowed above 60 Hz. Install the new patched IPA for 120 FPS.";
-    if (screenMax < 120) return [NSString stringWithFormat:@"This screen tops out at %ld Hz.", screenMax];
+    if (!PlistAllows120()) return @"This copy of the game isn't allowed above 60 Hz. Install the patched IPA for high frame rates.";
+    if (screenMax < 90) return [NSString stringWithFormat:@"This screen tops out at %ld Hz.", screenMax];
     if (!gBF.fps120) return @"Off: the game's normal 30 FPS menus / 60 FPS gameplay.";
     if (!sFpsApplied) return @"On: applies once the lane has loaded.";
     int cur = N.App_getFps ? InvokeInt(N.App_getFps, nullptr, nullptr, -1) : -1;
@@ -3302,12 +3334,13 @@ static bool GridOf(void *arr, OilGrid &g) {      // float[,]: bounds at +0x10, d
 }
 
 static Ref sOilGen, sOilData;
+static Seek sOilGenSeek;
 static FieldInfo *sGpSel, *sGpMapW, *sGpMapH, *sDrPattern, *sDrUnits, *sOgColor, *sPmData;
 static int sOdOils = -2, sOdMatrix = -2, sOdSource = -2, sOdSrcAsset = -2, sOdName = -2, sOdId = -2, sOdDist = -2, sOdVol = -2;
 
 static void *OilGenerator() {
     void *g = sOilGen.get();
-    if (!g && N.tOilGen && sFrame % 60 == 0) { g = FirstAlive(FindAll(N.tOilGen)); sOilGen.set(g); }
+    if (!g) { g = SeekFirst(sOilGenSeek, N.tOilGen, 60, 300); sOilGen.set(g); }
     return g;
 }
 
@@ -3392,10 +3425,11 @@ static void OilPrewarmStep() {
 // The shot replay draws the recorded oil into its own texture (ReplayerInterfaceManager.manageOilOnLane,
 // field oilTexture), made on Clamp, so it needs the same treatment.
 static Ref sReplayer;
+static Seek sReplayerSeek;
 static void ReplayOilTick() {
     if (!N.tReplayer || N.ri_oilTex < 0) return;
     void *r = sReplayer.get();
-    if (!r && sFrame % 60 == 0) { r = FirstAlive(FindAll(N.tReplayer)); sReplayer.set(r); }
+    if (!r) { r = SeekFirst(sReplayerSeek, N.tReplayer, 60, 300); sReplayer.set(r); }
     if (r) SetOilWrap(At<void *>(r, N.ri_oilTex));
 }
 
@@ -3521,7 +3555,7 @@ static void OilMirrorTick() {
         if (N.OG_updateColor) Invoke(N.OG_updateColor, gen, nullptr);
         sHueShown = -1;
     } else if (gBF.oilHue >= 0) sHueShown = gBF.oilHue;
-    ReplayOilTick();
+    if (sLoc == LOC_REPLAYER || full) ReplayOilTick();   // its texture only matters in the replayer
     if (full) OilPrewarmStep();
 }
 
@@ -3646,7 +3680,6 @@ static ObjRef sCustomTarget;
 static int sCustomTargetIdx = -1;               // its list position (the picture cache's key)
 static NSDictionary *sLastKegel;                  // what the engine computed for the custom pattern (oil report)
 static NSString *sOilReportSource;
-static int sBuiltinPatched = 0;                   // how many of the game's own patterns are drawn from their Kegel files right now
 static int sLastKegelBase = -1;
 static std::vector<float> sCustomBackup;
 static NSString *sCustomNote = @"";
@@ -4108,17 +4141,10 @@ static void OilCustomTick() {
     BFLog(@"custom oil: \"%@\" is on the lane", sCustomPattern[@"name"]);
 }
 
-// ---- 4b) the game's own patterns, drawn like real life (Practice) ----
-// The game builds its 48 patterns with its simplified Kegel engine (whole-foot rows, reverse oil doubling,
-// no film on boards the oil head never crossed, left and right mirrored). Each pattern still carries its
-// real Kegel file (OilDescription._source, a TextAsset), so in Practice the lane's oil grids are replaced by
-// the Kegel-accurate drawing of that file: exact distances on the lane's quarter-foot rows, microliters,
-// the brushed film, and Kegel's left on the bowler's left. All 48 are swapped at once (so the pattern
-// carousel shows them right away), the originals are kept, and everything is put back the moment you're not
-// in Practice (online matches, tournaments, the tutorial always get the game's own oil).
+// ---- 4b) the game's own patterns as Kegel steps (the editor's "Start from") ----
+// The game builds its 48 patterns with its simplified Kegel engine, but each still carries its real Kegel file
+// (OilDescription._source, a TextAsset). The pattern editor can start a custom pattern from one of them.
 static NSMutableDictionary<NSNumber *, NSDictionary *> *sBuiltinSpec;
-static struct BuiltinState { void *desc = nullptr; bool applied = false; std::vector<float> backup; } sBI[64];
-static uint64_t sBuiltinRedraw = 0;               // patterns whose lane picture still needs redrawing
 static int sBuiltinFails = 0;
 
 static NSDictionary *BuiltinSpec(int idx, void *desc) {
@@ -4152,77 +4178,6 @@ static NSDictionary *BuiltinSpec(int idx, void *desc) {
 NSDictionary *BFOilBuiltinSpec(int idx) {          // for the editor's "Start from"
     void *d = OilDescAt(idx);
     return d ? BuiltinSpec(idx, d) : nil;
-}
-
-static void BuiltinRestoreAll() {
-    if (!sBuiltinPatched) { for (int i = 0; i < 64; i++) sBI[i] = BuiltinState(); return; }
-    if (sCustomAppliedId) RestoreCustom();         // a custom pattern may sit on top of one of them: back to the patched first
-    ListView lv;
-    bool haveList = OilList(lv);
-    for (int i = 0; i < 64; i++) {
-        if (!sBI[i].applied) continue;
-        if (haveList && i < lv.size && lv.items[i] == sBI[i].desc && sOdSource >= 0 && sOdMatrix >= 0) {
-            void *d = lv.items[i];
-            OilGrid src, live;
-            if (GridOf(At<void *>(d, sOdSource), src) && (size_t)src.w * src.h == sBI[i].backup.size()) {
-                memcpy(src.data, sBI[i].backup.data(), sizeof(float) * sBI[i].backup.size());
-                if (GridOf(At<void *>(d, sOdMatrix), live) && live.w == src.w && live.h == src.h)
-                    memcpy(live.data, src.data, sizeof(float) * sBI[i].backup.size());
-                sBuiltinRedraw |= 1ull << i;
-            }
-        }
-        sBI[i] = BuiltinState();
-    }
-    sBuiltinPatched = 0;
-    BFLog(@"the game's own oil patterns are back");
-}
-
-static void BuiltinApplyAll() {
-    ListView lv;
-    if (!OilList(lv)) return;
-    int n = lv.size < 64 ? lv.size : 64, added = 0;
-    for (int i = 0; i < n; i++) {
-        void *d = lv.items[i];
-        if (!d) continue;
-        if (sBI[i].applied && sBI[i].desc == d) continue;
-        if (sBI[i].applied) sBI[i] = BuiltinState();                 // the list changed under us
-        if (sCustomAppliedId && i == sCustomTargetIdx) continue;     // a custom pattern is on this one right now
-        OilDescOffsets(d);
-        if (sOdSource < 0 || sOdMatrix < 0) return;
-        NSDictionary *spec = BuiltinSpec(i, d);
-        if (!spec) continue;
-        OilGrid src, live;
-        if (!GridOf(At<void *>(d, sOdSource), src) || !GridOf(At<void *>(d, sOdMatrix), live) || src.w != live.w || src.h != live.h) continue;
-        NSDictionary *r = KegelDrawPattern(spec[@"fwd"], spec[@"rev"], [spec[@"drop"] intValue], true, true, [spec[@"feet"] intValue], true);
-        NSData *grid = r[@"grid"];
-        if ([r[@"w"] intValue] != src.w || [r[@"h"] intValue] != src.h || grid.length != sizeof(float) * src.w * src.h) continue;
-        sBI[i].backup.assign(src.data, src.data + (size_t)src.w * src.h);
-        memcpy(src.data, grid.bytes, grid.length);                    // a new game copies this clean grid back, so it stays
-        memcpy(live.data, grid.bytes, grid.length);
-        sBI[i].desc = d;
-        sBI[i].applied = true;
-        sBuiltinRedraw |= 1ull << i;
-        added++;
-    }
-    int total = 0;
-    for (int i = 0; i < 64; i++) total += sBI[i].applied;
-    sBuiltinPatched = total;
-    if (added) BFLog(@"Practice: %d of the game's oil patterns are now drawn from their Kegel files (%d couldn't be read)", total, sBuiltinFails);
-}
-
-static void BuiltinRedrawStep() {                 // lane pictures: the selected pattern first, then a few per call
-    if (!sBuiltinRedraw) return;
-    int budget = 6, cur = OilSelected() - 1;
-    if (cur >= 0 && cur < 64 && ((sBuiltinRedraw >> cur) & 1)) { sBuiltinRedraw &= ~(1ull << cur); ReloadOilIndex(cur); budget--; }
-    for (int i = 0; i < 64 && budget > 0; i++)
-        if ((sBuiltinRedraw >> i) & 1) { sBuiltinRedraw &= ~(1ull << i); ReloadOilIndex(i); budget--; }
-}
-
-static void OilBuiltinTick() {
-    bool want = InPracticeOil() && gBF.realOil;    // realOil is false: the game's own patterns keep the game's drawing, as online
-    if (!want) { if (sBuiltinPatched) BuiltinRestoreAll(); }
-    else if (sFrame % 15 == 0 || !sBuiltinPatched) BuiltinApplyAll();
-    if (sFrame % 3 == 0) BuiltinRedrawStep();
 }
 
 // ---- 5) show oil thickness (display only) ----
@@ -4317,15 +4272,6 @@ static NSString *OilReport(bool live) {
     NSMutableString *s = [NSMutableString string];
     NSDictionary *r = sLastKegel;
     sOilReportSource = sCustomAppliedId ? @"custom pattern, Kegel-accurate model" : @"";
-    if (!sCustomAppliedId && live && sBuiltinPatched) {          // the game's own pattern, drawn from its Kegel file
-        int idx = OilSelected() - 1;
-        void *dd = CurrentOilDesc();
-        NSDictionary *spec = (dd && idx >= 0) ? BuiltinSpec(idx, dd) : nil;
-        if (spec) {
-            r = KegelDrawPattern(spec[@"fwd"], spec[@"rev"], [spec[@"drop"] intValue], true, true, [spec[@"feet"] intValue], true);
-            sOilReportSource = [NSString stringWithFormat:@"game pattern \"%@\" from its Kegel file, Kegel-accurate model (%d of 48 patterns patched)", spec[@"name"], sBuiltinPatched];
-        }
-    }
     int w = [r[@"w"] intValue], h = [r[@"h"] intValue];
     const float *eg = (const float *)[r[@"grid"] bytes];
     OilGrid lane = {};
@@ -4360,76 +4306,6 @@ static NSString *OilReport(bool live) {
 
 void BFOilApplyHue(void) {                         // called by the color picker: the next frame shows it
     if (gBF.oilHue >= 0) sHueShown = gBF.oilHue;
-}
-
-#define LANE_LOG_GAVEUP @"other lane: the game keeps moving you back, stopped trying (turn the switch off and on to retry)"
-#define LANE_LOG_MOVE @"other lane: asked the game to move from lane %d to %d (now %d)"
-// ---- bowl on the other lane (experimental, Practice) ----
-// The game has two lanes: RoadChanger.shiftBy = { 0, -1.837 } and the static RoadChanger.currentLane says
-// which one you're on (device, 1.6.3: lane 1). Dragging your shoes at the ball rack moves you over, but the
-// game snaps back when you let go. This asks the game's own RoadChanger.shiftToLaneNumber(int) for the
-// other lane while you're at the ball rack. "Home" is the lane the game picks by itself; turning the
-// setting off goes back there. If the game keeps moving you back, it stops after 5 tries and says so.
-static Il2CppClass *sRoadClass = nullptr;
-static const MethodInfo *sRoadShift = nullptr;
-static FieldInfo *sRoadCur = nullptr;
-static bool sRoadLooked = false, sLaneWas = false, sLaneGaveUp = false;
-static bool sLaneMoved = false;   // BowlingPlus put you on the lane you're on now
-static Ref sRoad;
-static int sLaneHome = -1, sLaneTarget = -1, sLaneTries = 0, sLaneReverts = 0, sLaneLastTry = -100000;
-
-static int LaneNow() {
-    if (!sRoadCur) return -1;
-    int v = -1;
-    StaticRead(sRoadCur, &v);
-    return v;
-}
-
-// 1.6.5: switched off. On a device (1.6.4) the game moved you straight back every time (5 of 5) and the
-// other lane has no pins, oil or lights in Practice: it isn't set up there. Making it playable needs the
-// game's code read (what RoadChanger.toActivate0/1, getCurrentLaneGame and SwitchLaneDrag.OnEndDrag do),
-// which needs a disassembler. The code stays for that; the menu switch is gone, and a saved "on" from
-// 1.6.4 does nothing.
-static const bool kLaneSwitchEnabled = false;
-
-static void LaneTick() {
-    if (!kLaneSwitchEnabled) return;
-    if (sFrame % 30 != 0 || !sSettled) return;
-    if (!sRoadLooked) {
-        sRoadLooked = true;
-        sRoadClass = FindClass("", "RoadChanger");
-        if (sRoadClass) {
-            sRoadShift = FindMethod(sRoadClass, "shiftToLaneNumber", 1, "System.Int32");
-            char tn[64];
-            if (FieldTypeName(sRoadClass, "currentLane", tn, sizeof(tn)) && !strcmp(tn, "System.Int32") && FieldOffset(sRoadClass, "currentLane") < 0x10)
-                sRoadCur = StaticField(sRoadClass, "currentLane");
-        }
-    }
-    if (!sRoadClass || !sRoadShift || !sRoadCur) return;
-    bool want = gBF.laneOther && InPractice();
-    if (want != sLaneWas) { sLaneWas = want; sLaneTries = sLaneReverts = 0; sLaneGaveUp = false; sLaneTarget = -1; }
-    int cur = LaneNow();
-    if (cur < 0 || cur > 1) return;
-    if (!sLaneMoved) sLaneHome = cur;      // until BowlingPlus moves you, your lane is the game's own choice
-    if (!InPractice()) return;
-    int target = gBF.laneOther ? 1 - sLaneHome : sLaneHome;
-    if (cur == target) { if (!gBF.laneOther) sLaneMoved = false; return; }   // back home: the game's again
-    if (sLaneGaveUp) return;
-    if (sLaneTarget == target && sFrame - sLaneLastTry < 240) return;       // give the last move time
-    if (sLaneTarget == target && sLaneTries > 0) sLaneReverts++;            // we moved, and it's back
-    if (sLaneReverts >= 5) {
-        if (!sLaneGaveUp) { sLaneGaveUp = true; BFLog(LANE_LOG_GAVEUP); }
-        return;
-    }
-    if (sLoc != LOC_BALL_RETURNER && sLoc != LOC_UPPER_SCREEN) return;      // only between shots, at the rack
-    void *road = sRoad.get();
-    if (!road) { road = FirstAlive(FindAll(TypeOf(sRoadClass))); sRoad.set(road); }
-    if (!road) return;
-    void *a[] = { &target };
-    Invoke(sRoadShift, road, a);
-    sLaneTarget = target; sLaneTries++; sLaneLastTry = sFrame;
-    if (gBF.laneOther) sLaneMoved = true;
-    BFLog(LANE_LOG_MOVE, cur, target, LaneNow());
 }
 
 #define BP175_LOG @"%s"
@@ -5820,7 +5696,6 @@ static void Bp175Debug(char *buf, size_t size) {
 static void OilTick() {
     OilBreakdownTick();                           // every frame (it watches for the end of a shot)
     OilMirrorTick();                              // every frame (cheap texture check), full pass every 30
-    if (sSettled && N.ok) OilBuiltinTick();       // every frame: leaving Practice must put the game's oil back at once
     if (sFrame % 30 != 0) return;
     OilThicknessTick();
     OilInvisibleTick();
@@ -6105,7 +5980,6 @@ void BFEngineTick(void) {
             SkinRefreshTick();
             InHandFallbackTick();
             ArsenalTick();
-            LaneTick();
         } catch (...) {
             BFLog(@"C++ exception in tick");
         }
@@ -6197,31 +6071,9 @@ static void FieldText(void *obj, Il2CppClass *k, const char *name, char *out, si
 }
 
 static void LaneDebug(char *buf, size_t size) {
-    static Il2CppClass *road = nullptr, *drag = nullptr, *dm = nullptr;
-    static bool looked = false;
-    if (!looked) { looked = true; road = FindClass("", "RoadChanger"); drag = FindClass("", "SwitchLaneDrag"); dm = FindClass("", "DragManager"); }
-    size_t used = 0;
-    auto add = [&](const char *t) { size_t l = strlen(t); if (used + l + 1 < size) { memcpy(buf + used, t, l); used += l; buf[used] = 0; } };
-    buf[0] = 0;
     char tmp[160];
-    Il2CppArray *roads = road ? FindAll(TypeOf(road)) : nullptr;
-    void *r = FirstAlive(roads);
-    snprintf(tmp, sizeof(tmp), "lanes: RoadChanger %s x%d", road ? "class ok" : "class missing", (int)Len(roads)); add(tmp);
-    static const char *rf[] = { "currentLane", "laneNum", "oneLane", "shiftBy", "currentShift" };
-    for (const char *f : rf) { FieldText(r, road, f, tmp, sizeof(tmp)); add(tmp); }
-    // the function the shoe drag ends in: does it take an int, as expected?
-    const MethodInfo *shift = road ? FindMethod(road, "shiftToLaneNumber", 1, "System.Int32") : nullptr;
-    snprintf(tmp, sizeof(tmp), " shiftToLaneNumber(int)=%s", shift ? "yes" : (road && FindMethod(road, "shiftToLaneNumber", 1) ? "other-type" : "no")); add(tmp);
-    Il2CppArray *drags = drag ? FindAll(TypeOf(drag)) : nullptr;
-    snprintf(tmp, sizeof(tmp), " | SwitchLaneDrag %s x%d active", drag ? "class ok" : "class missing", (int)Len(drags)); add(tmp);
-    void *d = dm ? FirstAlive(FindAll(TypeOf(dm))) : nullptr;
-    add(" | DragManager");
-    FieldText(d, dm, "firstLaneLeft", tmp, sizeof(tmp)); add(tmp);
-    FieldText(d, dm, "secondLaneRight", tmp, sizeof(tmp)); add(tmp);
-    snprintf(tmp, sizeof(tmp), " | other lane: on=%d home=%d now=%d tries=%d reverts=%d%s", gBF.laneOther ? 1 : 0, sLaneHome, LaneNow(), sLaneTries, sLaneReverts, sLaneGaveUp ? " GAVE UP" : ""); add(tmp);
-    add(" | InventaryData");                        // which pin system the game uses
-    FieldText(sInvData.get(), N.InvData, "UsePinHolder", tmp, sizeof(tmp)); add(tmp);
-    snprintf(tmp, sizeof(tmp), " | oil far edge rows=%d scale=%.4f", sSizeYRows, sSizeYScale); add(tmp);
+    FieldText(sInvData.get(), N.InvData, "UsePinHolder", tmp, sizeof(tmp));   // which pin system the game uses
+    snprintf(buf, size, "lane: InventaryData%s | oil far edge rows=%d scale=%.4f", tmp, sSizeYRows, sSizeYScale);
 }
 
 NSString *BFDebugInfo(void) {

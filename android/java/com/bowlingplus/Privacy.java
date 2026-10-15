@@ -58,7 +58,8 @@ public final class Privacy {
     static final Runnable tick = new Runnable() {
         public void run() {
             try { doTick(); } catch (Throwable ignored) {}
-            if (System.currentTimeMillis() - startMs < 300000 || watching) timer.postDelayed(this, 1000 / 30);
+            long age = System.currentTimeMillis() - startMs;   // 30 checks a second while the game starts, then 4
+            if (age < 300000 || watching) timer.postDelayed(this, age < 90000 ? 1000 / 30 : 250);
         }
     };
 

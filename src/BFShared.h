@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define BF_ALL_PINS ((uint16_t)0x3FF)
-#define BF_VERSION @"1.7.5"
+#define BF_VERSION @"1.7.6"
 #define BF_MAX_SPEED 5.0f
 #define BF_MAX_SPIN 17.0f          // 17 x the game's 600 rpm cap ~ 10,000 rpm
 #define BF_MAX_LOFT 16             // loft slider top, in feet
@@ -31,7 +31,6 @@ typedef struct {
     float    spinMult;     // ball spin (RPM) multiplier 1...17 (Practice only)
     bool     menuHelp;     // show every description in the shake menu (off: they stay hidden)
     bool     menuButton;   // show a draggable on-screen button to open the menu, as well as shake
-    bool     laneOther;    // Practice: bowl on the game's other lane (experimental, off by default)
     // (new fields go last: the initializers in Engine.mm / Engine.cpp are positional)
     bool     bgImage;      // the alley background uses the player's own picture (looks only)
     bool     bgTitle;      // ...and the room's name stays on it
@@ -40,7 +39,6 @@ typedef struct {
     bool     pinRate2x;    // ...and physics twice as often (experimental: writes the engine's fixed step)
     int      oilShowOrig;  // the game's SHOW_OIL_PATTERN while invisible oil keeps it at 0 in memory (0: not changed)
     bool     noTap9;       // game mode: 9-pin no-tap (9 or more on a full rack is a strike; Practice)
-    bool     realOil;      // Practice: the game's own patterns drawn from their Kegel files. Always false (BFLoadConfig): they keep the game's drawing, as online; custom patterns always use the real-life drawing
     bool     hideBallStats; // hide the ball stats, in your hand and on the ball rack (looks only, everywhere)
     bool     loftHud;      // Practice: the loft slider while you hold the ball (on by default, set in BFLoadConfig)
     float    loftFt;       // ...loft in feet, 0 = the game's own release (0...BF_MAX_LOFT)

@@ -134,12 +134,16 @@ final class UiKit {
         if (before != (overlayCount > 0)) {
             try { N.call("overlay", overlayCount > 0 ? "1" : "0"); } catch (Throwable ignored) {}
         }
-        BP.UI.post(() -> { try { MenuButton.refresh(); } catch (Throwable ignored) {} });   // posted: we may be inside removeView
+        BP.UI.post(() -> { try { MenuButton.refresh(); BP.applyFps(); } catch (Throwable ignored) {} });   // posted: we may be inside removeView
     }
 
     private static final class Overlay extends FrameLayout {
         private boolean counted;
-        Overlay(Context c) { super(c); }
+        Overlay(Context c) {
+            super(c);
+            // Android 15+: scrolling a panel asks for the screen's top refresh rate
+            if (android.os.Build.VERSION.SDK_INT >= 35) { try { setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH); } catch (Throwable ignored) {} }
+        }
         @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (!counted) { counted = true; overlayChanged(+1); } }
         @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); if (counted) { counted = false; overlayChanged(-1); } }
     }

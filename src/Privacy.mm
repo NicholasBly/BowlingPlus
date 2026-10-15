@@ -123,6 +123,11 @@ static void PrivacyTick(void) {
         sTimer = nil;
         return;
     }
+    if (age > 90 && sTimer.timeInterval < 0.2) {    // the start is long over: 4 checks a second are plenty now
+        [sTimer invalidate];
+        sTimer = [NSTimer timerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { PrivacyTick(); }];
+        [[NSRunLoop mainRunLoop] addTimer:sTimer forMode:NSRunLoopCommonModes];
+    }
     if (gBFSafeMode) return;
     Class wk = NSClassFromString(@"WKWebView");
     if (!wk) return;
@@ -175,6 +180,6 @@ static void PrivacyTick(void) {
 void BFPrivacyStart(void) {
     if (sTimer) return;
     sStart = CFAbsoluteTimeGetCurrent();
-    sTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 30.0) repeats:YES block:^(NSTimer *t) { PrivacyTick(); }];
+    sTimer = [NSTimer timerWithTimeInterval:(1.0 / 30.0) repeats:YES block:^(NSTimer *t) { PrivacyTick(); }];   // 30 a second while the game starts
     [[NSRunLoop mainRunLoop] addTimer:sTimer forMode:NSRunLoopCommonModes];
 }
