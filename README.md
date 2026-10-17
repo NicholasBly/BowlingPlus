@@ -129,7 +129,7 @@ Then sign/install `BowlingPlus.ipa`.
 
 Short version below. Full list in [CHANGELOG.md](CHANGELOG.md).
 
-- **1.7.6:** High frame rate uses the screen's top rate (144 Hz on Android phones that have it); BowlingPlus's panels scroll at full refresh on Android; fewer crowns on the barstool seats; lighter background work; builds can go straight to Signulous.
+- **1.7.6:** High frame rate uses the screen's top rate (144 Hz on Android phones that offer it); BowlingPlus's panels scroll at full refresh on Android; balls can't roll through barstools any more, and the sweeper's banner no longer draws over them; loft allows for the release height and lands without hopping; the menu button can go to the top of the screen; fewer crowns on the barstool seats; lighter background work; builds can go straight to Signulous.
 - **1.7.5:** Ramps & obstacles mode (ramps, Brunswick pin barstools and gates, each can be switched off), a game mode button that restarts at frame 1, a loft slider (can tuck away at the edge), backup ball, Arsenal order, hide ball stats; the pin physics study corrected (the game's materials multiply), so the recommended pin friction is now 0.40 (0.25 with the double rate); real-life oil is automatic (custom patterns only).
 - **1.7.4:** Real-life oil can be turned off, so Practice can use the same oil as online play; a `Port/` folder for the game's team.
 - **1.7.2:** Game modes category (invisible oil, new 9-pin no-tap); double-rate replays play at normal speed; invisible oil no longer flashes up when you pick a ball.

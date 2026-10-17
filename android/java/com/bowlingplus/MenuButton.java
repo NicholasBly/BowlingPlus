@@ -70,9 +70,9 @@ final class MenuButton {
         int size = UiKit.dp(act, 48);
         int w = root.getWidth(), h = root.getHeight();
         if (w <= 0 || h <= 0) { root.post(() -> place(act, root)); return; }   // not laid out yet
-        int top = topInset(root), bottom = UiKit.dp(act, 24);
+        int bottom = UiKit.dp(act, 24);
         int x = clamp(Math.round(posX * w) - size / 2, 0, w - size);
-        int y = clamp(Math.round(posY * h) - size / 2, top, h - bottom - size);
+        int y = clamp(Math.round(posY * h) - size / 2, topInset(root, x, size), h - bottom - size);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) btn.getLayoutParams();
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.leftMargin = x;
@@ -97,7 +97,7 @@ final class MenuButton {
                 dragging = true;
                 int size = v.getWidth();
                 int x = clamp(Math.round(startX + dx), 0, root.getWidth() - size);
-                int y = clamp(Math.round(startY + dy), topInset(root), root.getHeight() - UiKit.dp(builtFor, 24) - size);
+                int y = clamp(Math.round(startY + dy), topInset(root, x, size), root.getHeight() - UiKit.dp(builtFor, 24) - size);
                 FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) v.getLayoutParams();
                 lp.leftMargin = x; lp.topMargin = y;
                 v.setLayoutParams(lp);
@@ -122,14 +122,20 @@ final class MenuButton {
 
     private static int clamp(int v, int lo, int hi) { return v < lo ? lo : Math.min(v, Math.max(lo, hi)); }
 
-    private static int topInset(View v) {
+    // How high the button may go at this x: the top of the screen, below a visible status bar, and below the camera
+    // cutout only where the button would be under it (before 1.7.6 the cutout's height applied across the whole top).
+    private static int topInset(View v, int x, int size) {
         int top = 0;
         try {
             android.view.WindowInsets ins = v.getRootWindowInsets();
             if (ins != null) {
-                top = ins.getSystemWindowInsetTop();
-                if (android.os.Build.VERSION.SDK_INT >= 28 && ins.getDisplayCutout() != null)
-                    top = Math.max(top, ins.getDisplayCutout().getSafeInsetTop());
+                int bar = ins.getSystemWindowInsetTop(), cut = 0;
+                if (android.os.Build.VERSION.SDK_INT >= 28 && ins.getDisplayCutout() != null) {
+                    cut = ins.getDisplayCutout().getSafeInsetTop();
+                    for (android.graphics.Rect r : ins.getDisplayCutout().getBoundingRects())
+                        if (r.top < size && x < r.right && x + size > r.left) top = Math.max(top, r.bottom);
+                }
+                if (bar > cut + 2) top = Math.max(top, bar);   // the status bar is showing
             }
         } catch (Throwable ignored) {}
         return top;

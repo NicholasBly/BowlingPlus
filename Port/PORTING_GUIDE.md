@@ -270,7 +270,7 @@ New in 1.7.5:
 
 **What it does:** a vertical LOFT slider on the right edge of the screen while the player holds the ball (hidden with the game's other buttons once a swipe starts; the left edge has the game's blue tab): 0 (the normal release) to 16 ft, in half feet, kept until changed. The ball is thrown out over the lane and comes down that far past the release.
 
-**Native implementation:** at launch (where item 13 scales the speed), add an upward speed so a flight of `d` metres at forward speed `v` lands at `d`: `vz = g d / (2 v)`. The lane bounces (0.65 x 0.65 = 0.42 with Multiply), so a ball dropping from the air hops; BowlingPlus removes the ball's upward speed when it touches the lane again after flying (before the pins only). Natively you could give the lane contact zero bounce for the ball while it's in loft flight instead.
+**Native implementation:** at launch (where item 13 scales the speed), set the upward speed so a flight of `d` metres at forward speed `v`, let go `h0` above the ball's rolling height, lands at `d`: `vz = g d / (2 v) - h0 v / d` (BowlingPlus up to 1.7.5 left out the `h0` term, so balls let go above the lane flew further than asked). Keep the flight's top reasonable (BowlingPlus holds it to 1 m). The lane bounces (0.65 x 0.65 = 0.42 with Multiply), so a ball dropping from the air hops; BowlingPlus removes the ball's upward speed when it touches the lane again after flying (before the pins only). Natively you could give the lane contact zero bounce for the ball while it's in loft flight instead.
 
 **Gate:** Practice (it changes shots).
 

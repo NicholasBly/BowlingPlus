@@ -4487,12 +4487,21 @@ static bool sLaneRef = false;
 static int sLoftThrows = 0, sDampHits = 0;
 static float sLoftLastVz = 0;
 
+// The head pin is only taken from a full rack (all ten up, as the pinsetter set them), and once known it may only move
+// a few cm unless three readings in a row agree on a new place (another lane). While obstacles are on the lane it
+// doesn't change at all: they were placed from it, and the throw checks use it. Before 1.7.6 a head pin left standing
+// but pushed aside by a first ball moved the lane reference, so the obstacles were looked for where they weren't
+// drawn and a ball could roll through a barstool.
+static int sLaneMoveVotes = 0;
+static int sRoParts = 0;                       // (the obstacles' pieces on the lane; see Ramps & obstacles below)
 static void LaneRefTick() {                      // where this lane is (the head pin, standing on its spot)
-    if (sFrame % 30 != 0 || !sSettled || sLoc == LOC_THROWING) return;
+    if (sFrame % 30 != 0 || !sSettled || sLoc == LOC_THROWING || sLoc == LOC_ON_PINDECK) return;
+    if (sLaneRef && sRoParts > 0) return;          // obstacles on the lane were placed from it: it stays until they go
     void *rpt = sRPT.get();
     if (!rpt || N.rpt_kegsUp < 0) return;
     Il2CppArray *up = At<Il2CppArray *>(rpt, N.rpt_kegsUp);
-    if (!up || Len(up) < 1 || !((bool *)Data(up))[0]) return;
+    if (!up || Len(up) < 10) return;
+    for (int i = 0; i < 10; i++) if (!((bool *)Data(up))[i]) return;   // a full rack only
     Il2CppArray *kegs = TurnKegels();
     if (!kegs || Len(kegs) < 1) return;
     void *go = Elem(kegs, 0);
@@ -4502,6 +4511,11 @@ static void LaneRefTick() {                      // where this lane is (the head
     if (!ok || !pb) return;
     BFVec3 p = *(BFVec3 *)Unbox(pb);
     if (p.z < -0.05f || p.z > 0.05f) return;      // not on its spot
+    if (sLaneRef && (fabsf(p.x - sLaneX) > 0.03f || fabsf(p.y - sHeadY) > 0.03f)) {
+        if (++sLaneMoveVotes < 3) return;         // a moved pin, or really another lane: wait for it to repeat
+        Bp175Log("lane reference moved from (%.3f, %.3f) to (%.3f, %.3f)", sLaneX, sHeadY, p.x, p.y);
+    }
+    sLaneMoveVotes = 0;
     sLaneX = p.x;
     sHeadY = p.y;
     sFoulY = p.y - 18.263f;                       // Constants: the head pin is 18.263 m from the foul line
@@ -4509,10 +4523,15 @@ static void LaneRefTick() {                      // where this lane is (the head
     sLaneRef = true;
 }
 
+static float sDampPrevVz = 0;
+static int sLoftCapped = 0;
+static float sLoftLastH0 = 0;
+
 static void DampStart(double seconds) {
     double until = BP175_CLOCK + seconds;
     if (until > sDampUntil) sDampUntil = until;
     sDampAir = false;
+    sDampPrevVz = 0;
 }
 
 static void LoftTick() {
@@ -4527,15 +4546,27 @@ static void LoftTick() {
     float vh = sqrtf(v.x * v.x + v.y * v.y);
     if (vh < 1.0f) return;                        // not launched yet
     sLoftDone = true;
+    // The ball must come down d past here. It leaves the hand h0 above where it rolls (its centre's height on the
+    // lane): with z(t) = h0 + vz t - g t^2 / 2 = 0 at t = d / vh, vz = g d / (2 vh) - h0 vh / d. (Up to 1.7.5 the
+    // h0 term was missing, so a ball let go above the lane flew further than asked, most at small lofts.) The
+    // flight's top is held to 1 m above the lane (a slow ball asked for a long loft would go up 1.5 m or more);
+    // such a ball comes down short of the setting.
+    const float g = 9.81f;
     float d = fminf(ft, (float)BF_MAX_LOFT) * 0.3048f;
-    float vz = 9.81f * d / (2.0f * vh);
-    v.z = fmaxf(v.z, 0.0f) + vz;
+    BFVec3 p;
+    float h0 = sLaneRef && BpBallPos(p) ? fminf(fmaxf(p.z - (sLaneZ + 0.108f), 0.0f), 1.0f) : 0.0f;
+    float vz = g * d / (2.0f * vh) - h0 * vh / d;
+    float top = sqrtf(2.0f * g * fmaxf(1.0f - h0, 0.0f));
+    if (vz > top) { vz = top; sLoftCapped++; }
+    vz = fmaxf(vz, -1.0f);                        // let go high with a tiny loft: aimed down, but gently
+    v.z = vz;
     void *a[] = { &v };
     Invoke(N.RB_setVel, rb, a);
     sLoftThrows++;
     sLoftLastVz = vz;
+    sLoftLastH0 = h0;
     DampStart(4.0);
-    Bp175Log("loft %.1f ft: +%.2f m/s up at %.1f m/s", ft, vz, vh);
+    Bp175Log("loft %.1f ft: %.2f m/s up at %.1f m/s, let go %.2f m above the lane%s", ft, vz, vh, h0, vz >= top ? " (held to a 1 m high flight)" : "");
 }
 
 bool BFLoftHudVisible(void) {                    // the loft slider: holding the ball in Practice
@@ -4659,7 +4690,6 @@ static bool GmRestartGame() {
 
 static const int kRoMaxParts = 180;                // up to 2 barstools of 40 pieces (room for more)
 static Ref sRoPart[kRoMaxParts];
-static int sRoParts = 0;
 static int sRoKind = 0, sRoLayout = -1, sRoLastLayout = -1, sRoLastStool = -1, sRoLastGate = -1;   // kind 1 ramps, 2 stools, 3 gates
 static bool sRoMoving = false;
 static double sRoMoveT0 = 0;
@@ -4671,7 +4701,8 @@ static int sRoHits = 0, sRoMisses = 0, sRoStoolHits = 0, sRoBuilds = 0, sRoFails
 enum { RO_RAMP = 0, RO_BAND, RO_TOP, RO_CHROME, RO_PIN, RO_GATE, RO_MATS };
 static Ref sRoMat[RO_MATS];                        // ramp, seat side, seat top, chrome, the stool's pin
 static uintptr_t sRoTex[RO_MATS] = { 0, 0, 0, 0, 0, 0 };
-static int sRoStoolPins = 0, sRoBounces = 0, sRoLateGutters = 0;
+static int sRoStoolPins = 0, sRoBounces = 0, sRoLateGutters = 0, sRoPassed = 0;
+static float sRoStoolMin = 9;                      // this throw: the ball's closest pass to a barstool's middle
 static bool sRoStoolHit = false, sRoLateDone = false, sRoGateHit = false;
 static double sRoGateT = 0;
 static float sRoGateV = 0;
@@ -4763,6 +4794,12 @@ static void *RoMaterial(int i) {                  // a copy of the pins' materia
     if (!ok) return nullptr;
     void *ta[] = { tex };
     Invoke(X.mat_setTex, mat, ta);
+    // Drawn after the transparent queue (3000), still depth-tested: BowlingPlus draws the sweeper's banner without
+    // the depth test while the sweeper is down (BannerTopTick), so a stool or gate drawn before it was painted over;
+    // drawn after it, the pieces cover the banner where they stand in front of it.
+    static const MethodInfo *setQueue = nullptr;
+    if (!setQueue) setQueue = XM(X.Material, "set_renderQueue", 1, "System.Int32");
+    if (setQueue) { int q = 3100; void *qa[] = { &q }; Invoke(setQueue, mat, qa); }
     DontUnload(mat);
     sRoMat[i].set(mat);
     return mat;
@@ -5176,11 +5213,14 @@ static bool RoStoolBounce(const BFVec3 &p, int i) {
     float R = kStoolReach, cx = bx, cy = by;
     float fx = ax - sx, fy = ay - sy, dx = bx - ax, dy = by - ay;
     float qa = dx * dx + dy * dy, qb = 2 * (fx * dx + fy * dy), qc = fx * fx + fy * fy - R * R;
-    if (qc <= 0) {                                  // already inside at the last frame: push straight out
-        float d = sqrtf(fx * fx + fy * fy);
-        if (d < 1e-4f) { fx = bx - ax; fy = 0.01f; d = sqrtf(fx * fx + fy * fy); }
-        if (d < 1e-4f) { fx = 1; fy = 0; d = 1; }
-        cx = sx + fx / d * R; cy = sy + fy / d * R;
+    float db = sqrtf((bx - sx) * (bx - sx) + (by - sy) * (by - sy));
+    bool inside = db < R - 0.01f;                   // the ball's centre is in the stool's reach right now
+    if (qc <= 0) {                                  // already inside at the last frame: push out from where it is now
+        if (!inside) return false;                  // ...and it's on its way out
+        float ox = bx - sx, oy = by - sy;
+        if (db < 1e-4f) { ox = dx; oy = dy; db = sqrtf(ox * ox + oy * oy); }
+        if (db < 1e-4f) { ox = 1; oy = 0; db = 1; }
+        cx = sx + ox / db * R; cy = sy + oy / db * R;
     } else if (qa > 1e-8f) {                        // first touch along the frame's path
         float disc = qb * qb - 4 * qa * qc;
         float t = disc > 0 ? (-qb - sqrtf(disc)) / (2 * qa) : 1;
@@ -5191,13 +5231,14 @@ static bool RoStoolBounce(const BFVec3 &p, int i) {
     if (nl < 1e-4f) return false;
     nx /= nl; ny /= nl;
     float vn = v.x * nx + v.y * ny;
-    if (vn >= 0) return false;                      // moving away from it already
+    if (vn >= 0 && !inside) return false;           // moving away from it already
     float speed = sqrtf(v.x * v.x + v.y * v.y);
     if (speed < 0.3f) return false;
-    // reflect: restitution 0.45 along the normal, some friction along the leg
+    // reflect: restitution 0.45 along the normal, some friction along the leg (a ball found already inside and
+    // leaving is just put back outside, going the way it was)
     float e = 0.45f;
     float tx = v.x - vn * nx, ty = v.y - vn * ny;
-    float vx = 0.85f * tx - e * vn * nx, vy = 0.85f * ty - e * vn * ny;
+    float vx = vn < 0 ? 0.85f * tx - e * vn * nx : v.x, vy = vn < 0 ? 0.85f * ty - e * vn * ny : v.y;
     float side = fabsf(nx) > 0.05f ? (nx > 0 ? 1.0f : -1.0f) : (cx - sx >= 0 ? 1.0f : -1.0f);
     if (fabsf(nx) <= 0.05f && fabsf(cx - sx) < 0.01f) side = (RoRand() & 1) ? 1.0f : -1.0f;
     float out = 0.8f * speed;                       // what's left after the knock
@@ -5277,7 +5318,7 @@ static void RoThrowTick() {
         BFVec3 v;
         if (!rb || !BpBallVel(rb, v) || v.x * v.x + v.y * v.y < 1.0f) return;   // not launched yet
         sRoThrow = true; sRoThrew = true; sRoDecided = false; sRoHit = false; sRoAirEarly = false; sRoPrev = p;
-        sRoStoolHit = false; sRoLateDone = false; sRoGateHit = false;
+        sRoStoolHit = false; sRoLateDone = false; sRoGateHit = false; sRoStoolMin = 9;
         DampStart(8.0);
         RoSnapStart();
     }
@@ -5292,7 +5333,8 @@ static void RoThrowTick() {
     }
     if (sRoDecided || sRoKind == 0 || sRoLayout < 0) { sRoPrev = p; return; }
     float lx = p.x - sLaneX, ly = p.y - sFoulY, lz = p.z - sLaneZ;
-    if (fabsf(lx) > 0.53f) { sRoDecided = true; sRoPrev = p; return; }      // in a gutter already: 0 anyway
+    // in a gutter already: 0 anyway (past the foul line, the ball's centre 5 cm past the lane's edge: it's going in)
+    if (ly > 0.3f && fabsf(lx) > 0.58f) { sRoDecided = true; sRoPrev = p; return; }
     if (sRoKind == 1) {
         const BPRampLayout &L = kRampLayouts[sRoLayout];
         float lastBack = 0, firstY0 = 1e9f;
@@ -5347,10 +5389,17 @@ static void RoThrowTick() {
         float ax = sRoPrev.x - sLaneX, ay = sRoPrev.y - sFoulY;
         for (int i = 0; i < L.n; i++) {
             lastY = fmaxf(lastY, L.s[i].y);
-            if (lz < 0.70f && SegDist2(ax, ay, lx, ly, L.s[i].x, L.s[i].y) < kStoolReach * kStoolReach &&
-                RoStoolBounce(p, i)) break;
+            float d2 = SegDist2(ax, ay, lx, ly, L.s[i].x, L.s[i].y);
+            if (lz < 0.70f && d2 < sRoStoolMin * sRoStoolMin) sRoStoolMin = sqrtf(d2);
+            if (lz < 0.70f && d2 < kStoolReach * kStoolReach && RoStoolBounce(p, i)) break;
         }
-        if (!sRoStoolHit && ly > lastY + 0.5f) sRoDecided = true;         // cleared them
+        if (!sRoStoolHit && ly > lastY + 0.5f) {                              // cleared them
+            sRoDecided = true;
+            if (sRoStoolMin < kStoolReach - 0.03f) {   // shouldn't happen: it came that close and wasn't bounced
+                sRoPassed++;
+                Bp175Log("ramps: the ball came within %.2f m of a barstool's middle without a bounce", sRoStoolMin);
+            }
+        }
         // after a barstool the shot is 0: a ball that is somehow still on the lane near the pins goes in the gutter
         float pinsY = sLaneRef ? sHeadY - sFoulY : 18.263f;
         if (sRoStoolHit && !sRoDecided && ly > pinsY - 1.2f) {
@@ -5593,11 +5642,22 @@ static void DampTick() {
     if (fabsf(p.x - sLaneX) > 0.55f) return;      // in a gutter
     if (RoOnRamp(p)) return;                      // climbing a ramp
     if (p.z > rest + 0.03f) sDampAir = true;
-    if (sDampAir && p.z < rest + 0.02f && v.z > 0.25f) {
+    // It came down and bounced since the last look: going up now, coming down then (a bounce at 60 looks a second can
+    // already be 2 cm up when it's seen, so the height alone missed some, and the ball hopped). Up to 10 cm, the
+    // ball is put back on the lane with no upward speed.
+    bool bounced = sDampAir && v.z > 0.05f && p.z < rest + 0.10f && (sDampPrevVz < -0.4f || (p.z < rest + 0.02f && v.z > 0.25f));
+    sDampPrevVz = v.z;
+    if (bounced) {
         v.z = 0;
         void *a[] = { &v };
         Invoke(N.RB_setVel, rb, a);
+        static const MethodInfo *setPos = nullptr;
+        if (!setPos && N.Rigidbody) setPos = XM(N.Rigidbody, "set_position", 1, "UnityEngine.Vector3");
+        // (2 mm above its rolling height: a ball pushed into the lane would be thrown out of it, the game lets the
+        // engine push it out at any speed)
+        if (setPos && p.z > rest + 0.008f) { BFVec3 q = { p.x, p.y, rest + 0.002f }; void *pa[] = { &q }; Invoke(setPos, rb, pa); }
         sDampHits++;
+        sDampPrevVz = 0;
     }
 }
 
@@ -5726,12 +5786,12 @@ static void Bp175Tick() {                         // after SpeedTick and SpinTic
 }
 
 static void Bp175Debug(char *buf, size_t size) {
-    snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
-                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d | gates hit %d | kinds r%d s%d g%d | backup ball %d throws %d last spin (%.1f, %.1f, %.1f) | loft swipe %d",
-             sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
+    snprintf(buf, size, "1.7.5: stats hidden=%d (%d panels, %d searches) | loft %.1f ft hud=%d throws=%d last vz %.2f h0 %.2f capped %d damped %d | lane x %.3f foul %.3f z %.4f ref=%d"
+                        " | mode %d restarts %d (%s) | ramps on=%d kind %d layout %d moving %d parts %d oiled %d builds %d fails %d (%s) hits %d misses %d stools %d bounces %d late %d stool pins %d best %d last %d clean %d | replays: shots kept %d showing %d matched %d unknown %d | gates hit %d | stool passes %d | kinds r%d s%d g%d | backup ball %d throws %d last spin (%.1f, %.1f, %.1f) | loft swipe %d",
+             sBsCount > 0 ? 1 : 0, sBsCount, sBsSearches, gBF.loftFt, gBF.loftHud ? 1 : 0, sLoftThrows, sLoftLastVz, sLoftLastH0, sLoftCapped, sDampHits, sLaneX, sFoulY, sLaneZ, sLaneRef ? 1 : 0,
              BFGameModeNow(), sGmRestarts, sGmWhy, gBF.rampsMode ? 1 : 0, sRoKind, sRoLayout, sRoMoving ? 1 : 0, sRoParts, sRoOiled, sRoBuilds, sRoFails, sRoWhy,
              sRoHits, sRoMisses, sRoStoolHits, sRoBounces, sRoLateGutters, sRoStoolPins, gBF.rampsBest, sRoLastScore, sRoClean ? 1 : 0,
-             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown, sRoGateHits, gBF.roRamps ? 1 : 0, gBF.roStools ? 1 : 0, gBF.roGates ? 1 : 0,
+             sRoSnapsMade, sRoShowing, sRoReplayMatches, sRoReplayUnknown, sRoGateHits, sRoPassed, gBF.roRamps ? 1 : 0, gBF.roStools ? 1 : 0, gBF.roGates ? 1 : 0,
              gBF.backupBall ? 1 : 0, sBkThrows, sBkLast.x, sBkLast.y, sBkLast.z, gBF.loftSwipe ? 1 : 0);
 }
 

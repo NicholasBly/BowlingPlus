@@ -67,11 +67,17 @@ static BFMenuButtonView *sButton;
 
 static NSString *const kDefX = @"BPMenuButtonX", *const kDefY = @"BPMenuButtonY";
 
+// Anywhere on screen, up to the very top: only the middle of the top edge, where the Dynamic Island or the notch sits,
+// keeps it below the safe area (before 1.7.6 the whole top did, so it couldn't go above about 85 points).
 static CGPoint BFMenuButtonClampedCenter(CGPoint p, UIView *host, CGSize size) {
     if (!host) return p;
-    CGFloat margin = size.width / 2, top = host.safeAreaInsets.top + margin, bottom = host.bounds.size.height - host.safeAreaInsets.bottom - margin;
-    CGFloat left = margin, right = host.bounds.size.width - margin;
-    return CGPointMake(MIN(MAX(p.x, left), MAX(left, right)), MIN(MAX(p.y, top), MAX(top, bottom)));
+    CGFloat margin = size.width / 2, w = host.bounds.size.width;
+    CGFloat left = margin, right = w - margin;
+    CGFloat x = MIN(MAX(p.x, left), MAX(left, right));
+    CGFloat inset = host.safeAreaInsets.top, top = margin + 4;
+    if (inset > 24 && fabs(x - w / 2) < 115 + margin) top = inset + margin;   // under the island / notch
+    CGFloat bottom = host.bounds.size.height - host.safeAreaInsets.bottom - margin;
+    return CGPointMake(x, MIN(MAX(p.y, top), MAX(top, bottom)));
 }
 
 static void BFMenuButtonSavePosition(CGPoint center, CGSize hostSize) {
