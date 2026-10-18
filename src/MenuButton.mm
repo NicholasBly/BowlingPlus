@@ -67,17 +67,34 @@ static BFMenuButtonView *sButton;
 
 static NSString *const kDefX = @"BPMenuButtonX", *const kDefY = @"BPMenuButtonY";
 
-// Anywhere on screen, up to the very top: only the middle of the top edge, where the Dynamic Island or the notch sits,
-// keeps it below the safe area (before 1.7.6 the whole top did, so it couldn't go above about 85 points).
+// The nearest spot to (px, py), the centre of a button of radius r on a w x h screen whose safe area starts insetTop
+// from the top and ends insetBottom from the bottom, that keeps it on screen and clear of the Dynamic Island or the
+// notch: below it or beside it, whichever is nearer, so a dragged button slides round it. Anywhere else it goes up to
+// 4 points from the top. The first 1.7.6 build held it below the safe area across the middle 280 points of the top
+// (the island is about 126 wide), so on most of the top edge it stuck about 86 points down and only went higher near
+// the corners. Plain arithmetic, so tools/tests can check it on a computer.
+static void BFButtonSpot(CGFloat px, CGFloat py, CGFloat r, CGFloat w, CGFloat h, CGFloat insetTop, CGFloat insetBottom, CGFloat *ox, CGFloat *oy) {
+    CGFloat x = MIN(MAX(px, r), MAX(r, w - r));
+    CGFloat top = r + 4, bottom = MAX(top, h - insetBottom - r);
+    CGFloat y = MIN(MAX(py, top), bottom);
+    if (insetTop > 24 && insetTop < h / 3) {       // something at the top edge: an island (inset 59+) or a notch (44-50)
+        CGFloat half = (insetTop >= 55 ? 63 : 105) + 6 + r;   // its half width, a gap, the button's radius
+        CGFloat under = MIN(insetTop + r, bottom);
+        if (fabs(x - w / 2) < half && y < under) {
+            CGFloat side = x < w / 2 ? w / 2 - half : w / 2 + half;
+            if (side >= r && side <= w - r && fabs(side - x) < under - y) x = side;
+            else y = under;
+        }
+    }
+    *ox = x;
+    *oy = y;
+}
+
 static CGPoint BFMenuButtonClampedCenter(CGPoint p, UIView *host, CGSize size) {
     if (!host) return p;
-    CGFloat margin = size.width / 2, w = host.bounds.size.width;
-    CGFloat left = margin, right = w - margin;
-    CGFloat x = MIN(MAX(p.x, left), MAX(left, right));
-    CGFloat inset = host.safeAreaInsets.top, top = margin + 4;
-    if (inset > 24 && fabs(x - w / 2) < 115 + margin) top = inset + margin;   // under the island / notch
-    CGFloat bottom = host.bounds.size.height - host.safeAreaInsets.bottom - margin;
-    return CGPointMake(x, MIN(MAX(p.y, top), MAX(top, bottom)));
+    CGFloat x, y;
+    BFButtonSpot(p.x, p.y, size.width / 2, host.bounds.size.width, host.bounds.size.height, host.safeAreaInsets.top, host.safeAreaInsets.bottom, &x, &y);
+    return CGPointMake(x, y);
 }
 
 static void BFMenuButtonSavePosition(CGPoint center, CGSize hostSize) {

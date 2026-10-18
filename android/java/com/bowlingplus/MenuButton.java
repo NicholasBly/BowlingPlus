@@ -65,18 +65,16 @@ final class MenuButton {
     }
 
     // posX/posY (0..1) -> actual pixels, clamped so the whole button stays on screen and clear of the status
-    // bar / camera cutout, the same inset OilTab uses.
+    // bar / camera cutout (clampPos).
     private static void place(Activity act, FrameLayout root) {
         int size = UiKit.dp(act, 48);
         int w = root.getWidth(), h = root.getHeight();
         if (w <= 0 || h <= 0) { root.post(() -> place(act, root)); return; }   // not laid out yet
-        int bottom = UiKit.dp(act, 24);
-        int x = clamp(Math.round(posX * w) - size / 2, 0, w - size);
-        int y = clamp(Math.round(posY * h) - size / 2, topInset(root, x, size), h - bottom - size);
+        int[] at = clampPos(root, Math.round(posX * w) - size / 2, Math.round(posY * h) - size / 2, size);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) btn.getLayoutParams();
         lp.gravity = Gravity.TOP | Gravity.START;
-        lp.leftMargin = x;
-        lp.topMargin = y;
+        lp.leftMargin = at[0];
+        lp.topMargin = at[1];
         btn.setLayoutParams(lp);
     }
 
@@ -95,11 +93,9 @@ final class MenuButton {
                 float slop = 10 * v.getResources().getDisplayMetrics().density;
                 if (!dragging && Math.hypot(dx, dy) < slop) return true;   // still a tap, not yet a drag
                 dragging = true;
-                int size = v.getWidth();
-                int x = clamp(Math.round(startX + dx), 0, root.getWidth() - size);
-                int y = clamp(Math.round(startY + dy), topInset(root, x, size), root.getHeight() - UiKit.dp(builtFor, 24) - size);
+                int[] at = clampPos(root, Math.round(startX + dx), Math.round(startY + dy), v.getWidth());
                 FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) v.getLayoutParams();
-                lp.leftMargin = x; lp.topMargin = y;
+                lp.leftMargin = at[0]; lp.topMargin = at[1];
                 v.setLayoutParams(lp);
                 return true;
             }
@@ -120,25 +116,36 @@ final class MenuButton {
         return false;
     }
 
-    private static int clamp(int v, int lo, int hi) { return v < lo ? lo : Math.min(v, Math.max(lo, hi)); }
-
-    // How high the button may go at this x: the top of the screen, below a visible status bar, and below the camera
-    // cutout only where the button would be under it (before 1.7.6 the cutout's height applied across the whole top).
-    private static int topInset(View v, int x, int size) {
-        int top = 0;
+    // The nearest spot to (x, y) (the button's top-left corner, in the content view) that keeps the button on screen,
+    // 24 dp above the bottom, below a visible status bar, and clear of the camera cutout (ButtonSpot). The cutout's
+    // rectangles and the status bar are in window coordinates, so they're moved into the content view's (the first
+    // 1.7.6 build compared them as they were, which holds the button too low if the content starts below the top of
+    // the window).
+    private static int[] clampPos(View root, int x, int y, int size) {
+        int w = root.getWidth(), h = root.getHeight();
+        int gap = UiKit.dp(root.getContext(), 4), bottomGap = UiKit.dp(root.getContext(), 24);
+        int barTop = 0;
+        int[] cuts = null;
         try {
-            android.view.WindowInsets ins = v.getRootWindowInsets();
+            android.view.WindowInsets ins = root.getRootWindowInsets();
             if (ins != null) {
+                int[] loc = new int[2];
+                root.getLocationInWindow(loc);
                 int bar = ins.getSystemWindowInsetTop(), cut = 0;
                 if (android.os.Build.VERSION.SDK_INT >= 28 && ins.getDisplayCutout() != null) {
                     cut = ins.getDisplayCutout().getSafeInsetTop();
-                    for (android.graphics.Rect r : ins.getDisplayCutout().getBoundingRects())
-                        if (r.top < size && x < r.right && x + size > r.left) top = Math.max(top, r.bottom);
+                    java.util.List<android.graphics.Rect> rects = ins.getDisplayCutout().getBoundingRects();
+                    cuts = new int[rects.size() * 4];
+                    for (int i = 0; i < rects.size(); i++) {
+                        android.graphics.Rect r = rects.get(i);
+                        cuts[i * 4] = r.left - loc[0]; cuts[i * 4 + 1] = r.top - loc[1];
+                        cuts[i * 4 + 2] = r.right - loc[0]; cuts[i * 4 + 3] = r.bottom - loc[1];
+                    }
                 }
-                if (bar > cut + 2) top = Math.max(top, bar);   // the status bar is showing
+                if (bar > cut + 2) barTop = Math.max(0, bar - loc[1]);   // the status bar is showing
             }
         } catch (Throwable ignored) {}
-        return top;
+        return ButtonSpot.clamp(x, y, size, w, h, gap, bottomGap, barTop, cuts);
     }
 
     // ---- remembered position: fraction of screen width/height, so it survives rotation and different devices

@@ -30,6 +30,14 @@ if [ -n "$need" ]; then
     $SUDO apt-get update -qq || echo "note: apt-get update had errors (a blocked third-party list in /etc/apt/sources.list.d? move it aside)"
     $SUDO apt-get install -y -qq openjdk-17-jdk-headless clang-18 lld-18 llvm-18 curl python3 >/dev/null
 fi
+# JDK 17 (as in GitHub Actions): this d8 (R8 8.2.2) fails with an internal NullPointerException on some classes
+# javac 21 compiles, even with --release 11 (UiKit$Overlay, 1.7.6)
+if ! javac -version 2>&1 | grep -q 'javac 17\.'; then
+    for j in /usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/java-17-openjdk-arm64 /usr/lib/jvm/temurin-17-jdk-amd64; do
+        if [ -x "$j/bin/javac" ]; then export JAVA_HOME="$j" PATH="$j/bin:$PATH"; break; fi
+    done
+    javac -version 2>&1 | grep -q 'javac 17\.' || echo "note: not JDK 17 ($(javac -version 2>&1 | tail -n1)); if d8 fails, install openjdk-17-jdk-headless"
+fi
 
 BT="$CACHE/build-tools/34.0.4"
 if [ ! -f "$BT/lib/d8.jar" ]; then

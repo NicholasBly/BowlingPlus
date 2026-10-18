@@ -1,0 +1,7 @@
+# build output (Theos, the dev simulators and checks)
+.theos/
+packages/
+__pycache__/
+tools/dev/pinsim/build_sim.cpp
+tools/dev/pinsim/sim
+tools/tests/*/build_*.cpp

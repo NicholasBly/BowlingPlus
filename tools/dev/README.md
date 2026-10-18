@@ -1,5 +1,9 @@
 # Developer checks (no device needed)
 
+`sh tools/tests/run_all.sh` runs the everyday ones (and GitHub Actions runs it on every push): see `TEST_PLAN.md`.
+The checks in `tools/tests/` run live code against fake games: obstacle racks (`rack/`), barstools (`stools/`),
+loft and landing (`ball/`), the menu button's spot (`button/`), and `static_checks.py`.
+
 | File | What it does |
 |---|---|
 | `host_check.sh` | Compiles and links all Android native code on the host with stub headers (`stubs/`). Only `JNI_OnLoad` may be exported. |

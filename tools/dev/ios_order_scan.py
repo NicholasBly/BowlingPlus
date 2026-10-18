@@ -2,9 +2,11 @@
 """iOS can't be compiled without the iOS SDK, and the 1.6.1 iOS build broke on a function used before its
 declaration (MenuButton.mm). This scans src/*.mm + Tweak.xm for static functions used before they're
 declared. Known false positive: Backup.mm crc32 (a class member; C++ allows that).
-Usage (from the repo root):  python3 tools/dev/ios_order_scan.py"""
-import re, glob
+Usage (from the repo root):  python3 tools/dev/ios_order_scan.py   (exits 1 on anything but the known false positive)"""
+import re, glob, sys
+KNOWN = {('src/Backup.mm', 'crc32')}
 issues = 0
+new = 0
 for p in sorted(glob.glob('src/*.mm')) + ['Tweak.xm']:
     code = [re.sub(r'//.*', '', l) for l in open(p, errors='replace').read().split('\n')]
     defs, protos = {}, {}
@@ -15,5 +17,8 @@ for p in sorted(glob.glob('src/*.mm')) + ['Tweak.xm']:
         first = min(d, protos.get(name, 10**9))
         for i, l in enumerate(code[:first]):
             if re.search(r'(?<![\w.])' + re.escape(name) + r'\s*\(', l):
-                print(f'{p}:{i+1} {name} used before its declaration (line {d+1})'); issues += 1; break
+                print(f'{p}:{i+1} {name} used before its declaration (line {d+1})'); issues += 1
+                if (p, name) not in KNOWN: new += 1
+                break
 print('problems:', issues, '(Backup.mm crc32 is a known false positive)')
+sys.exit(1 if new else 0)
